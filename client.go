@@ -11,11 +11,11 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-type TogetherRateLimiter struct {
+type TogetherRateLimiterBackOff struct {
 	wait time.Duration
 }
 
-func (t TogetherRateLimiter) SetDurationFromHeaders(header http.Header) error {
+func (t TogetherRateLimiterBackOff) SetDurationFromHeaders(header http.Header) error {
 	remaining, remainingErr := strconv.ParseInt(header.Get("x-ratelimit-remaining"), 10, 64)
 	if remainingErr != nil {
 		return remainingErr
@@ -34,11 +34,11 @@ func (t TogetherRateLimiter) SetDurationFromHeaders(header http.Header) error {
 	return nil
 }
 
-func (t TogetherRateLimiter) NextBackOff() time.Duration {
+func (t TogetherRateLimiterBackOff) NextBackOff() time.Duration {
 	return t.wait
 }
 
-func (t TogetherRateLimiter) Reset() {
+func (t TogetherRateLimiterBackOff) Reset() {
 	t.wait = 0
 }
 
