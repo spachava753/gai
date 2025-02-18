@@ -121,11 +121,6 @@ const (
 	ToolUse
 )
 
-const (
-	UsageMetricInputTokens      = "input_tokens"
-	UsageMetricGenerationTokens = "gen_tokens"
-)
-
 // Response is what is returned by a Generator
 type Response struct {
 	// Candidates represents the list of possible generations that a Generator generates,
@@ -141,7 +136,7 @@ type Response struct {
 	// implementation of a Generator, representing the total input tokens and output tokens consumed, however
 	// it is not guaranteed to have those metrics be present. In addition, a Generator may return additional metrics
 	// specific to the implementation. An example might be cached input tokens used, or perhaps the cost of a request
-	UsageMetrics map[string]int
+	UsageMetrics Metrics
 }
 
 // A Generator takes a Dialog and optional GenOpts and generates a Response or an error.
