@@ -34,7 +34,7 @@ const (
 type BlockType uint
 
 const (
-	Content BlockType = iota
+	Unstructured BlockType = iota
 	ToolCall
 	ToolResult
 )
@@ -50,7 +50,7 @@ type Block struct {
 	ID string
 
 	// BlockType is required, and if not set explicit, the default value is of type Content.
-	// - A Content BlockType represents "unstructured" content of single Modality
+	// - An Unstructured BlockType represents unstructured content of single Modality, like text, images and audio
 	// - A ToolCall BlockType represents a tool call by the model
 	// - A ToolResult BlockType represents a tool result from the execution of a tool call
 	BlockType BlockType

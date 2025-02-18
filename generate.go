@@ -156,6 +156,11 @@ type Response struct {
 //   - [UnsupportedInputModalityErr] when encountering an unsupported input modality
 //   - [UnsupportedOutputModalityErr] when requested to generate an unsupported output modality
 //   - [InvalidToolChoiceErr] when an invalid tool choice is specified
+//   - [InvalidParameterErr] when generation parameters are invalid or out of range
+//   - [ContextLengthExceededErr] when input dialog is too long
+//   - [ContentPolicyErr] when content violates usage policies
+//   - [EmptyDialogErr] when no messages are provided in the dialog
+//   - [AuthenticationErr] when there are authentication or authorization issues
 type Generator interface {
 	Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error)
 }

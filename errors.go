@@ -46,3 +46,55 @@ type InvalidToolChoiceErr string
 func (i InvalidToolChoiceErr) Error() string {
 	return fmt.Sprintf("invalid tool choice: %s", string(i))
 }
+
+// InvalidParameterErr is returned when a generation parameter in GenOpts is invalid.
+// This can occur in several scenarios:
+//   - [GenOpts.Temperature], [GenOpts.TopP], or [GenOpts.TopK] values are out of valid range
+//   - [GenOpts.FrequencyPenalty] or [GenOpts.PresencePenalty] are out of valid range
+//   - [GenOpts.MaxGenerationTokens] is negative or zero
+//   - Invalid combination of parameters (e.g., both [GenOpts.Temperature] and [GenOpts.TopP] set)
+type InvalidParameterErr struct {
+	// Parameter is the name of the invalid parameter
+	Parameter string
+	// Reason describes why the parameter is invalid
+	Reason string
+}
+
+func (i InvalidParameterErr) Error() string {
+	return fmt.Sprintf("invalid parameter %s: %s", i.Parameter, i.Reason)
+}
+
+// ContextLengthExceededErr is returned when the total number of tokens in the input Dialog
+// exceeds the maximum context length supported by the Generator. Different Generator
+// implementations may have different context length limits.
+var ContextLengthExceededErr = errors.New("context length exceeded")
+
+// ContentPolicyErr is returned when the input or generated content violates the Generator's
+// content policy. This can include:
+//   - Unsafe or inappropriate content
+//   - Prohibited topics or language
+//   - Content that violates usage terms
+//
+// The string value contains details about the specific policy violation.
+type ContentPolicyErr string
+
+func (c ContentPolicyErr) Error() string {
+	return fmt.Sprintf("content policy violation: %s", string(c))
+}
+
+// EmptyDialogErr is returned when an empty Dialog is provided to Generate.
+// At least one Message must be present in the Dialog.
+var EmptyDialogErr = errors.New("empty dialog: at least one message required")
+
+// AuthenticationErr is returned when there are issues with authentication or authorization.
+// This can include:
+//   - Invalid or expired API keys
+//   - Insufficient permissions
+//   - Account suspension
+//
+// The string value contains details about the specific authentication issue.
+type AuthenticationErr string
+
+func (a AuthenticationErr) Error() string {
+	return fmt.Sprintf("authentication error: %s", string(a))
+}
