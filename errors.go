@@ -82,6 +82,29 @@ func (c ContentPolicyErr) Error() string {
 	return fmt.Sprintf("content policy violation: %s", string(c))
 }
 
+// ToolRegistrationErr is returned when registering a tool fails. This can occur in several scenarios:
+//   - Empty tool name
+//   - Tool name conflicts with an existing or built-in tool
+//   - Tool name matches special values (ToolChoiceAuto, ToolChoiceToolsRequired)
+//   - Invalid tool schema (e.g., Array type without Items field)
+//
+// The Cause field contains the underlying error that caused the registration to fail.
+type ToolRegistrationErr struct {
+	// Tool is the name of the tool that failed to register
+	Tool string
+	// Cause is the underlying error that caused the registration to fail
+	Cause error
+}
+
+func (t ToolRegistrationErr) Error() string {
+	return fmt.Sprintf("failed to register tool %q: %v", t.Tool, t.Cause)
+}
+
+// Unwrap returns the underlying cause of the tool registration failure
+func (t ToolRegistrationErr) Unwrap() error {
+	return t.Cause
+}
+
 // EmptyDialogErr is returned when an empty Dialog is provided to Generate.
 // At least one Message must be present in the Dialog.
 var EmptyDialogErr = errors.New("empty dialog: at least one message required")
