@@ -1,6 +1,9 @@
 package gai
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // PropertyType represents the type of a property in a JSON Schema.
 // The zero value is Null.
@@ -28,6 +31,28 @@ const (
 	// Integer represents JSON Schema's 'integer' type
 	Integer
 )
+
+// String implements fmt.Stringer and returns the JSON Schema type name
+func (p PropertyType) String() string {
+	switch p {
+	case Null:
+		return "null"
+	case Boolean:
+		return "boolean"
+	case Object:
+		return "object"
+	case Array:
+		return "array"
+	case Number:
+		return "number"
+	case String:
+		return "string"
+	case Integer:
+		return "integer"
+	default:
+		return fmt.Sprintf("PropertyType(%d)", p)
+	}
+}
 
 // Property represents a JSON Schema property definition.
 // It can describe simple types like strings and numbers,
@@ -227,9 +252,9 @@ type ToolCallback interface {
 // interface, it will be treated as a tool execution error and fed back to the Generator.
 //
 // The behavior of tool usage is controlled via GenOpts.ToolChoice:
-//  - ToolChoiceAuto: Generator decides when to use tools
-//  - ToolChoiceToolsRequired: Generator must use at least one tool
-//  - "<tool-name>": Generator must use the specified tool
+//   - ToolChoiceAuto: Generator decides when to use tools
+//   - ToolChoiceToolsRequired: Generator must use at least one tool
+//   - "<tool-name>": Generator must use the specified tool
 //
 // Example usage:
 //
