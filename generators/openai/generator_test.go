@@ -1,312 +1,187 @@
 package openai
 
 import (
+	"testing"
+
 	"github.com/google/go-cmp/cmp"
 	oai "github.com/openai/openai-go"
 	"github.com/spachava753/gai"
-	"testing"
 )
 
-func TestConvertToolToOpenAI(t *testing.T) {
+func TestToOpenAIMessage(t *testing.T) {
 	tests := []struct {
-		name string
-		tool gai.Tool
-		want oai.ChatCompletionToolParam
+		name    string
+		msg     gai.Message
+		want    oai.ChatCompletionMessageParamUnion
+		wantErr bool
 	}{
 		{
-			name: "simple tool with no parameters",
-			tool: gai.Tool{
-				Name:        "get_server_time",
-				Description: "Get the current server time in UTC.",
+			name: "error: empty blocks",
+			msg: gai.Message{
+				Role:   gai.User,
+				Blocks: []gai.Block{},
 			},
-			want: oai.ChatCompletionToolParam{
-				Type: oai.F(oai.ChatCompletionToolTypeFunction),
-				Function: oai.F(oai.FunctionDefinitionParam{
-					Name:        oai.F("get_server_time"),
-					Description: oai.F("Get the current server time in UTC."),
-				}),
-			},
+			want:    nil,
+			wantErr: true,
 		},
 		{
-			name: "tool with single required string parameter",
-			tool: gai.Tool{
-				Name:        "get_stock_price",
-				Description: "Get the current stock price for a given ticker symbol.",
-				InputSchema: gai.InputSchema{
-					Type: gai.Object,
-					Properties: map[string]gai.Property{
-						"ticker": {
-							Type:        gai.String,
-							Description: "The stock ticker symbol, e.g. AAPL for Apple Inc.",
-						},
-					},
-					Required: []string{"ticker"},
-				},
+			name: "error: nil blocks",
+			msg: gai.Message{
+				Role:   gai.User,
+				Blocks: nil,
 			},
-			want: oai.ChatCompletionToolParam{
-				Type: oai.F(oai.ChatCompletionToolTypeFunction),
-				Function: oai.F(oai.FunctionDefinitionParam{
-					Name:        oai.F("get_stock_price"),
-					Description: oai.F("Get the current stock price for a given ticker symbol."),
-					Parameters: oai.F(oai.FunctionParameters(map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"ticker": map[string]interface{}{
-								"type":        "string",
-								"description": "The stock ticker symbol, e.g. AAPL for Apple Inc.",
-							},
-						},
-						"required": []string{"ticker"},
-					})),
-				}),
-			},
+			want:    nil,
+			wantErr: true,
 		},
 		{
-			name: "tool with string enum parameter",
-			tool: gai.Tool{
-				Name:        "get_weather",
-				Description: "Get the current weather in a given location",
-				InputSchema: gai.InputSchema{
-					Type: gai.Object,
-					Properties: map[string]gai.Property{
-						"location": {
-							Type:        gai.String,
-							Description: "The city and state, e.g. San Francisco, CA",
-						},
-						"unit": {
-							Type:        gai.String,
-							Enum:        []string{"celsius", "fahrenheit"},
-							Description: "The unit of temperature to use",
-						},
-					},
-					Required: []string{"location"},
-				},
-			},
-			want: oai.ChatCompletionToolParam{
-				Type: oai.F(oai.ChatCompletionToolTypeFunction),
-				Function: oai.F(oai.FunctionDefinitionParam{
-					Name:        oai.F("get_weather"),
-					Description: oai.F("Get the current weather in a given location"),
-					Parameters: oai.F(oai.FunctionParameters(map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"location": map[string]interface{}{
-								"type":        "string",
-								"description": "The city and state, e.g. San Francisco, CA",
-							},
-							"unit": map[string]interface{}{
-								"type":        "string",
-								"description": "The unit of temperature to use",
-								"enum":        []string{"celsius", "fahrenheit"},
-							},
-						},
-						"required": []string{"location"},
-					})),
-				}),
-			},
-		},
-		{
-			name: "tool with array parameter",
-			tool: gai.Tool{
-				Name:        "get_batch_stock_prices",
-				Description: "Get the current stock prices for a list of ticker symbols.",
-				InputSchema: gai.InputSchema{
-					Type: gai.Object,
-					Properties: map[string]gai.Property{
-						"tickers": {
-							Type:        gai.Array,
-							Description: "List of stock ticker symbols, e.g. ['AAPL', 'GOOGL', 'MSFT']",
-							Items: &gai.Property{
-								Type:        gai.String,
-								Description: "A stock ticker symbol",
-							},
-						},
-					},
-					Required: []string{"tickers"},
-				},
-			},
-			want: oai.ChatCompletionToolParam{
-				Type: oai.F(oai.ChatCompletionToolTypeFunction),
-				Function: oai.F(oai.FunctionDefinitionParam{
-					Name:        oai.F("get_batch_stock_prices"),
-					Description: oai.F("Get the current stock prices for a list of ticker symbols."),
-					Parameters: oai.F(oai.FunctionParameters(map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"tickers": map[string]interface{}{
-								"type":        "array",
-								"description": "List of stock ticker symbols, e.g. ['AAPL', 'GOOGL', 'MSFT']",
-								"items": map[string]interface{}{
-									"type":        "string",
-									"description": "A stock ticker symbol",
-								},
-							},
-						},
-						"required": []string{"tickers"},
-					})),
-				}),
-			},
-		},
-		{
-			name: "tool with nested object parameter",
-			tool: gai.Tool{
-				Name:        "create_user",
-				Description: "Create a new user with the given details.",
-				InputSchema: gai.InputSchema{
-					Type: gai.Object,
-					Properties: map[string]gai.Property{
-						"user": {
-							Type:        gai.Object,
-							Description: "User details",
-							Properties: map[string]gai.Property{
-								"name": {
-									Type:        gai.String,
-									Description: "User's full name",
-								},
-								"age": {
-									Type:        gai.Integer,
-									Description: "User's age in years",
-								},
-								"settings": {
-									Type:        gai.Object,
-									Description: "User preferences",
-									Properties: map[string]gai.Property{
-										"newsletter": {
-											Type:        gai.Boolean,
-											Description: "Whether to subscribe to newsletter",
-										},
-										"theme": {
-											Type:        gai.String,
-											Description: "UI theme preference",
-											Enum:        []string{"light", "dark", "system"},
-										},
-									},
-									Required: []string{"newsletter"},
-								},
-							},
-							Required: []string{"name", "age"},
-						},
-					},
-					Required: []string{"user"},
-				},
-			},
-			want: oai.ChatCompletionToolParam{
-				Type: oai.F(oai.ChatCompletionToolTypeFunction),
-				Function: oai.F(oai.FunctionDefinitionParam{
-					Name:        oai.F("create_user"),
-					Description: oai.F("Create a new user with the given details."),
-					Parameters: oai.F(oai.FunctionParameters(map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"user": map[string]interface{}{
-								"type":        "object",
-								"description": "User details",
-								"properties": map[string]interface{}{
-									"name": map[string]interface{}{
-										"type":        "string",
-										"description": "User's full name",
-									},
-									"age": map[string]interface{}{
-										"type":        "integer",
-										"description": "User's age in years",
-									},
-									"settings": map[string]interface{}{
-										"type":        "object",
-										"description": "User preferences",
-										"properties": map[string]interface{}{
-											"newsletter": map[string]interface{}{
-												"type":        "boolean",
-												"description": "Whether to subscribe to newsletter",
-											},
-											"theme": map[string]interface{}{
-												"type":        "string",
-												"description": "UI theme preference",
-												"enum":        []string{"light", "dark", "system"},
-											},
-										},
-										"required": []string{"newsletter"},
-									},
-								},
-								"required": []string{"name", "age"},
-							},
-						},
-						"required": []string{"user"},
-					})),
-				}),
-			},
-		},
-		{
-			name: "tool with all primitive types",
-			tool: gai.Tool{
-				Name:        "test_primitives",
-				Description: "Test all primitive types.",
-				InputSchema: gai.InputSchema{
-					Type: gai.Object,
-					Properties: map[string]gai.Property{
-						"string_val": {
-							Type:        gai.String,
-							Description: "A string value",
-						},
-						"int_val": {
-							Type:        gai.Integer,
-							Description: "An integer value",
-						},
-						"number_val": {
-							Type:        gai.Number,
-							Description: "A floating point value",
-						},
-						"bool_val": {
-							Type:        gai.Boolean,
-							Description: "A boolean value",
-						},
-						"null_val": {
-							Type:        gai.Null,
-							Description: "A null value",
-						},
+			name: "user message",
+			msg: gai.Message{
+				Role: gai.User,
+				Blocks: []gai.Block{
+					{
+						BlockType:    gai.Unstructured,
+						ModalityType: gai.Text,
+						Content:      "Hello, how are you?",
 					},
 				},
 			},
-			want: oai.ChatCompletionToolParam{
-				Type: oai.F(oai.ChatCompletionToolTypeFunction),
-				Function: oai.F(oai.FunctionDefinitionParam{
-					Name:        oai.F("test_primitives"),
-					Description: oai.F("Test all primitive types."),
-					Parameters: oai.F(oai.FunctionParameters(map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"string_val": map[string]interface{}{
-								"type":        "string",
-								"description": "A string value",
-							},
-							"int_val": map[string]interface{}{
-								"type":        "integer",
-								"description": "An integer value",
-							},
-							"number_val": map[string]interface{}{
-								"type":        "number",
-								"description": "A floating point value",
-							},
-							"bool_val": map[string]interface{}{
-								"type":        "boolean",
-								"description": "A boolean value",
-							},
-							"null_val": map[string]interface{}{
-								"type":        "null",
-								"description": "A null value",
-							},
-						},
-						"required": []string(nil),
-					})),
+			want:    oai.UserMessage("Hello, how are you?"),
+			wantErr: false,
+		},
+		{
+			name: "assistant message",
+			msg: gai.Message{
+				Role: gai.Assistant,
+				Blocks: []gai.Block{
+					{
+						BlockType:    gai.Unstructured,
+						ModalityType: gai.Text,
+						Content:      "I'm doing well, thank you!",
+					},
+				},
+			},
+			want:    oai.AssistantMessage("I'm doing well, thank you!"),
+			wantErr: false,
+		},
+		{
+			name: "tool call",
+			msg: gai.Message{
+				Role: gai.Assistant,
+				Blocks: []gai.Block{
+					{
+						ID:           "call_123",
+						BlockType:    gai.ToolCall,
+						ModalityType: gai.Text,
+						Content:      `{"name": "get_weather", "arguments": {"location": "London"}}`,
+					},
+				},
+			},
+			want: oai.ChatCompletionAssistantMessageParam{
+				ToolCalls: oai.F([]oai.ChatCompletionMessageToolCallParam{
+					{
+						ID: oai.F("call_123"),
+						Function: oai.F(oai.ChatCompletionMessageToolCallFunctionParam{
+							Name:      oai.F("get_weather"),
+							Arguments: oai.F(`{"location": "London"}`),
+						}),
+					},
 				}),
 			},
+			wantErr: false,
+		},
+		{
+			name: "tool result",
+			msg: gai.Message{
+				Role: gai.Assistant,
+				Blocks: []gai.Block{
+					{
+						ID:           "call_123",
+						BlockType:    gai.ToolResult,
+						ModalityType: gai.Text,
+						Content:      "The current temperature is 72°F",
+					},
+				},
+			},
+			want:    oai.ToolMessage("call_123", "The current temperature is 72°F"),
+			wantErr: false,
+		},
+		{
+			name: "tool call with text",
+			msg: gai.Message{
+				Role: gai.Assistant,
+				Blocks: []gai.Block{
+					{
+						BlockType:    gai.Unstructured,
+						ModalityType: gai.Text,
+						Content:      `Let me get the weather for you:`,
+					},
+					{
+						ID:           "call_123",
+						BlockType:    gai.ToolCall,
+						ModalityType: gai.Text,
+						Content:      `{"name": "get_weather", "arguments": {"location": "London"}}`,
+					},
+				},
+			},
+			want: oai.ChatCompletionAssistantMessageParam{
+				Content: oai.F([]oai.ChatCompletionAssistantMessageParamContentUnion{
+					oai.TextPart(`Let me get the weather for you:`),
+				}),
+				ToolCalls: oai.F([]oai.ChatCompletionMessageToolCallParam{
+					{
+						ID: oai.F("call_123"),
+						Function: oai.F(oai.ChatCompletionMessageToolCallFunctionParam{
+							Name:      oai.F("get_weather"),
+							Arguments: oai.F(`{"location": "London"}`),
+						}),
+					},
+				}),
+			},
+			wantErr: false,
+		},
+		{
+			name: "error: video modality not supported",
+			msg: gai.Message{
+				Role: gai.User,
+				Blocks: []gai.Block{
+					{
+						BlockType:    gai.Unstructured,
+						ModalityType: gai.Video,
+						Media:        nil,
+					},
+				},
+			},
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name: "error: invalid role",
+			msg: gai.Message{
+				Role: 999,
+				Blocks: []gai.Block{
+					{
+						BlockType:    gai.Unstructured,
+						ModalityType: gai.Text,
+						Content:      "Hello",
+					},
+				},
+			},
+			want:    nil,
+			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := convertToolToOpenAI(tt.tool)
-			if diff := cmp.Diff(tt.want, got); diff != "" {
-				t.Errorf("convertToolToOpenAI() mismatch (-want +got):\n%s", diff)
+			got, err := toOpenAIMessage(tt.msg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("toOpenAIMessage() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				if diff := cmp.Diff(tt.want, got); diff != "" {
+					t.Errorf("toOpenAIMessage() mismatch (-want +got):\n%s", diff)
+				}
 			}
 		})
 	}

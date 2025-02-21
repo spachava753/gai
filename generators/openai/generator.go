@@ -2,7 +2,9 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+
 	oai "github.com/openai/openai-go"
 	"github.com/spachava753/gai"
 	"github.com/spachava753/gai/generators/internal"
@@ -23,17 +25,6 @@ type generator struct {
 
 // convertToolToOpenAI converts our tool definition to OpenAI's format
 func convertToolToOpenAI(tool gai.Tool) oai.ChatCompletionToolParam {
-	// For tools with no parameters, don't set any parameters
-	if tool.InputSchema.Type == gai.Null {
-		return oai.ChatCompletionToolParam{
-			Type: oai.F(oai.ChatCompletionToolTypeFunction),
-			Function: oai.F(oai.FunctionDefinitionParam{
-				Name:        oai.F(tool.Name),
-				Description: oai.F(tool.Description),
-			}),
-		}
-	}
-
 	// Convert our tool schema to OpenAI's JSON schema format
 	parameters := make(map[string]interface{})
 	parameters["type"] = tool.InputSchema.Type.String()
@@ -90,6 +81,107 @@ func convertPropertyToMap(prop gai.Property) map[string]interface{} {
 	return result
 }
 
+// toOpenAIMessage converts a gai.Message to an OpenAI chat message.
+// It returns an error if the message contains unsupported modalities or block types.
+func toOpenAIMessage(msg gai.Message) (oai.ChatCompletionMessageParamUnion, error) {
+	if len(msg.Blocks) == 0 {
+		return nil, fmt.Errorf("message must have at least one block")
+	}
+
+	// Check for video modality in any block
+	for _, block := range msg.Blocks {
+		if block.ModalityType == gai.Video {
+			return nil, fmt.Errorf("unsupported modality: %v", block.ModalityType)
+		}
+	}
+
+	switch msg.Role {
+	case gai.User:
+		// User messages should only have unstructured blocks
+		if len(msg.Blocks) != 1 || msg.Blocks[0].BlockType != gai.Unstructured {
+			return nil, fmt.Errorf("unsupported block type for user: %v", msg.Blocks[0].BlockType)
+		}
+		return oai.UserMessage(msg.Blocks[0].Content), nil
+
+	case gai.Assistant:
+		// Handle different assistant message types
+		if len(msg.Blocks) == 1 {
+			block := msg.Blocks[0]
+			switch block.BlockType {
+			case gai.Unstructured:
+				return oai.AssistantMessage(block.Content), nil
+			case gai.ToolCall:
+				// Parse the tool call content
+				var call struct {
+					Name      string          `json:"name"`
+					Arguments json.RawMessage `json:"arguments"`
+				}
+				if err := json.Unmarshal([]byte(block.Content), &call); err != nil {
+					return nil, fmt.Errorf("invalid tool call content: %w", err)
+				}
+
+				return oai.ChatCompletionAssistantMessageParam{
+					ToolCalls: oai.F([]oai.ChatCompletionMessageToolCallParam{
+						{
+							ID: oai.F(block.ID),
+							Function: oai.F(oai.ChatCompletionMessageToolCallFunctionParam{
+								Name:      oai.F(call.Name),
+								Arguments: oai.F(string(call.Arguments)),
+							}),
+						},
+					}),
+				}, nil
+			case gai.ToolResult:
+				return oai.ToolMessage(block.ID, block.Content), nil
+			default:
+				return nil, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
+			}
+		}
+
+		// Handle multiple blocks
+		var textContent []oai.ChatCompletionAssistantMessageParamContentUnion
+		var toolCalls []oai.ChatCompletionMessageToolCallParam
+
+		for _, block := range msg.Blocks {
+			switch block.BlockType {
+			case gai.Unstructured:
+				textContent = append(textContent, oai.TextPart(block.Content))
+			case gai.ToolCall:
+				// Parse the tool call content
+				var call struct {
+					Name      string          `json:"name"`
+					Arguments json.RawMessage `json:"arguments"`
+				}
+				if err := json.Unmarshal([]byte(block.Content), &call); err != nil {
+					return nil, fmt.Errorf("invalid tool call content: %w", err)
+				}
+
+				toolCalls = append(toolCalls, oai.ChatCompletionMessageToolCallParam{
+					ID: oai.F(block.ID),
+					Function: oai.F(oai.ChatCompletionMessageToolCallFunctionParam{
+						Name:      oai.F(call.Name),
+						Arguments: oai.F(string(call.Arguments)),
+					}),
+				})
+			default:
+				return nil, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
+			}
+		}
+
+		result := oai.ChatCompletionAssistantMessageParam{}
+		if len(textContent) > 0 {
+			result.Content = oai.F(textContent)
+		}
+		if len(toolCalls) > 0 {
+			result.ToolCalls = oai.F(toolCalls)
+		}
+		return result, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported role: %v", msg.Role)
+	}
+}
+
 // RegisterTool implements gai.ToolGenerator
 func (g *generator) RegisterTool(tool gai.Tool, callback gai.ToolCallback) error {
 	if g.tools == nil {
@@ -114,79 +206,6 @@ func (g *generator) RegisterTool(tool gai.Tool, callback gai.ToolCallback) error
 	}
 
 	return nil
-}
-
-// toOpenAIMessage converts a gai.Message to an OpenAI chat message.
-// It returns an error if the message contains unsupported modalities or block types.
-func toOpenAIMessage(msg gai.Message) (oai.ChatCompletionMessageParamUnion, error) {
-	var content string
-	for _, block := range msg.Blocks {
-		if block.BlockType != gai.Unstructured {
-			return nil, fmt.Errorf("unsupported block type: %v", block.BlockType)
-		}
-
-		switch block.ModalityType {
-		case gai.Text:
-			content += block.Content
-		default:
-			return nil, fmt.Errorf("unsupported modality: %v", block.ModalityType)
-		}
-	}
-
-	switch msg.Role {
-	case gai.User:
-		return oai.UserMessage(content), nil
-	case gai.Assistant:
-		return oai.AssistantMessage(content), nil
-	default:
-		return nil, fmt.Errorf("unsupported role: %v", msg.Role)
-	}
-}
-
-// toOpenAIChatParams converts a gai.Dialog and gai.GenOpts to OpenAI chat completion parameters.
-// It returns an error if any message contains unsupported modalities or block types.
-func toOpenAIChatParams(dialog gai.Dialog, opts *gai.GenOpts) (oai.ChatCompletionNewParams, error) {
-	messages := make([]oai.ChatCompletionMessageParamUnion, len(dialog))
-	for i, msg := range dialog {
-		oaiMsg, err := toOpenAIMessage(msg)
-		if err != nil {
-			return oai.ChatCompletionNewParams{}, fmt.Errorf("failed to convert message at index %d: %w", i, err)
-		}
-		messages[i] = oaiMsg
-	}
-
-	params := oai.ChatCompletionNewParams{
-		Messages: oai.F(messages),
-	}
-
-	// Only set optional parameters if they are explicitly set in GenOpts
-	if opts != nil {
-		if opts.Temperature != 0 {
-			params.Temperature = oai.F(opts.Temperature)
-		}
-		if opts.TopP != 0 {
-			params.TopP = oai.F(opts.TopP)
-		}
-		if opts.FrequencyPenalty != 0 {
-			params.FrequencyPenalty = oai.F(opts.FrequencyPenalty)
-		}
-		if opts.PresencePenalty != 0 {
-			params.PresencePenalty = oai.F(opts.PresencePenalty)
-		}
-		if opts.MaxGenerationTokens != 0 {
-			params.MaxTokens = oai.F(int64(opts.MaxGenerationTokens))
-		}
-		if len(opts.StopSequences) > 0 {
-			// Convert []string to ChatCompletionNewParamsStopArray which implements ChatCompletionNewParamsStopUnion
-			stopArray := oai.ChatCompletionNewParamsStopArray(opts.StopSequences)
-			params.Stop = oai.F[oai.ChatCompletionNewParamsStopUnion](stopArray)
-		}
-		if opts.N != 0 {
-			params.N = oai.F(int64(opts.N))
-		}
-	}
-
-	return params, nil
 }
 
 // Generate implements gai.Generator
