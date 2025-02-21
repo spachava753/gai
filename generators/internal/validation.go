@@ -8,8 +8,11 @@ import (
 
 // ValidationMiddleware wraps a ToolGenerator and provides tool validation.
 // It ensures that tools are valid before they are registered with the underlying generator.
+// It also enforces that GenOpts.N must be 1 when tools are registered with callbacks.
 type ValidationMiddleware struct {
 	generator gai.ToolGenerator
+	// hasToolWithCallback indicates if any tool has been registered with a callback
+	hasToolWithCallback bool
 }
 
 // validateTool checks if a tool definition is valid.
@@ -64,13 +67,25 @@ func validateProperty(name string, prop gai.Property) error {
 	return nil
 }
 
-// Generate implements gai.Generator by delegating to the underlying generator
+// Generate implements gai.Generator by delegating to the underlying generator.
+// If any tool is registered with a callback, it enforces that GenOpts.N must be 1.
 func (v *ValidationMiddleware) Generate(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+	// Check if we have any tool with a callback and validate N
+	if v.hasToolWithCallback {
+		// If N is not set (0), the default is 1, which is valid
+		if options != nil && options.N > 1 {
+			return gai.Response{}, gai.InvalidParameterErr{
+				Parameter: "N",
+				Reason:    "value greater than 1 is not supported when tools are registered with callbacks",
+			}
+		}
+	}
+
 	return v.generator.Generate(ctx, dialog, options)
 }
 
 // RegisterTool implements gai.ToolGenerator by validating the tool before delegating
-// to the underlying generator
+// to the underlying generator. It also tracks if any tool has a callback.
 func (v *ValidationMiddleware) RegisterTool(tool gai.Tool, callback gai.ToolCallback) error {
 	// Validate the tool
 	if err := validateTool(tool); err != nil {
@@ -78,6 +93,11 @@ func (v *ValidationMiddleware) RegisterTool(tool gai.Tool, callback gai.ToolCall
 			Tool:  tool.Name,
 			Cause: err,
 		}
+	}
+
+	// Track if this tool has a callback
+	if callback != nil {
+		v.hasToolWithCallback = true
 	}
 
 	// Delegate to the underlying generator
