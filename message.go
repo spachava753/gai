@@ -1,6 +1,8 @@
 package gai
 
-import "io"
+import (
+	"io"
+)
 
 // Role represents what type a Message is
 type Role uint
@@ -29,14 +31,11 @@ const (
 	Video
 )
 
-// BlockType represents what type a Block is. A Block can hold some content,
-// be a tool call, or hold the results of a tool execution
-type BlockType uint
-
 const (
-	Unstructured BlockType = iota
-	ToolCall
-	ToolResult
+	Content    = "content"
+	Thinking   = "thinking"
+	ToolCall   = "tool_call"
+	ToolResult = "tool_result"
 )
 
 // Block represents a self-contained piece of a Message, meant to represent a "part" of a message.
@@ -49,11 +48,15 @@ type Block struct {
 	// is not set
 	ID string
 
-	// BlockType is required, and if not set explicit, the default value is of type Content.
-	// - An Unstructured BlockType represents unstructured content of single Modality, like text, images and audio
+	// BlockType is required, and if not set explicitly, the default value is of type Content.
+	// - A Content BlockType represents unstructured content of single Modality, like text, images and audio
+	// - A Thinking BlockType represents the thinking/reasoning a Generator produced
 	// - A ToolCall BlockType represents a tool call by the model
 	// - A ToolResult BlockType represents a tool result from the execution of a tool call
-	BlockType BlockType
+	//
+	// Note that a Generator can support more block types than the ones listed above,
+	// the above block types are simply a common set of block types that a Generator can return.
+	BlockType string
 
 	// ModalityType represents the Modality of the content
 	ModalityType Modality

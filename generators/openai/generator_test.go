@@ -39,7 +39,7 @@ func TestToOpenAIMessage(t *testing.T) {
 				Role: gai.User,
 				Blocks: []gai.Block{
 					{
-						BlockType:    gai.Unstructured,
+						BlockType:    gai.Content,
 						ModalityType: gai.Text,
 						Content:      "Hello, how are you?",
 					},
@@ -54,7 +54,7 @@ func TestToOpenAIMessage(t *testing.T) {
 				Role: gai.Assistant,
 				Blocks: []gai.Block{
 					{
-						BlockType:    gai.Unstructured,
+						BlockType:    gai.Content,
 						ModalityType: gai.Text,
 						Content:      "I'm doing well, thank you!",
 					},
@@ -111,7 +111,7 @@ func TestToOpenAIMessage(t *testing.T) {
 				Role: gai.Assistant,
 				Blocks: []gai.Block{
 					{
-						BlockType:    gai.Unstructured,
+						BlockType:    gai.Content,
 						ModalityType: gai.Text,
 						Content:      `Let me get the weather for you:`,
 					},
@@ -145,7 +145,7 @@ func TestToOpenAIMessage(t *testing.T) {
 				Role: gai.User,
 				Blocks: []gai.Block{
 					{
-						BlockType:    gai.Unstructured,
+						BlockType:    gai.Content,
 						ModalityType: gai.Video,
 						Media:        nil,
 					},
@@ -160,7 +160,7 @@ func TestToOpenAIMessage(t *testing.T) {
 				Role: 999,
 				Blocks: []gai.Block{
 					{
-						BlockType:    gai.Unstructured,
+						BlockType:    gai.Content,
 						ModalityType: gai.Text,
 						Content:      "Hello",
 					},
