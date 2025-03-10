@@ -1,7 +1,9 @@
 package gai
 
 import (
-	"io"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 )
 
 // Role represents what type a Message is
@@ -38,6 +40,77 @@ const (
 	ToolResult = "tool_result"
 )
 
+// Media represents binary content for non-text modalities such as images, audio, or video.
+// It contains the MIME type of the content and the actual binary data.
+//
+// When encoding to JSON, the Body field is automatically base64 encoded for safe transmission.
+// When decoding from JSON, the Body field is automatically base64 decoded from the encoded string.
+//
+// Example usage:
+//
+//	// Creating a Media object with image data
+//	imageMedia := Media{
+//	    Mimetype: "image/jpeg",
+//	    Body:     jpegImageBytes,
+//	}
+//
+//	// Creating a Media object with audio data
+//	audioMedia := Media{
+//	    Mimetype: "audio/mp3",
+//	    Body:     mp3AudioBytes,
+//	}
+type Media struct {
+	// Mimetype represents the MIME type of the binary content.
+	// Common values include "image/jpeg", "image/png", "audio/mp3", "video/mp4", etc.
+	Mimetype string
+
+	// Body contains the raw binary data of the media content.
+	// When marshaled to JSON, this field is automatically base64 encoded.
+	// When unmarshaled from JSON, this field is automatically base64 decoded.
+	Body []byte
+}
+
+// MarshalJSON implements the json.Marshaler interface for Media.
+// It encodes the Body field as base64 for safe JSON transmission.
+func (m *Media) MarshalJSON() ([]byte, error) {
+	type MediaAlias struct {
+		Mimetype string `json:"mimetype"`
+		Body     string `json:"body"` // Will contain base64 encoded data
+	}
+
+	encoded := MediaAlias{
+		Mimetype: m.Mimetype,
+		Body:     base64.StdEncoding.EncodeToString(m.Body),
+	}
+
+	return json.Marshal(encoded)
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for Media.
+// It decodes the base64-encoded Body field back to raw bytes.
+func (m *Media) UnmarshalJSON(data []byte) error {
+	type MediaAlias struct {
+		Mimetype string `json:"mimetype"`
+		Body     string `json:"body"` // Contains base64 encoded data
+	}
+
+	var decoded MediaAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	// Decode the base64 string back to bytes
+	bodyBytes, err := base64.StdEncoding.DecodeString(decoded.Body)
+	if err != nil {
+		return fmt.Errorf("failed to decode base64 body: %w", err)
+	}
+
+	m.Mimetype = decoded.Mimetype
+	m.Body = bodyBytes
+
+	return nil
+}
+
 // Block represents a self-contained piece of a Message, meant to represent a "part" of a message.
 // For example, if a message returned by a model contains audio and a tool call, the audio would
 // be represented as one block, and the tool call another. Another example is if there are multiple
@@ -66,8 +139,8 @@ type Block struct {
 	Content string
 
 	// Media is set when Modality is set to Image, Audio, or Video.
-	// If Media is set to valid io.Reader, then Content must be an empty string
-	Media io.Reader
+	// If Media is not a zero value, then Content must be an empty string
+	Media Media
 }
 
 // Message represents a collection of blocks produced by the user or meant for the assistant.

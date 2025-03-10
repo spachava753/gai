@@ -148,7 +148,7 @@ func TestToOpenAIMessage(t *testing.T) {
 					{
 						BlockType:    Content,
 						ModalityType: Video,
-						Media:        nil,
+						Media:        Media{},
 					},
 				},
 			},
