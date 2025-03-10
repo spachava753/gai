@@ -439,7 +439,7 @@ type ChatCompletionService interface {
 
 // New creates a new OpenAI generator with the specified model.
 func New(client ChatCompletionService, model, systemInstructions string) gai.ToolGenerator {
-	g := internal.NewValidation(&generator{
+	g := internal.NewToolMiddleware(&generator{
 		client:             client,
 		systemInstructions: systemInstructions,
 		model:              model,

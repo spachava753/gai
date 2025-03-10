@@ -6,10 +6,10 @@ import (
 	"github.com/spachava753/gai"
 )
 
-// ValidationMiddleware wraps a ToolGenerator and provides tool validation.
+// ToolMiddleware wraps a ToolGenerator and provides tool validation.
 // It ensures that tools are valid before they are registered with the underlying generator.
 // It also enforces that GenOpts.N must be 1 when tools are registered with callbacks.
-type ValidationMiddleware struct {
+type ToolMiddleware struct {
 	generator gai.ToolGenerator
 	// hasToolWithCallback indicates if any tool has been registered with a callback
 	hasToolWithCallback bool
@@ -69,7 +69,7 @@ func validateProperty(name string, prop gai.Property) error {
 
 // Generate implements gai.Generator by delegating to the underlying generator.
 // If any tool is registered with a callback, it enforces that GenOpts.N must be 1.
-func (v *ValidationMiddleware) Generate(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+func (v *ToolMiddleware) Generate(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
 	// Check if we have any tool with a callback and validate N
 	if v.hasToolWithCallback {
 		// If N is not set (0), the default is 1, which is valid
@@ -86,7 +86,7 @@ func (v *ValidationMiddleware) Generate(ctx context.Context, dialog gai.Dialog, 
 
 // RegisterTool implements gai.ToolGenerator by validating the tool before delegating
 // to the underlying generator. It also tracks if any tool has a callback.
-func (v *ValidationMiddleware) RegisterTool(tool gai.Tool, callback gai.ToolCallback) error {
+func (v *ToolMiddleware) RegisterTool(tool gai.Tool, callback gai.ToolCallback) error {
 	// Validate the tool
 	if err := validateTool(tool); err != nil {
 		return gai.ToolRegistrationErr{
@@ -104,13 +104,13 @@ func (v *ValidationMiddleware) RegisterTool(tool gai.Tool, callback gai.ToolCall
 	return v.generator.RegisterTool(tool, callback)
 }
 
-// NewValidation creates a new validationMiddleware that wraps the given generator.
+// NewToolMiddleware creates a new validationMiddleware that wraps the given generator.
 // This is an internal function used by generator implementations to add tool validation.
-func NewValidation(generator gai.ToolGenerator) ValidationMiddleware {
-	return ValidationMiddleware{
+func NewToolMiddleware(generator gai.ToolGenerator) ToolMiddleware {
+	return ToolMiddleware{
 		generator: generator,
 	}
 }
 
-var _ gai.Generator = (*ValidationMiddleware)(nil)
-var _ gai.ToolGenerator = (*ValidationMiddleware)(nil)
+var _ gai.Generator = (*ToolMiddleware)(nil)
+var _ gai.ToolGenerator = (*ToolMiddleware)(nil)
