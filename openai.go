@@ -1,4 +1,4 @@
-package openai
+package gai
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"github.com/openai/openai-go/shared"
 
 	oai "github.com/openai/openai-go"
-	"github.com/spachava753/gai"
 )
 
 // generator implements the gai.Generator interface using OpenAI's API
@@ -20,13 +19,13 @@ type generator struct {
 }
 
 // convertToolToOpenAI converts our tool definition to OpenAI's format
-func convertToolToOpenAI(tool gai.Tool) oai.ChatCompletionToolParam {
+func convertToolToOpenAI(tool Tool) oai.ChatCompletionToolParam {
 	// Convert our tool schema to OpenAI's JSON schema format
 	parameters := make(map[string]interface{})
 	parameters["type"] = tool.InputSchema.Type.String()
 
 	// Only include properties and required fields if we have an object type
-	if tool.InputSchema.Type == gai.Object && tool.InputSchema.Properties != nil {
+	if tool.InputSchema.Type == Object && tool.InputSchema.Properties != nil {
 		properties := make(map[string]interface{})
 		for name, prop := range tool.InputSchema.Properties {
 			properties[name] = convertPropertyToMap(prop)
@@ -46,24 +45,24 @@ func convertToolToOpenAI(tool gai.Tool) oai.ChatCompletionToolParam {
 }
 
 // convertPropertyToMap converts a Property to a map[string]interface{} suitable for OpenAI's format
-func convertPropertyToMap(prop gai.Property) map[string]interface{} {
+func convertPropertyToMap(prop Property) map[string]interface{} {
 	result := map[string]interface{}{
 		"type":        prop.Type.String(),
 		"description": prop.Description,
 	}
 
 	// Handle string enums
-	if prop.Type == gai.String && len(prop.Enum) > 0 {
+	if prop.Type == String && len(prop.Enum) > 0 {
 		result["enum"] = prop.Enum
 	}
 
 	// Handle array items
-	if prop.Type == gai.Array && prop.Items != nil {
+	if prop.Type == Array && prop.Items != nil {
 		result["items"] = convertPropertyToMap(*prop.Items)
 	}
 
 	// Handle object properties and required fields
-	if prop.Type == gai.Object && prop.Properties != nil {
+	if prop.Type == Object && prop.Properties != nil {
 		properties := make(map[string]interface{})
 		for name, p := range prop.Properties {
 			properties[name] = convertPropertyToMap(p)
@@ -79,42 +78,42 @@ func convertPropertyToMap(prop gai.Property) map[string]interface{} {
 
 // toOpenAIMessage converts a gai.Message to an OpenAI chat message.
 // It returns an error if the message contains unsupported modalities or block types.
-func toOpenAIMessage(msg gai.Message) (oai.ChatCompletionMessageParamUnion, error) {
+func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 	if len(msg.Blocks) == 0 {
 		return nil, fmt.Errorf("message must have at least one block")
 	}
 
 	// Check for video modality in any block
 	for _, block := range msg.Blocks {
-		if block.ModalityType == gai.Video {
+		if block.ModalityType == Video {
 			return nil, fmt.Errorf("unsupported modality: %v", block.ModalityType)
 		}
 	}
 
 	// Check if any block is a tool result - it must be the only block in the message
 	for _, block := range msg.Blocks {
-		if block.BlockType == gai.ToolResult && len(msg.Blocks) > 1 {
+		if block.BlockType == ToolResult && len(msg.Blocks) > 1 {
 			return nil, fmt.Errorf("tool result block must be in its own message")
 		}
 	}
 
 	switch msg.Role {
-	case gai.User:
+	case User:
 		// User messages should only have Content blocks
-		if len(msg.Blocks) != 1 || msg.Blocks[0].BlockType != gai.Content {
+		if len(msg.Blocks) != 1 || msg.Blocks[0].BlockType != Content {
 			return nil, fmt.Errorf("unsupported block type for user: %v", msg.Blocks[0].BlockType)
 		}
 		return oai.UserMessage(msg.Blocks[0].Content), nil
 
-	case gai.Assistant:
+	case Assistant:
 		// Handle different assistant message types
 		if len(msg.Blocks) == 1 {
 			block := msg.Blocks[0]
 			switch block.BlockType {
-			case gai.Content:
+			case Content:
 				// TODO: handle multi modality, like images
 				return oai.AssistantMessage(block.Content), nil
-			case gai.ToolCall:
+			case ToolCall:
 				// Parse the tool call content
 				var call struct {
 					Name      string          `json:"name"`
@@ -135,7 +134,7 @@ func toOpenAIMessage(msg gai.Message) (oai.ChatCompletionMessageParamUnion, erro
 						},
 					}),
 				}, nil
-			case gai.ToolResult:
+			case ToolResult:
 				return oai.ToolMessage(block.ID, block.Content), nil
 			default:
 				return nil, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
@@ -148,9 +147,9 @@ func toOpenAIMessage(msg gai.Message) (oai.ChatCompletionMessageParamUnion, erro
 
 		for _, block := range msg.Blocks {
 			switch block.BlockType {
-			case gai.Content:
+			case Content:
 				textContent = append(textContent, oai.TextPart(block.Content))
-			case gai.ToolCall:
+			case ToolCall:
 				// Parse the tool call content
 				var call struct {
 					Name      string          `json:"name"`
@@ -187,18 +186,18 @@ func toOpenAIMessage(msg gai.Message) (oai.ChatCompletionMessageParamUnion, erro
 }
 
 // Register implements gai.ToolRegister
-func (g *generator) Register(tool gai.Tool) error {
+func (g *generator) Register(tool Tool) error {
 	// Validate tool name
 	if tool.Name == "" {
-		return &gai.ToolRegistrationErr{
+		return &ToolRegistrationErr{
 			Tool:  tool.Name,
 			Cause: fmt.Errorf("tool name cannot be empty"),
 		}
 	}
 
 	// Check for special tool choice values
-	if tool.Name == gai.ToolChoiceAuto || tool.Name == gai.ToolChoiceToolsRequired {
-		return &gai.ToolRegistrationErr{
+	if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
+		return &ToolRegistrationErr{
 			Tool:  tool.Name,
 			Cause: fmt.Errorf("tool name cannot be %s", tool.Name),
 		}
@@ -211,7 +210,7 @@ func (g *generator) Register(tool gai.Tool) error {
 
 	// Check for conflicts with existing tools
 	if _, exists := g.tools[tool.Name]; exists {
-		return &gai.ToolRegistrationErr{
+		return &ToolRegistrationErr{
 			Tool:  tool.Name,
 			Cause: fmt.Errorf("tool already registered"),
 		}
@@ -224,9 +223,9 @@ func (g *generator) Register(tool gai.Tool) error {
 }
 
 // Generate implements gai.Generator
-func (g *generator) Generate(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+func (g *generator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
 	if g.client == nil {
-		return gai.Response{}, fmt.Errorf("openai: client not initialized")
+		return Response{}, fmt.Errorf("openai: client not initialized")
 	}
 
 	// Convert each message to OpenAI format
@@ -234,7 +233,7 @@ func (g *generator) Generate(ctx context.Context, dialog gai.Dialog, options *ga
 	for _, msg := range dialog {
 		oaiMsg, err := toOpenAIMessage(msg)
 		if err != nil {
-			return gai.Response{}, fmt.Errorf("failed to convert message: %w", err)
+			return Response{}, fmt.Errorf("failed to convert message: %w", err)
 		}
 		messages = append(messages, oaiMsg)
 	}
@@ -297,9 +296,9 @@ func (g *generator) Generate(ctx context.Context, dialog gai.Dialog, options *ga
 		// Set tool choice if specified
 		if options.ToolChoice != "" {
 			switch options.ToolChoice {
-			case gai.ToolChoiceAuto:
+			case ToolChoiceAuto:
 				params.ToolChoice = oai.F(oai.ChatCompletionToolChoiceOptionUnionParam(oai.ChatCompletionToolChoiceOptionAuto("auto")))
-			case gai.ToolChoiceToolsRequired:
+			case ToolChoiceToolsRequired:
 				params.ToolChoice = oai.F(oai.ChatCompletionToolChoiceOptionUnionParam(oai.ChatCompletionToolChoiceOptionAuto("required")))
 			default:
 				// Specific tool name
@@ -325,34 +324,34 @@ func (g *generator) Generate(ctx context.Context, dialog gai.Dialog, options *ga
 	// Make the API call
 	resp, err := g.client.New(ctx, params)
 	if err != nil {
-		return gai.Response{}, fmt.Errorf("failed to create new message: %w", err)
+		return Response{}, fmt.Errorf("failed to create new message: %w", err)
 	}
 
 	// Convert OpenAI response to our Response type
-	result := gai.Response{
-		UsageMetrics: make(gai.Metrics),
+	result := Response{
+		UsageMetrics: make(Metrics),
 	}
 
 	// Add usage metrics if available
 	if usage := resp.Usage; usage.PromptTokens > 0 || usage.CompletionTokens > 0 {
 		if promptTokens := usage.PromptTokens; promptTokens > 0 {
-			result.UsageMetrics[gai.UsageMetricInputTokens] = int(promptTokens)
+			result.UsageMetrics[UsageMetricInputTokens] = int(promptTokens)
 		}
 		if completionTokens := usage.CompletionTokens; completionTokens > 0 {
-			result.UsageMetrics[gai.UsageMetricGenerationTokens] = int(completionTokens)
+			result.UsageMetrics[UsageMetricGenerationTokens] = int(completionTokens)
 		}
 	}
 
 	// Convert all choices to our Message type
 	for _, choice := range resp.Choices {
 		// Convert the message content
-		var blocks []gai.Block
+		var blocks []Block
 
 		// Handle text content
 		if content := choice.Message.Content; content != "" {
-			blocks = append(blocks, gai.Block{
-				BlockType:    gai.Content,
-				ModalityType: gai.Text,
+			blocks = append(blocks, Block{
+				BlockType:    Content,
+				ModalityType: Text,
 				Content:      content,
 			})
 		}
@@ -367,20 +366,20 @@ func (g *generator) Generate(ctx context.Context, dialog gai.Dialog, options *ga
 				}
 				toolCallJSON, err := json.Marshal(toolCallContent)
 				if err != nil {
-					return gai.Response{}, fmt.Errorf("failed to marshal tool call: %w", err)
+					return Response{}, fmt.Errorf("failed to marshal tool call: %w", err)
 				}
 
-				blocks = append(blocks, gai.Block{
+				blocks = append(blocks, Block{
 					ID:           toolCall.ID,
-					BlockType:    gai.ToolCall,
-					ModalityType: gai.Text,
+					BlockType:    ToolCall,
+					ModalityType: Text,
 					Content:      string(toolCallJSON),
 				})
 			}
 		}
 
-		result.Candidates = append(result.Candidates, gai.Message{
-			Role:   gai.Assistant,
+		result.Candidates = append(result.Candidates, Message{
+			Role:   Assistant,
 			Blocks: blocks,
 		})
 	}
@@ -389,13 +388,13 @@ func (g *generator) Generate(ctx context.Context, dialog gai.Dialog, options *ga
 	if len(resp.Choices) > 0 {
 		switch resp.Choices[0].FinishReason {
 		case oai.ChatCompletionChoicesFinishReasonStop:
-			result.FinishReason = gai.EndTurn
+			result.FinishReason = EndTurn
 		case oai.ChatCompletionChoicesFinishReasonLength:
-			result.FinishReason = gai.MaxGenerationLimit
+			result.FinishReason = MaxGenerationLimit
 		case oai.ChatCompletionChoicesFinishReasonToolCalls:
-			result.FinishReason = gai.ToolUse
+			result.FinishReason = ToolUse
 		default:
-			result.FinishReason = gai.Unknown
+			result.FinishReason = Unknown
 		}
 	}
 
@@ -407,7 +406,7 @@ type ChatCompletionService interface {
 }
 
 // New creates a new OpenAI generator with the specified model.
-func New(client ChatCompletionService, model, systemInstructions string) gai.Generator {
+func New(client ChatCompletionService, model, systemInstructions string) Generator {
 	return &generator{
 		client:             client,
 		systemInstructions: systemInstructions,
@@ -416,5 +415,5 @@ func New(client ChatCompletionService, model, systemInstructions string) gai.Gen
 	}
 }
 
-var _ gai.Generator = (*generator)(nil)
-var _ gai.ToolRegister = (*generator)(nil)
+var _ Generator = (*generator)(nil)
+var _ ToolRegister = (*generator)(nil)

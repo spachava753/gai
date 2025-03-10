@@ -1,4 +1,4 @@
-package openai
+package gai
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 
 	oai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
-	"github.com/spachava753/gai"
 )
 
 // mockChatCompletionService is a mock implementation of ChatCompletionService
@@ -22,13 +21,13 @@ func (m *mockChatCompletionService) New(ctx context.Context, body oai.ChatComple
 
 func TestGenerate(t *testing.T) {
 	// Create a simple test dialog
-	testDialog := gai.Dialog{
+	testDialog := Dialog{
 		{
-			Role: gai.User,
-			Blocks: []gai.Block{
+			Role: User,
+			Blocks: []Block{
 				{
-					BlockType:    gai.Content,
-					ModalityType: gai.Text,
+					BlockType:    Content,
+					ModalityType: Text,
 					Content:      "Hello, how are you?",
 				},
 			},
@@ -36,33 +35,33 @@ func TestGenerate(t *testing.T) {
 	}
 
 	// Create a test dialog with multiple messages
-	multiMessageDialog := gai.Dialog{
+	multiMessageDialog := Dialog{
 		{
-			Role: gai.User,
-			Blocks: []gai.Block{
+			Role: User,
+			Blocks: []Block{
 				{
-					BlockType:    gai.Content,
-					ModalityType: gai.Text,
+					BlockType:    Content,
+					ModalityType: Text,
 					Content:      "What's the weather like?",
 				},
 			},
 		},
 		{
-			Role: gai.Assistant,
-			Blocks: []gai.Block{
+			Role: Assistant,
+			Blocks: []Block{
 				{
-					BlockType:    gai.Content,
-					ModalityType: gai.Text,
+					BlockType:    Content,
+					ModalityType: Text,
 					Content:      "I'll check the weather for you. Where are you located?",
 				},
 			},
 		},
 		{
-			Role: gai.User,
-			Blocks: []gai.Block{
+			Role: User,
+			Blocks: []Block{
 				{
-					BlockType:    gai.Content,
-					ModalityType: gai.Text,
+					BlockType:    Content,
+					ModalityType: Text,
 					Content:      "San Francisco",
 				},
 			},
@@ -70,41 +69,41 @@ func TestGenerate(t *testing.T) {
 	}
 
 	// Test with single stop sequence
-	singleStopOptions := &gai.GenOpts{
+	singleStopOptions := &GenOpts{
 		Temperature:   0.7,
 		StopSequences: []string{"stop"},
 	}
 
 	// Create a dialog with a tool result that the assistant will use in its response
-	toolResultDialog := gai.Dialog{
+	toolResultDialog := Dialog{
 		{
-			Role: gai.User,
-			Blocks: []gai.Block{
+			Role: User,
+			Blocks: []Block{
 				{
-					BlockType:    gai.Content,
-					ModalityType: gai.Text,
+					BlockType:    Content,
+					ModalityType: Text,
 					Content:      "What's the weather like in London?",
 				},
 			},
 		},
 		{
-			Role: gai.Assistant,
-			Blocks: []gai.Block{
+			Role: Assistant,
+			Blocks: []Block{
 				{
 					ID:           "call_789",
-					BlockType:    gai.ToolCall,
-					ModalityType: gai.Text,
+					BlockType:    ToolCall,
+					ModalityType: Text,
 					Content:      `{"name":"get_weather","arguments":{"location":"London"}}`,
 				},
 			},
 		},
 		{
-			Role: gai.Assistant,
-			Blocks: []gai.Block{
+			Role: Assistant,
+			Blocks: []Block{
 				{
 					ID:           "call_789",
-					BlockType:    gai.ToolResult,
-					ModalityType: gai.Text,
+					BlockType:    ToolResult,
+					ModalityType: Text,
 					Content:      "The weather in London is 15°C and cloudy with a 30% chance of rain.",
 				},
 			},
@@ -112,12 +111,12 @@ func TestGenerate(t *testing.T) {
 	}
 
 	// Standard options for tests
-	testOptions := &gai.GenOpts{
+	testOptions := &GenOpts{
 		Temperature: 0.7,
 	}
 
 	// Advanced options for testing more parameters
-	advancedOptions := &gai.GenOpts{
+	advancedOptions := &GenOpts{
 		Temperature:         0.5,
 		TopP:                0.9,
 		TopK:                10,
@@ -126,7 +125,7 @@ func TestGenerate(t *testing.T) {
 		MaxGenerationTokens: 100,
 		N:                   2,
 		StopSequences:       []string{"stop"},
-		ToolChoice:          gai.ToolChoiceToolsRequired,
+		ToolChoice:          ToolChoiceToolsRequired,
 	}
 
 	// Typical successful response
@@ -248,9 +247,9 @@ func TestGenerate(t *testing.T) {
 	tests := []struct {
 		name     string
 		client   *mockChatCompletionService
-		dialog   gai.Dialog
-		options  *gai.GenOpts
-		want     gai.Response
+		dialog   Dialog
+		options  *GenOpts
+		want     Response
 		wantErr  bool
 		errorMsg string
 	}{
@@ -262,7 +261,7 @@ func TestGenerate(t *testing.T) {
 			},
 			dialog:   testDialog,
 			options:  testOptions,
-			want:     gai.Response{},
+			want:     Response{},
 			wantErr:  true,
 			errorMsg: "failed to create new message: request timeout: deadline exceeded",
 		},
@@ -274,7 +273,7 @@ func TestGenerate(t *testing.T) {
 			},
 			dialog:   testDialog,
 			options:  testOptions,
-			want:     gai.Response{},
+			want:     Response{},
 			wantErr:  true,
 			errorMsg: "failed to create new message: rate limit exceeded, please try again later",
 		},
@@ -286,23 +285,23 @@ func TestGenerate(t *testing.T) {
 			},
 			dialog:  testDialog,
 			options: testOptions,
-			want: gai.Response{
-				Candidates: []gai.Message{
+			want: Response{
+				Candidates: []Message{
 					{
-						Role: gai.Assistant,
-						Blocks: []gai.Block{
+						Role: Assistant,
+						Blocks: []Block{
 							{
-								BlockType:    gai.Content,
-								ModalityType: gai.Text,
+								BlockType:    Content,
+								ModalityType: Text,
 								Content:      "I'm doing well, thank you for asking!",
 							},
 						},
 					},
 				},
-				FinishReason: gai.EndTurn,
-				UsageMetrics: gai.Metrics{
-					gai.UsageMetricInputTokens:      10,
-					gai.UsageMetricGenerationTokens: 9,
+				FinishReason: EndTurn,
+				UsageMetrics: Metrics{
+					UsageMetricInputTokens:      10,
+					UsageMetricGenerationTokens: 9,
 				},
 			},
 			wantErr: false,
@@ -315,24 +314,24 @@ func TestGenerate(t *testing.T) {
 			},
 			dialog:  testDialog,
 			options: testOptions,
-			want: gai.Response{
-				Candidates: []gai.Message{
+			want: Response{
+				Candidates: []Message{
 					{
-						Role: gai.Assistant,
-						Blocks: []gai.Block{
+						Role: Assistant,
+						Blocks: []Block{
 							{
 								ID:           "call_123",
-								BlockType:    gai.ToolCall,
-								ModalityType: gai.Text,
+								BlockType:    ToolCall,
+								ModalityType: Text,
 								Content:      `{"name":"get_weather","arguments":{"location":"London"}}`,
 							},
 						},
 					},
 				},
-				FinishReason: gai.ToolUse,
-				UsageMetrics: gai.Metrics{
-					gai.UsageMetricInputTokens:      12,
-					gai.UsageMetricGenerationTokens: 15,
+				FinishReason: ToolUse,
+				UsageMetrics: Metrics{
+					UsageMetricInputTokens:      12,
+					UsageMetricGenerationTokens: 15,
 				},
 			},
 			wantErr: false,
@@ -345,30 +344,30 @@ func TestGenerate(t *testing.T) {
 			},
 			dialog:  testDialog,
 			options: testOptions,
-			want: gai.Response{
-				Candidates: []gai.Message{
+			want: Response{
+				Candidates: []Message{
 					{
-						Role: gai.Assistant,
-						Blocks: []gai.Block{
+						Role: Assistant,
+						Blocks: []Block{
 							{
 								ID:           "call_456",
-								BlockType:    gai.ToolCall,
-								ModalityType: gai.Text,
+								BlockType:    ToolCall,
+								ModalityType: Text,
 								Content:      `{"name":"get_weather","arguments":{"location":"London"}}`,
 							},
 							{
 								ID:           "call_457",
-								BlockType:    gai.ToolCall,
-								ModalityType: gai.Text,
+								BlockType:    ToolCall,
+								ModalityType: Text,
 								Content:      `{"name":"get_time","arguments":{"timezone":"UTC"}}`,
 							},
 						},
 					},
 				},
-				FinishReason: gai.ToolUse,
-				UsageMetrics: gai.Metrics{
-					gai.UsageMetricInputTokens:      12,
-					gai.UsageMetricGenerationTokens: 25,
+				FinishReason: ToolUse,
+				UsageMetrics: Metrics{
+					UsageMetricInputTokens:      12,
+					UsageMetricGenerationTokens: 25,
 				},
 			},
 			wantErr: false,
@@ -381,23 +380,23 @@ func TestGenerate(t *testing.T) {
 			},
 			dialog:  testDialog,
 			options: advancedOptions,
-			want: gai.Response{
-				Candidates: []gai.Message{
+			want: Response{
+				Candidates: []Message{
 					{
-						Role: gai.Assistant,
-						Blocks: []gai.Block{
+						Role: Assistant,
+						Blocks: []Block{
 							{
-								BlockType:    gai.Content,
-								ModalityType: gai.Text,
+								BlockType:    Content,
+								ModalityType: Text,
 								Content:      "I'm doing well, thank you for asking!",
 							},
 						},
 					},
 				},
-				FinishReason: gai.EndTurn,
-				UsageMetrics: gai.Metrics{
-					gai.UsageMetricInputTokens:      10,
-					gai.UsageMetricGenerationTokens: 9,
+				FinishReason: EndTurn,
+				UsageMetrics: Metrics{
+					UsageMetricInputTokens:      10,
+					UsageMetricGenerationTokens: 9,
 				},
 			},
 			wantErr: false,
@@ -410,23 +409,23 @@ func TestGenerate(t *testing.T) {
 			},
 			dialog:  multiMessageDialog,
 			options: testOptions,
-			want: gai.Response{
-				Candidates: []gai.Message{
+			want: Response{
+				Candidates: []Message{
 					{
-						Role: gai.Assistant,
-						Blocks: []gai.Block{
+						Role: Assistant,
+						Blocks: []Block{
 							{
-								BlockType:    gai.Content,
-								ModalityType: gai.Text,
+								BlockType:    Content,
+								ModalityType: Text,
 								Content:      "I'm doing well, thank you for asking!",
 							},
 						},
 					},
 				},
-				FinishReason: gai.EndTurn,
-				UsageMetrics: gai.Metrics{
-					gai.UsageMetricInputTokens:      10,
-					gai.UsageMetricGenerationTokens: 9,
+				FinishReason: EndTurn,
+				UsageMetrics: Metrics{
+					UsageMetricInputTokens:      10,
+					UsageMetricGenerationTokens: 9,
 				},
 			},
 			wantErr: false,
@@ -439,23 +438,23 @@ func TestGenerate(t *testing.T) {
 			},
 			dialog:  toolResultDialog,
 			options: testOptions,
-			want: gai.Response{
-				Candidates: []gai.Message{
+			want: Response{
+				Candidates: []Message{
 					{
-						Role: gai.Assistant,
-						Blocks: []gai.Block{
+						Role: Assistant,
+						Blocks: []Block{
 							{
-								BlockType:    gai.Content,
-								ModalityType: gai.Text,
+								BlockType:    Content,
+								ModalityType: Text,
 								Content:      "Based on the current weather data, it's 15°C and cloudy in London with a 30% chance of rain. You might want to take an umbrella if you're heading out!",
 							},
 						},
 					},
 				},
-				FinishReason: gai.EndTurn,
-				UsageMetrics: gai.Metrics{
-					gai.UsageMetricInputTokens:      25,
-					gai.UsageMetricGenerationTokens: 20,
+				FinishReason: EndTurn,
+				UsageMetrics: Metrics{
+					UsageMetricInputTokens:      25,
+					UsageMetricGenerationTokens: 20,
 				},
 			},
 			wantErr: false,
@@ -468,23 +467,23 @@ func TestGenerate(t *testing.T) {
 			},
 			dialog:  testDialog,
 			options: singleStopOptions,
-			want: gai.Response{
-				Candidates: []gai.Message{
+			want: Response{
+				Candidates: []Message{
 					{
-						Role: gai.Assistant,
-						Blocks: []gai.Block{
+						Role: Assistant,
+						Blocks: []Block{
 							{
-								BlockType:    gai.Content,
-								ModalityType: gai.Text,
+								BlockType:    Content,
+								ModalityType: Text,
 								Content:      "I'm doing well, thank you for asking!",
 							},
 						},
 					},
 				},
-				FinishReason: gai.EndTurn,
-				UsageMetrics: gai.Metrics{
-					gai.UsageMetricInputTokens:      10,
-					gai.UsageMetricGenerationTokens: 9,
+				FinishReason: EndTurn,
+				UsageMetrics: Metrics{
+					UsageMetricInputTokens:      10,
+					UsageMetricGenerationTokens: 9,
 				},
 			},
 			wantErr: false,
@@ -541,7 +540,7 @@ func TestGenerate(t *testing.T) {
 						}
 
 						// For tool calls, check ID
-						if block.BlockType == gai.ToolCall {
+						if block.BlockType == ToolCall {
 							if block.ID != wantBlock.ID {
 								t.Errorf("Generate() tool call ID = %s, want %s",
 									block.ID, wantBlock.ID)
@@ -551,8 +550,8 @@ func TestGenerate(t *testing.T) {
 				}
 
 				// Check usage metrics
-				inputTokens, hasInputTokens := gai.InputTokens(got.UsageMetrics)
-				wantInputTokens, wantHasInputTokens := gai.InputTokens(tt.want.UsageMetrics)
+				inputTokens, hasInputTokens := InputTokens(got.UsageMetrics)
+				wantInputTokens, wantHasInputTokens := InputTokens(tt.want.UsageMetrics)
 
 				if hasInputTokens != wantHasInputTokens {
 					t.Errorf("Generate() has input tokens = %v, want %v",
@@ -564,8 +563,8 @@ func TestGenerate(t *testing.T) {
 						inputTokens, wantInputTokens)
 				}
 
-				outputTokens, hasOutputTokens := gai.OutputTokens(got.UsageMetrics)
-				wantOutputTokens, wantHasOutputTokens := gai.OutputTokens(tt.want.UsageMetrics)
+				outputTokens, hasOutputTokens := OutputTokens(got.UsageMetrics)
+				wantOutputTokens, wantHasOutputTokens := OutputTokens(tt.want.UsageMetrics)
 
 				if hasOutputTokens != wantHasOutputTokens {
 					t.Errorf("Generate() has output tokens = %v, want %v",

@@ -1,33 +1,32 @@
-package openai
+package gai
 
 import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	oai "github.com/openai/openai-go"
-	"github.com/spachava753/gai"
 )
 
 func TestToOpenAIMessage(t *testing.T) {
 	tests := []struct {
 		name    string
-		msg     gai.Message
+		msg     Message
 		want    oai.ChatCompletionMessageParamUnion
 		wantErr bool
 	}{
 		{
 			name: "error: empty blocks",
-			msg: gai.Message{
-				Role:   gai.User,
-				Blocks: []gai.Block{},
+			msg: Message{
+				Role:   User,
+				Blocks: []Block{},
 			},
 			want:    nil,
 			wantErr: true,
 		},
 		{
 			name: "error: nil blocks",
-			msg: gai.Message{
-				Role:   gai.User,
+			msg: Message{
+				Role:   User,
 				Blocks: nil,
 			},
 			want:    nil,
@@ -35,12 +34,12 @@ func TestToOpenAIMessage(t *testing.T) {
 		},
 		{
 			name: "user message",
-			msg: gai.Message{
-				Role: gai.User,
-				Blocks: []gai.Block{
+			msg: Message{
+				Role: User,
+				Blocks: []Block{
 					{
-						BlockType:    gai.Content,
-						ModalityType: gai.Text,
+						BlockType:    Content,
+						ModalityType: Text,
 						Content:      "Hello, how are you?",
 					},
 				},
@@ -50,12 +49,12 @@ func TestToOpenAIMessage(t *testing.T) {
 		},
 		{
 			name: "assistant message",
-			msg: gai.Message{
-				Role: gai.Assistant,
-				Blocks: []gai.Block{
+			msg: Message{
+				Role: Assistant,
+				Blocks: []Block{
 					{
-						BlockType:    gai.Content,
-						ModalityType: gai.Text,
+						BlockType:    Content,
+						ModalityType: Text,
 						Content:      "I'm doing well, thank you!",
 					},
 				},
@@ -65,13 +64,13 @@ func TestToOpenAIMessage(t *testing.T) {
 		},
 		{
 			name: "tool call",
-			msg: gai.Message{
-				Role: gai.Assistant,
-				Blocks: []gai.Block{
+			msg: Message{
+				Role: Assistant,
+				Blocks: []Block{
 					{
 						ID:           "call_123",
-						BlockType:    gai.ToolCall,
-						ModalityType: gai.Text,
+						BlockType:    ToolCall,
+						ModalityType: Text,
 						Content:      `{"name": "get_weather", "arguments": {"location": "London"}}`,
 					},
 				},
@@ -91,13 +90,13 @@ func TestToOpenAIMessage(t *testing.T) {
 		},
 		{
 			name: "tool result",
-			msg: gai.Message{
-				Role: gai.Assistant,
-				Blocks: []gai.Block{
+			msg: Message{
+				Role: Assistant,
+				Blocks: []Block{
 					{
 						ID:           "call_123",
-						BlockType:    gai.ToolResult,
-						ModalityType: gai.Text,
+						BlockType:    ToolResult,
+						ModalityType: Text,
 						Content:      "The current temperature is 72°F",
 					},
 				},
@@ -107,18 +106,18 @@ func TestToOpenAIMessage(t *testing.T) {
 		},
 		{
 			name: "tool call with text",
-			msg: gai.Message{
-				Role: gai.Assistant,
-				Blocks: []gai.Block{
+			msg: Message{
+				Role: Assistant,
+				Blocks: []Block{
 					{
-						BlockType:    gai.Content,
-						ModalityType: gai.Text,
+						BlockType:    Content,
+						ModalityType: Text,
 						Content:      `Let me get the weather for you:`,
 					},
 					{
 						ID:           "call_123",
-						BlockType:    gai.ToolCall,
-						ModalityType: gai.Text,
+						BlockType:    ToolCall,
+						ModalityType: Text,
 						Content:      `{"name": "get_weather", "arguments": {"location": "London"}}`,
 					},
 				},
@@ -141,12 +140,12 @@ func TestToOpenAIMessage(t *testing.T) {
 		},
 		{
 			name: "error: video modality not supported",
-			msg: gai.Message{
-				Role: gai.User,
-				Blocks: []gai.Block{
+			msg: Message{
+				Role: User,
+				Blocks: []Block{
 					{
-						BlockType:    gai.Content,
-						ModalityType: gai.Video,
+						BlockType:    Content,
+						ModalityType: Video,
 						Media:        nil,
 					},
 				},
@@ -156,12 +155,12 @@ func TestToOpenAIMessage(t *testing.T) {
 		},
 		{
 			name: "error: invalid role",
-			msg: gai.Message{
+			msg: Message{
 				Role: 999,
-				Blocks: []gai.Block{
+				Blocks: []Block{
 					{
-						BlockType:    gai.Content,
-						ModalityType: gai.Text,
+						BlockType:    Content,
+						ModalityType: Text,
 						Content:      "Hello",
 					},
 				},
