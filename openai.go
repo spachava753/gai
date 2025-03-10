@@ -10,8 +10,8 @@ import (
 	oai "github.com/openai/openai-go"
 )
 
-// generator implements the gai.Generator interface using OpenAI's API
-type generator struct {
+// OpenAiGenerator implements the gai.Generator interface using OpenAI's API
+type OpenAiGenerator struct {
 	client             ChatCompletionService
 	model              string
 	tools              map[string]oai.ChatCompletionToolParam
@@ -117,13 +117,14 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 				// Parse the tool call content
 				var call struct {
 					Name      string          `json:"name"`
-					Arguments json.RawMessage `json:"arguments"`
+					Arguments json.RawMessage `json:"parameters"`
 				}
 				if err := json.Unmarshal([]byte(block.Content), &call); err != nil {
 					return nil, fmt.Errorf("invalid tool call content: %w", err)
 				}
 
 				return oai.ChatCompletionAssistantMessageParam{
+					Role: oai.F(oai.ChatCompletionAssistantMessageParamRoleAssistant),
 					ToolCalls: oai.F([]oai.ChatCompletionMessageToolCallParam{
 						{
 							ID: oai.F(block.ID),
@@ -131,6 +132,7 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 								Name:      oai.F(call.Name),
 								Arguments: oai.F(string(call.Arguments)),
 							}),
+							Type: oai.F(oai.ChatCompletionMessageToolCallTypeFunction),
 						},
 					}),
 				}, nil
@@ -186,7 +188,7 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 }
 
 // Register implements gai.ToolRegister
-func (g *generator) Register(tool Tool) error {
+func (g *OpenAiGenerator) Register(tool Tool) error {
 	// Validate tool name
 	if tool.Name == "" {
 		return &ToolRegistrationErr{
@@ -223,7 +225,7 @@ func (g *generator) Register(tool Tool) error {
 }
 
 // Generate implements gai.Generator
-func (g *generator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("openai: client not initialized")
 	}
@@ -405,9 +407,9 @@ type ChatCompletionService interface {
 	New(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (res *oai.ChatCompletion, err error)
 }
 
-// New creates a new OpenAI generator with the specified model.
-func New(client ChatCompletionService, model, systemInstructions string) Generator {
-	return &generator{
+// NewOpenAiGenerator creates a new OpenAI generator with the specified model.
+func NewOpenAiGenerator(client ChatCompletionService, model, systemInstructions string) OpenAiGenerator {
+	return OpenAiGenerator{
 		client:             client,
 		systemInstructions: systemInstructions,
 		model:              model,
@@ -415,5 +417,5 @@ func New(client ChatCompletionService, model, systemInstructions string) Generat
 	}
 }
 
-var _ Generator = (*generator)(nil)
-var _ ToolRegister = (*generator)(nil)
+var _ Generator = (*OpenAiGenerator)(nil)
+var _ ToolRegister = (*OpenAiGenerator)(nil)

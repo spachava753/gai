@@ -71,11 +71,12 @@ func TestToOpenAIMessage(t *testing.T) {
 						ID:           "call_123",
 						BlockType:    ToolCall,
 						ModalityType: Text,
-						Content:      `{"name": "get_weather", "arguments": {"location": "London"}}`,
+						Content:      `{"name": "get_weather", "parameters": {"location": "London"}}`,
 					},
 				},
 			},
 			want: oai.ChatCompletionAssistantMessageParam{
+				Role: oai.F(oai.ChatCompletionAssistantMessageParamRoleAssistant),
 				ToolCalls: oai.F([]oai.ChatCompletionMessageToolCallParam{
 					{
 						ID: oai.F("call_123"),
@@ -83,6 +84,7 @@ func TestToOpenAIMessage(t *testing.T) {
 							Name:      oai.F("get_weather"),
 							Arguments: oai.F(`{"location": "London"}`),
 						}),
+						Type: oai.F(oai.ChatCompletionMessageToolCallTypeFunction),
 					},
 				}),
 			},
