@@ -2,6 +2,7 @@ package gai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 )
 
@@ -235,44 +236,10 @@ type ToolCallback interface {
 	Call(ctx context.Context, input map[string]any) (any, error)
 }
 
-// ToolGenerator represents a Generator that can use tools during generation.
-// It extends the basic Generator interface with the ability to register tools
-// and optionally provide callbacks for automatic tool execution.
-//
-// When a tool is registered without a callback, the Generator will pause generation
-// when the tool is called and return a Message containing a ToolCall block. This allows
-// for several use cases:
-//  1. Manual tool execution - caller executes the tool and feeds results back
-//  2. Structured output - tool calls provide structure to generated content
-//  3. Control flow - tools like "finish_execution" to signal completion
-//
-// When a tool is registered with a callback, the Generator will automatically execute
-// the callback when the tool is called and include both the tool call and its result
-// in the returned Message. If the callback returns a value implementing the error
-// interface, it will be treated as a tool execution error and fed back to the Generator.
-//
-// The behavior of tool usage is controlled via GenOpts.ToolChoice:
-//   - ToolChoiceAuto: Generator decides when to use tools
-//   - ToolChoiceToolsRequired: Generator must use at least one tool
-//   - "<tool-name>": Generator must use the specified tool
-//
-// Example usage:
-//
-//	// Manual execution - no callback
-//	g.RegisterTool(Tool{
-//	    Name:        "finish_execution",
-//	    Description: "Signal that the execution is complete",
-//	}, nil)
-//
-//	// Automatic execution with callback
-//	g.RegisterTool(stockPriceTool, &StockAPI{})
-type ToolGenerator interface {
-	Generator
-
-	// RegisterTool adds a tool to the Generator's available tools.
-	// The callback parameter is optional - if nil, tool calls will require manual execution.
+type ToolRegister interface {
+	// Register adds a tool to the Generator's available tools.
 	//
-	// Some ToolGenerator implementations may have built-in tools. In such cases, only
+	// Some Generator implementations may have built-in tools. In such cases, only
 	// the Tool.Name needs to match a built-in tool's name to enable its use. The rest
 	// of the Tool fields (Description, InputSchema) will be ignored in favor of the
 	// built-in tool's definition. The callback behavior remains the same - you can
@@ -284,10 +251,235 @@ type ToolGenerator interface {
 	//  - Tool name conflicts with a built-in tool that's already registered
 	//  - Tool name matches special values ToolChoiceAuto or ToolChoiceToolsRequired
 	//  - Tool schema is invalid (e.g., Array type without Items field)
-	//
-	// Note: ToolGenerator implementations may or may not be safe for concurrent use.
-	// If an implementation is safe for concurrent use, it will be explicitly documented.
-	// When using a goroutine-safe ToolGenerator, ensure any provided ToolCallbacks
-	// are also safe for concurrent use.
-	RegisterTool(tool Tool, callback ToolCallback) error
+	Register(tool Tool) error
+}
+
+type ToolCapableGenerator interface {
+	Generator
+	ToolRegister
+}
+
+// ToolGenerator represents a Generator that can use tools during generation.
+// It extends the basic Generator interface with the ability to register tools
+// with callbacks for automatic tool execution.
+//
+// When a tool is called during generation, ToolGenerator will automatically execute
+// the registered callback and include both the tool call and its result
+// in the returned Message. If the callback returns a value implementing the error
+// interface, it will be treated as a tool execution error and fed as a tool result
+// into the underlying Generator.
+//
+// The behavior of tool usage is controlled via GenOpts.ToolChoice:
+//   - ToolChoiceAuto: Generator decides when to use tools
+//   - ToolChoiceToolsRequired: Generator must use at least one tool
+//   - "<tool-name>": Generator must use the specified tool
+//
+// Example usage:
+//
+//	// Create a ToolGenerator with an underlying generator
+//	toolGen := &ToolGenerator{
+//	    G: myGenerator,
+//	    toolCallbacks: make(map[string]ToolCallback),
+//	}
+//
+//	// Register a tool with automatic execution via callback
+//	toolGen.Register(stockPriceTool, &StockAPI{})
+type ToolGenerator struct {
+	G ToolCapableGenerator
+
+	toolCallbacks map[string]ToolCallback
+}
+
+// Register adds a tool to the ToolGenerator's available tools with a required callback.
+// The callback will be automatically executed when the tool is called during generation.
+//
+// Returns an error if:
+//   - Tool name is empty
+//   - Tool name conflicts with an already registered tool
+//   - Tool name matches special values ToolChoiceAuto or ToolChoiceToolsRequired
+//   - The underlying ToolCapableGenerator's Register method returns an error
+//   - The callback is nil
+func (t *ToolGenerator) Register(tool Tool, callback ToolCallback) error {
+	// Initialize the callbacks map if it doesn't exist
+	if t.toolCallbacks == nil {
+		t.toolCallbacks = make(map[string]ToolCallback)
+	}
+
+	// Check if callback is provided
+	if callback == nil {
+		return &ToolRegistrationErr{
+			Tool:  tool.Name,
+			Cause: fmt.Errorf("callback cannot be nil"),
+		}
+	}
+
+	// Check if the tool is already registered with a callback
+	if _, exists := t.toolCallbacks[tool.Name]; exists {
+		return &ToolRegistrationErr{
+			Tool:  tool.Name,
+			Cause: fmt.Errorf("tool already registered"),
+		}
+	}
+
+	// Register the tool with the underlying generator
+	if err := t.G.Register(tool); err != nil {
+		return err
+	}
+
+	// Store the callback
+	t.toolCallbacks[tool.Name] = callback
+	return nil
+}
+
+// Generate executes the given dialog with the underlying ToolCapableGenerator,
+// handling any tool calls by executing their registered callbacks and feeding
+// the results back into the generator. It returns the complete dialog including
+// all intermediate tool calls, tool results, and the final response.
+//
+// The returned dialog will contain:
+// 1. The original input dialog
+// 2. Any tool call messages from the generator
+// 3. Tool result messages from callback execution
+// 4. The final response from the generator
+//
+// For example, if the generator first calls a location tool and then a weather tool,
+// the returned dialog might look like:
+//
+//	[0] User: "What's the weather where I am?"
+//	[1] Assistant: Tool call to get_location
+//	[2] Assistant: Tool result "New York"
+//	[3] Assistant: Tool call to get_weather with location="New York"
+//	[4] Assistant: Tool result "72°F and sunny"
+//	[5] Assistant: "The weather in New York is 72°F and sunny"
+func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Dialog, error) {
+	// Validate the tool choice if provided
+	if options != nil && options.ToolChoice != "" && options.ToolChoice != ToolChoiceAuto && options.ToolChoice != ToolChoiceToolsRequired {
+		// ToolChoice specifies a specific tool; verify it exists
+		if _, exists := t.toolCallbacks[options.ToolChoice]; !exists {
+			return nil, InvalidToolChoiceErr(fmt.Sprintf("tool '%s' not found", options.ToolChoice))
+		}
+	}
+
+	// Start with a copy of the input dialog
+	currentDialog := make(Dialog, len(dialog))
+	copy(currentDialog, dialog)
+
+	// Loop to handle sequential tool calls
+	for {
+		// Call the underlying generator with the current dialog
+		resp, err := t.G.Generate(ctx, currentDialog, options)
+		if err != nil {
+			return currentDialog, err
+		}
+
+		// Verify the response has exactly one candidate
+		if len(resp.Candidates) != 1 {
+			return currentDialog, fmt.Errorf("expected exactly one candidate in response, got: %d", len(resp.Candidates))
+		}
+
+		// Verify the response has an Assistant role
+		if resp.Candidates[0].Role != Assistant {
+			return currentDialog, fmt.Errorf("expected assistant role in response, got: %v", resp.Candidates[0].Role)
+		}
+
+		// Get the candidate message
+		candidate := resp.Candidates[0]
+
+		// If this isn't a tool call, append the message and return the dialog
+		if resp.FinishReason != ToolUse {
+			currentDialog = append(currentDialog, candidate)
+			return currentDialog, nil
+		}
+
+		// Look for tool calls
+		var toolCallBlocks []Block
+
+		// First pass: collect all tool call blocks
+		for _, block := range candidate.Blocks {
+			if block.BlockType == ToolCall {
+				toolCallBlocks = append(toolCallBlocks, block)
+			}
+		}
+
+		// Append the tool call message to the dialog
+		currentDialog = append(currentDialog, candidate)
+
+		// If no tool calls, return
+		if len(toolCallBlocks) == 0 {
+			return currentDialog, nil
+		}
+
+		// Process tool calls and generate result blocks
+		var toolResultBlocks []Block
+
+		for _, block := range toolCallBlocks {
+			// Parse tool call from the block
+			toolName, toolInput, err := parseToolCall(block.Content)
+			if err != nil {
+				return currentDialog, fmt.Errorf("invalid tool call format: %w", err)
+			}
+
+			// Check if the tool exists
+			callback, exists := t.toolCallbacks[toolName]
+			if !exists {
+				return currentDialog, fmt.Errorf("tool '%s' not found", toolName)
+			}
+
+			// Execute the callback
+			result, callErr := callback.Call(ctx, toolInput)
+
+			// Create a tool result block
+			resultBlock := Block{
+				ID:           block.ID, // Use the same ID to link call and result
+				BlockType:    ToolResult,
+				ModalityType: Text,
+			}
+
+			// Handle callback execution errors versus tool execution errors
+			if callErr != nil {
+				// Callback failed to execute - propagate the error up
+				return currentDialog, callErr
+			} else if resultErr, isErr := result.(error); isErr {
+				// Tool executed but returned an error - feed it back to the generator
+				resultBlock.Content = fmt.Sprintf("Error: %s", resultErr.Error())
+			} else {
+				// Tool executed successfully
+				resultBlock.Content = fmt.Sprintf("%v", result)
+			}
+
+			// Add to tool result blocks
+			toolResultBlocks = append(toolResultBlocks, resultBlock)
+		}
+
+		// Create a message with tool results and append to dialog
+		if len(toolResultBlocks) > 0 {
+			resultMessage := Message{
+				Role:   Assistant,
+				Blocks: toolResultBlocks,
+			}
+
+			// Append the result message to the dialog
+			currentDialog = append(currentDialog, resultMessage)
+		}
+	}
+}
+
+// parseToolCall extracts the tool name and parameters from a tool call content string.
+// Expected format is a JSON object with "name" and "parameters" fields.
+// Returns the tool name, input parameters as a map, and an error if parsing fails.
+func parseToolCall(content string) (string, map[string]any, error) {
+	var callData struct {
+		Name       string         `json:"name"`
+		Parameters map[string]any `json:"parameters"`
+	}
+
+	if err := json.Unmarshal([]byte(content), &callData); err != nil {
+		return "", nil, fmt.Errorf("invalid tool call JSON: %w", err)
+	}
+
+	if callData.Name == "" {
+		return "", nil, fmt.Errorf("missing tool name")
+	}
+
+	return callData.Name, callData.Parameters, nil
 }

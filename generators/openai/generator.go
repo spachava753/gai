@@ -9,7 +9,6 @@ import (
 
 	oai "github.com/openai/openai-go"
 	"github.com/spachava753/gai"
-	"github.com/spachava753/gai/generators/internal"
 )
 
 // registeredTool represents a tool that has been registered with the generator
@@ -438,15 +437,14 @@ type ChatCompletionService interface {
 }
 
 // New creates a new OpenAI generator with the specified model.
-func New(client ChatCompletionService, model, systemInstructions string) gai.ToolGenerator {
-	g := internal.NewToolMiddleware(&generator{
+func New(client ChatCompletionService, model, systemInstructions string) gai.Generator {
+	return &generator{
 		client:             client,
 		systemInstructions: systemInstructions,
 		model:              model,
 		tools:              make(map[string]registeredTool),
-	})
-	return &g
+	}
 }
 
-var _ gai.Generator = (*generator)(nil)
-var _ gai.ToolGenerator = (*generator)(nil)
+//var _ gai.Generator = (*generator)(nil)
+//var _ gai.ToolGenerator = (*generator)(nil)
