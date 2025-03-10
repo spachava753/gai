@@ -388,11 +388,11 @@ func (g *generator) Generate(ctx context.Context, dialog gai.Dialog, options *ga
 	// Set finish reason
 	if len(resp.Choices) > 0 {
 		switch resp.Choices[0].FinishReason {
-		case "stop":
+		case oai.ChatCompletionChoicesFinishReasonStop:
 			result.FinishReason = gai.EndTurn
-		case "length":
+		case oai.ChatCompletionChoicesFinishReasonLength:
 			result.FinishReason = gai.MaxGenerationLimit
-		case "tool_calls":
+		case oai.ChatCompletionChoicesFinishReasonToolCalls:
 			result.FinishReason = gai.ToolUse
 		default:
 			result.FinishReason = gai.Unknown
