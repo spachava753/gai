@@ -431,7 +431,7 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, options *Ge
 			// Create a tool result block
 			resultBlock := Block{
 				ID:           block.ID, // Use the same ID to link call and result
-				BlockType:    ToolResult,
+				BlockType:    Content,
 				ModalityType: Text,
 			}
 
@@ -454,7 +454,7 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, options *Ge
 		// Create a message with tool results and append to dialog
 		if len(toolResultBlocks) > 0 {
 			resultMessage := Message{
-				Role:   Assistant,
+				Role:   ToolResult,
 				Blocks: toolResultBlocks,
 			}
 

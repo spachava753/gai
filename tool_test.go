@@ -309,7 +309,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 
 				// Check tool result message
 				toolResult := dialog[2]
-				if toolResult.Role != Assistant || len(toolResult.Blocks) != 1 || toolResult.Blocks[0].BlockType != ToolResult {
+				if toolResult.Role != ToolResult || len(toolResult.Blocks) != 1 {
 					t.Errorf("Expected tool result message")
 				}
 				if toolResult.Blocks[0].Content != "12:34 PM" {
@@ -470,7 +470,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 
 				// Check tool result message has both results
 				toolResults := dialog[2]
-				if toolResults.Role != Assistant || len(toolResults.Blocks) != 2 {
+				if toolResults.Role != ToolResult || len(toolResults.Blocks) != 2 {
 					t.Errorf("Expected tool result message with 2 results")
 				}
 
@@ -625,7 +625,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 				}
 
 				locationResult := dialog[2]
-				if locationResult.Role != Assistant || len(locationResult.Blocks) != 1 || locationResult.Blocks[0].BlockType != ToolResult {
+				if locationResult.Role != ToolResult || len(locationResult.Blocks) != 1 {
 					t.Errorf("Expected location tool result message")
 				}
 				if locationResult.Blocks[0].Content != "New York" {
@@ -639,7 +639,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 				}
 
 				weatherResult := dialog[4]
-				if weatherResult.Role != Assistant || len(weatherResult.Blocks) != 1 || weatherResult.Blocks[0].BlockType != ToolResult {
+				if weatherResult.Role != ToolResult || len(weatherResult.Blocks) != 1 {
 					t.Errorf("Expected weather tool result message")
 				}
 				if weatherResult.Blocks[0].Content != "72°F and sunny" {

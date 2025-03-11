@@ -98,11 +98,10 @@ func TestGenerate(t *testing.T) {
 			},
 		},
 		{
-			Role: Assistant,
+			Role: ToolResult,
 			Blocks: []Block{
 				{
 					ID:           "call_789",
-					BlockType:    ToolResult,
 					ModalityType: Text,
 					Content:      "The weather in London is 15°C and cloudy with a 30% chance of rain.",
 				},

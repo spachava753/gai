@@ -93,11 +93,11 @@ func TestToOpenAIMessage(t *testing.T) {
 		{
 			name: "tool result",
 			msg: Message{
-				Role: Assistant,
+				Role: ToolResult,
 				Blocks: []Block{
 					{
 						ID:           "call_123",
-						BlockType:    ToolResult,
+						BlockType:    Content,
 						ModalityType: Text,
 						Content:      "The current temperature is 72°F",
 					},

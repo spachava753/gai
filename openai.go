@@ -93,12 +93,7 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 		}
 	}
 
-	// Check if any block is a tool result - it must be the only block in the message
-	for _, block := range msg.Blocks {
-		if block.BlockType == ToolResult && len(msg.Blocks) > 1 {
-			return nil, fmt.Errorf("tool result block must be in its own message")
-		}
-	}
+	// If the message is a ToolResult, it'll be handled in the switch statement below
 
 	switch msg.Role {
 	case User:
@@ -194,8 +189,6 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 					}),
 					Type: oai.F(oai.ChatCompletionMessageToolCallTypeFunction),
 				})
-			case ToolResult:
-				return oai.ToolMessage(block.ID, block.Content), nil
 			default:
 				return nil, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
 			}
@@ -216,6 +209,18 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 			})
 		}
 		return result, nil
+		
+	case ToolResult:
+		// For ToolResult messages, we convert them to OpenAI's tool message format
+		if len(msg.Blocks) == 0 {
+			return nil, fmt.Errorf("tool result message must have at least one block")
+		}
+		
+		// Get the ID from the first block and use its content
+		toolID := msg.Blocks[0].ID
+		content := msg.Blocks[0].Content
+		
+		return oai.ToolMessage(toolID, content), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported role: %v", msg.Role)

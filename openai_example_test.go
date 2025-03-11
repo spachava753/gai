@@ -113,11 +113,10 @@ Only output the price, like
 	fmt.Println(resp.Candidates[0].Blocks[0].Content)
 
 	dialog = append(dialog, resp.Candidates[0], Message{
-		Role: Assistant,
+		Role: ToolResult,
 		Blocks: []Block{
 			{
 				ID:           resp.Candidates[0].Blocks[0].ID,
-				BlockType:    ToolResult,
 				ModalityType: Text,
 				Content:      "123.45",
 			},
