@@ -2,10 +2,13 @@ package gai
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/shared"
+	"slices"
+	"strings"
 
 	oai "github.com/openai/openai-go"
 )
@@ -100,62 +103,84 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 	switch msg.Role {
 	case User:
 		// User messages should only have Content blocks
-		if len(msg.Blocks) != 1 || msg.Blocks[0].BlockType != Content {
-			return nil, fmt.Errorf("unsupported block type for user: %v", msg.Blocks[0].BlockType)
-		}
-		return oai.UserMessage(msg.Blocks[0].Content), nil
-
-	case Assistant:
-		// Handle different assistant message types
-		if len(msg.Blocks) == 1 {
-			block := msg.Blocks[0]
-			switch block.BlockType {
-			case Content:
-				// TODO: handle multi modality, like images
-				return oai.AssistantMessage(block.Content), nil
-			case ToolCall:
-				// Parse the tool call content
-				var call struct {
-					Name      string          `json:"name"`
-					Arguments json.RawMessage `json:"parameters"`
-				}
-				if err := json.Unmarshal([]byte(block.Content), &call); err != nil {
-					return nil, fmt.Errorf("invalid tool call content: %w", err)
-				}
-
-				return oai.ChatCompletionAssistantMessageParam{
-					Role: oai.F(oai.ChatCompletionAssistantMessageParamRoleAssistant),
-					ToolCalls: oai.F([]oai.ChatCompletionMessageToolCallParam{
-						{
-							ID: oai.F(block.ID),
-							Function: oai.F(oai.ChatCompletionMessageToolCallFunctionParam{
-								Name:      oai.F(call.Name),
-								Arguments: oai.F(string(call.Arguments)),
-							}),
-							Type: oai.F(oai.ChatCompletionMessageToolCallTypeFunction),
-						},
-					}),
-				}, nil
-			case ToolResult:
-				return oai.ToolMessage(block.ID, block.Content), nil
-			default:
-				return nil, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
+		for _, block := range msg.Blocks {
+			if block.BlockType != Content {
+				return nil, fmt.Errorf("unsupported block type for user: %v", block.BlockType)
 			}
 		}
 
-		// Handle multiple blocks - tool results are not allowed here
-		var textContent []oai.ChatCompletionAssistantMessageParamContentUnion
+		// Handle multimodal content
+		var parts []oai.ChatCompletionContentPartUnionParam
+		for _, block := range msg.Blocks {
+			switch block.ModalityType {
+			case Text:
+				parts = append(parts, oai.ChatCompletionContentPartTextParam{
+					Type: oai.F(oai.ChatCompletionContentPartTextTypeText),
+					Text: oai.F(block.Content),
+				})
+			case Image:
+				// Convert image media to an image part
+				if block.Media.Mimetype == "" {
+					return nil, fmt.Errorf("image media missing mimetype")
+				}
+				dataUrl := fmt.Sprintf("data:%s;base64,%s",
+					block.Media.Mimetype,
+					base64.StdEncoding.EncodeToString(block.Media.Body))
+				parts = append(parts, oai.ChatCompletionContentPartImageParam{
+					Type: oai.F(oai.ChatCompletionContentPartImageTypeImageURL),
+					ImageURL: oai.F(oai.ChatCompletionContentPartImageImageURLParam{
+						URL: oai.F(dataUrl),
+					}),
+				})
+			case Audio:
+				// Convert audio media to an audio input part
+				if block.Media.Mimetype == "" {
+					return nil, fmt.Errorf("audio media missing mimetype")
+				}
+				// Extract format from mimetype (e.g., "audio/wav" -> "wav")
+				format, _ := strings.CutPrefix(block.Media.Mimetype, "audio/")
+				if !slices.Contains([]string{"wav", "mp3"}, format) {
+					return nil, fmt.Errorf("unsupported audio format: %v", block.Media.Mimetype)
+				}
+				parts = append(parts, oai.ChatCompletionContentPartInputAudioParam{
+					Type: oai.F(oai.ChatCompletionContentPartInputAudioTypeInputAudio),
+					InputAudio: oai.F(oai.ChatCompletionContentPartInputAudioInputAudioParam{
+						Data:   oai.F(base64.StdEncoding.EncodeToString(block.Media.Body)),
+						Format: oai.F(oai.ChatCompletionContentPartInputAudioInputAudioFormat(format)),
+					}),
+				})
+			default:
+				return nil, fmt.Errorf("unsupported modality for user: %v", block.ModalityType)
+			}
+		}
+
+		return oai.UserMessageParts(parts...), nil
+
+	case Assistant:
+		// Handle multiple blocks
+		var contentParts []oai.ChatCompletionAssistantMessageParamContentUnion
 		var toolCalls []oai.ChatCompletionMessageToolCallParam
+		var audioID string
 
 		for _, block := range msg.Blocks {
 			switch block.BlockType {
 			case Content:
-				textContent = append(textContent, oai.TextPart(block.Content))
+				if block.ModalityType == Text {
+					contentParts = append(contentParts, oai.TextPart(block.Content))
+				} else if block.ModalityType == Audio {
+					if block.ID == "" {
+						return nil, fmt.Errorf("assistant audio block missing ID")
+					}
+					// Remember audio ID for later use
+					audioID = block.ID
+				} else {
+					return nil, fmt.Errorf("unsupported modality in multi-block assistant message: %v", block.ModalityType)
+				}
 			case ToolCall:
 				// Parse the tool call content
 				var call struct {
-					Name      string          `json:"name"`
-					Arguments json.RawMessage `json:"arguments"`
+					Name       string          `json:"name"`
+					Parameters json.RawMessage `json:"parameters"`
 				}
 				if err := json.Unmarshal([]byte(block.Content), &call); err != nil {
 					return nil, fmt.Errorf("invalid tool call content: %w", err)
@@ -165,20 +190,30 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 					ID: oai.F(block.ID),
 					Function: oai.F(oai.ChatCompletionMessageToolCallFunctionParam{
 						Name:      oai.F(call.Name),
-						Arguments: oai.F(string(call.Arguments)),
+						Arguments: oai.F(string(call.Parameters)),
 					}),
+					Type: oai.F(oai.ChatCompletionMessageToolCallTypeFunction),
 				})
+			case ToolResult:
+				return oai.ToolMessage(block.ID, block.Content), nil
 			default:
 				return nil, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
 			}
 		}
 
-		result := oai.ChatCompletionAssistantMessageParam{}
-		if len(textContent) > 0 {
-			result.Content = oai.F(textContent)
+		result := oai.ChatCompletionAssistantMessageParam{
+			Role: oai.F(oai.ChatCompletionAssistantMessageParamRoleAssistant),
+		}
+		if len(contentParts) > 0 {
+			result.Content = oai.F(contentParts)
 		}
 		if len(toolCalls) > 0 {
 			result.ToolCalls = oai.F(toolCalls)
+		}
+		if audioID != "" {
+			result.Audio = oai.F(oai.ChatCompletionAssistantMessageParamAudio{
+				ID: oai.F(audioID),
+			})
 		}
 		return result, nil
 
@@ -305,11 +340,53 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 			default:
 				// Specific tool name
 				params.ToolChoice = oai.F(oai.ChatCompletionToolChoiceOptionUnionParam(oai.ChatCompletionNamedToolChoiceParam{
-					Type: oai.F(oai.ChatCompletionNamedToolChoiceTypeFunction),
+					Type: oai.F(oai.ChatCompletionNamedToolChoiceType("function")),
 					Function: oai.F(oai.ChatCompletionNamedToolChoiceFunctionParam{
 						Name: oai.F(options.ToolChoice),
 					}),
 				}))
+			}
+		}
+
+		// Handle multimodality options
+		if len(options.OutputModalities) > 0 {
+			// Set requested modalities
+			modalities := make([]oai.ChatCompletionModality, 0, len(options.OutputModalities))
+			hasAudio := false
+			for _, m := range options.OutputModalities {
+				switch m {
+				case Text:
+					modalities = append(modalities, oai.ChatCompletionModalityText)
+				case Audio:
+					modalities = append(modalities, oai.ChatCompletionModalityAudio)
+					hasAudio = true
+				case Image:
+					return Response{}, UnsupportedOutputModalityErr("image output not supported by model")
+				case Video:
+					return Response{}, UnsupportedOutputModalityErr("video output not supported by model")
+				}
+			}
+			params.Modalities = oai.F(modalities)
+
+			// Set audio configuration if audio output is requested
+			if hasAudio {
+				if options.AudioConfig.VoiceName == "" {
+					return Response{}, InvalidParameterErr{
+						Parameter: "AudioConfig.VoiceName",
+						Reason:    "voice name is required for audio output",
+					}
+				}
+				if options.AudioConfig.Format == "" {
+					return Response{}, InvalidParameterErr{
+						Parameter: "AudioConfig.Format",
+						Reason:    "format is required for audio output",
+					}
+				}
+
+				params.Audio = oai.F(oai.ChatCompletionAudioParam{
+					Voice:  oai.F(oai.ChatCompletionAudioParamVoice(options.AudioConfig.VoiceName)),
+					Format: oai.F(oai.ChatCompletionAudioParamFormat(options.AudioConfig.Format)),
+				})
 			}
 		}
 	}
@@ -356,6 +433,32 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 				ModalityType: Text,
 				Content:      content,
 			})
+		}
+
+		// Handle audio content if present
+		if choice.Message.Audio.ID != "" {
+			// Convert from base64
+			if audioData, err := base64.StdEncoding.DecodeString(choice.Message.Audio.Data); err == nil {
+				// Add audio block
+				blocks = append(blocks, Block{
+					ID:           choice.Message.Audio.ID,
+					BlockType:    Content,
+					ModalityType: Audio,
+					Media: Media{
+						Mimetype: "audio/" + options.AudioConfig.Format, // Default to WAV as the format is not included in response
+						Body:     audioData,
+					},
+				})
+
+				// Add transcript as a separate text block if available
+				if choice.Message.Audio.Transcript != "" {
+					blocks = append(blocks, Block{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      choice.Message.Audio.Transcript,
+					})
+				}
+			}
 		}
 
 		// Handle tool calls

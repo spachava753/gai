@@ -120,11 +120,12 @@ func TestToOpenAIMessage(t *testing.T) {
 						ID:           "call_123",
 						BlockType:    ToolCall,
 						ModalityType: Text,
-						Content:      `{"name": "get_weather", "arguments": {"location": "London"}}`,
+						Content:      `{"name": "get_weather", "parameters": {"location": "London"}}`,
 					},
 				},
 			},
 			want: oai.ChatCompletionAssistantMessageParam{
+				Role: oai.F(oai.ChatCompletionAssistantMessageParamRoleAssistant),
 				Content: oai.F([]oai.ChatCompletionAssistantMessageParamContentUnion{
 					oai.TextPart(`Let me get the weather for you:`),
 				}),
@@ -135,6 +136,7 @@ func TestToOpenAIMessage(t *testing.T) {
 							Name:      oai.F("get_weather"),
 							Arguments: oai.F(`{"location": "London"}`),
 						}),
+						Type: oai.F(oai.ChatCompletionMessageToolCallTypeFunction),
 					},
 				}),
 			},
@@ -169,6 +171,123 @@ func TestToOpenAIMessage(t *testing.T) {
 			},
 			want:    nil,
 			wantErr: true,
+		},
+		{
+			name: "multimodal user message with text and image",
+			msg: Message{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      "What's in this image?",
+					},
+					{
+						BlockType:    Content,
+						ModalityType: Image,
+						Media: Media{
+							Mimetype: "image/jpeg",
+							Body:     []byte("fake-image-data"),
+						},
+					},
+				},
+			},
+			want: oai.UserMessageParts(
+				oai.ChatCompletionContentPartTextParam{
+					Type: oai.F(oai.ChatCompletionContentPartTextTypeText),
+					Text: oai.F("What's in this image?"),
+				},
+				oai.ChatCompletionContentPartImageParam{
+					Type: oai.F(oai.ChatCompletionContentPartImageTypeImageURL),
+					ImageURL: oai.F(oai.ChatCompletionContentPartImageImageURLParam{
+						URL: oai.F("data:image/jpeg;base64,ZmFrZS1pbWFnZS1kYXRh"),
+					}),
+				},
+			),
+			wantErr: false,
+		},
+		{
+			name: "multimodal user message with text and audio",
+			msg: Message{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      "What's in this audio?",
+					},
+					{
+						BlockType:    Content,
+						ModalityType: Audio,
+						Media: Media{
+							Mimetype: "audio/wav",
+							Body:     []byte("fake-audio-data"),
+						},
+					},
+				},
+			},
+			want: oai.UserMessageParts(
+				oai.ChatCompletionContentPartTextParam{
+					Type: oai.F(oai.ChatCompletionContentPartTextTypeText),
+					Text: oai.F("What's in this audio?"),
+				},
+				oai.ChatCompletionContentPartInputAudioParam{
+					Type: oai.F(oai.ChatCompletionContentPartInputAudioTypeInputAudio),
+					InputAudio: oai.F(oai.ChatCompletionContentPartInputAudioInputAudioParam{
+						Data:   oai.F("ZmFrZS1hdWRpby1kYXRh"),
+						Format: oai.F(oai.ChatCompletionContentPartInputAudioInputAudioFormatWAV),
+					}),
+				},
+			),
+			wantErr: false,
+		},
+		{
+			name: "assistant message with audio ID",
+			msg: Message{
+				Role: Assistant,
+				Blocks: []Block{
+					{
+						ID:           "audio_abc123",
+						BlockType:    Content,
+						ModalityType: Audio,
+					},
+				},
+			},
+			want: oai.ChatCompletionAssistantMessageParam{
+				Role: oai.F(oai.ChatCompletionAssistantMessageParamRoleAssistant),
+				Audio: oai.F(oai.ChatCompletionAssistantMessageParamAudio{
+					ID: oai.F("audio_abc123"),
+				}),
+			},
+			wantErr: false,
+		},
+		{
+			name: "assistant message with text and audio ID",
+			msg: Message{
+				Role: Assistant,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      "Here's my response:",
+					},
+					{
+						ID:           "audio_abc123",
+						BlockType:    Content,
+						ModalityType: Audio,
+					},
+				},
+			},
+			want: oai.ChatCompletionAssistantMessageParam{
+				Role: oai.F(oai.ChatCompletionAssistantMessageParamRoleAssistant),
+				Content: oai.F([]oai.ChatCompletionAssistantMessageParamContentUnion{
+					oai.TextPart("Here's my response:"),
+				}),
+				Audio: oai.F(oai.ChatCompletionAssistantMessageParamAudio{
+					ID: oai.F("audio_abc123"),
+				}),
+			},
+			wantErr: false,
 		},
 	}
 

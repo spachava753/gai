@@ -3,7 +3,7 @@ package gai
 import (
 	"encoding/base64"
 	"encoding/json"
-	"reflect"
+	"github.com/google/go-cmp/cmp"
 	"testing"
 )
 
@@ -16,7 +16,7 @@ func TestMedia_MarshalJSON(t *testing.T) {
 	}
 
 	// Marshal to JSON
-	jsonData, err := json.Marshal(media)
+	jsonData, err := json.Marshal(&media)
 	if err != nil {
 		t.Fatalf("Failed to marshal Media: %v", err)
 	}
@@ -34,8 +34,8 @@ func TestMedia_MarshalJSON(t *testing.T) {
 	}
 
 	// Compare actual and expected maps
-	if !reflect.DeepEqual(actualMap, expectedMap) {
-		t.Errorf("JSON content mismatch\nGot:      %v\nExpected: %v", actualMap, expectedMap)
+	if diff := cmp.Diff(actualMap, expectedMap); diff != "" {
+		t.Errorf("JSON content mismatch\ndiff:\n%s", diff)
 	}
 }
 
@@ -43,7 +43,7 @@ func TestMedia_UnmarshalJSON(t *testing.T) {
 	// Create test data
 	testBody := []byte("test binary data")
 	encodedBody := base64.StdEncoding.EncodeToString(testBody)
-	
+
 	// Create JSON with base64 encoded body
 	jsonData, err := json.Marshal(map[string]interface{}{
 		"mimetype": "application/octet-stream",
@@ -63,9 +63,9 @@ func TestMedia_UnmarshalJSON(t *testing.T) {
 	if media.Mimetype != "application/octet-stream" {
 		t.Errorf("Mimetype mismatch\nGot:      %s\nExpected: %s", media.Mimetype, "application/octet-stream")
 	}
-	
-	if !reflect.DeepEqual(media.Body, testBody) {
-		t.Errorf("Body mismatch\nGot:      %v\nExpected: %v", media.Body, testBody)
+
+	if diff := cmp.Diff(media.Body, testBody); diff != "" {
+		t.Errorf("Body mismatch\ndiff:\n%s", diff)
 	}
 }
 
@@ -90,12 +90,11 @@ func TestMedia_RoundTrip(t *testing.T) {
 
 	// Compare original and decoded
 	if decoded.Mimetype != original.Mimetype {
-		t.Errorf("Mimetype mismatch after round trip\nGot:      %s\nExpected: %s", 
+		t.Errorf("Mimetype mismatch after round trip\nGot:      %s\nExpected: %s",
 			decoded.Mimetype, original.Mimetype)
 	}
-	
-	if !reflect.DeepEqual(decoded.Body, original.Body) {
-		t.Errorf("Body mismatch after round trip\nGot:      %v\nExpected: %v", 
-			decoded.Body, original.Body)
+
+	if diff := cmp.Diff(decoded.Body, original.Body); diff != "" {
+		t.Errorf("Body mismatch after round trip\ndiff:\n%s", diff)
 	}
 }
