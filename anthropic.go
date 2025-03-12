@@ -150,10 +150,31 @@ func toAnthropicMessage(msg Message) (a.BetaMessageParam, error) {
 		return result, nil
 
 	case ToolResult:
-		// TODO: since we support multiple blocks for the tool result in this generator, check that all of blocks have the same tool use id
+		// Validate that all blocks have the same tool use ID
+		if len(msg.Blocks) == 0 {
+			return a.BetaMessageParam{}, fmt.Errorf("tool result message must have at least one block")
+		}
+
+		// Get the ID from the first block
+		toolUseID := msg.Blocks[0].ID
+		if toolUseID == "" {
+			return a.BetaMessageParam{}, fmt.Errorf("tool result message must have a tool use ID")
+		}
+
+		// Check that all blocks have the same tool use ID
+		for i, block := range msg.Blocks {
+			if block.ID != toolUseID {
+				return a.BetaMessageParam{}, fmt.Errorf(
+					"all blocks in a tool result message must have the same tool use ID (block %d has ID %q, expected %q)",
+					i,
+					block.ID,
+					toolUseID,
+				)
+			}
+		}
 
 		resultContent := a.BetaToolResultBlockParam{
-			ToolUseID: a.F(msg.Blocks[0].ID),
+			ToolUseID: a.F(toolUseID),
 			Type:      a.F(a.BetaToolResultBlockParamTypeToolResult),
 			IsError:   a.F(msg.ToolResultError),
 		}
