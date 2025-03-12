@@ -19,7 +19,7 @@ func ExampleOpenAiGenerator_Generate() {
 				{
 					BlockType:    Content,
 					ModalityType: Text,
-					Content:      "Hi!",
+					Content:      Str("Hi!"),
 				},
 			},
 		},
@@ -95,7 +95,7 @@ Only output the price, like
 				{
 					BlockType:    Content,
 					ModalityType: Text,
-					Content:      "What is the price of Apple stock?",
+					Content:      Str("What is the price of Apple stock?"),
 				},
 			},
 		},
@@ -118,7 +118,7 @@ Only output the price, like
 			{
 				ID:           resp.Candidates[0].Blocks[0].ID,
 				ModalityType: Text,
-				Content:      "123.45",
+				Content:      Str("123.45"),
 			},
 		},
 	})

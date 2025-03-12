@@ -414,7 +414,7 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, options *Ge
 
 		for _, block := range toolCallBlocks {
 			// Parse tool call from the block
-			toolName, toolInput, err := parseToolCall(block.Content)
+			toolName, toolInput, err := parseToolCall(block.Content.String())
 			if err != nil {
 				return currentDialog, fmt.Errorf("invalid tool call format: %w", err)
 			}
@@ -433,6 +433,7 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, options *Ge
 				ID:           block.ID, // Use the same ID to link call and result
 				BlockType:    Content,
 				ModalityType: Text,
+				MimeType:     "text/plain",
 			}
 
 			// Handle callback execution errors versus tool execution errors
@@ -441,10 +442,10 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, options *Ge
 				return currentDialog, callErr
 			} else if resultErr, isErr := result.(error); isErr {
 				// Tool executed but returned an error - feed it back to the generator
-				resultBlock.Content = fmt.Sprintf("Error: %s", resultErr.Error())
+				resultBlock.Content = Str(fmt.Sprintf("Error: %s", resultErr.Error()))
 			} else {
 				// Tool executed successfully
-				resultBlock.Content = fmt.Sprintf("%v", result)
+				resultBlock.Content = Str(fmt.Sprintf("%v", result))
 			}
 
 			// Add to tool result blocks

@@ -40,7 +40,7 @@ func TestToOpenAIMessage(t *testing.T) {
 					{
 						BlockType:    Content,
 						ModalityType: Text,
-						Content:      "Hello, how are you?",
+						Content:      Str("Hello, how are you?"),
 					},
 				},
 			},
@@ -55,7 +55,7 @@ func TestToOpenAIMessage(t *testing.T) {
 					{
 						BlockType:    Content,
 						ModalityType: Text,
-						Content:      "I'm doing well, thank you!",
+						Content:      Str("I'm doing well, thank you!"),
 					},
 				},
 			},
@@ -71,7 +71,7 @@ func TestToOpenAIMessage(t *testing.T) {
 						ID:           "call_123",
 						BlockType:    ToolCall,
 						ModalityType: Text,
-						Content:      `{"name": "get_weather", "parameters": {"location": "London"}}`,
+						Content:      Str(`{"name": "get_weather", "parameters": {"location": "London"}}`),
 					},
 				},
 			},
@@ -99,7 +99,7 @@ func TestToOpenAIMessage(t *testing.T) {
 						ID:           "call_123",
 						BlockType:    Content,
 						ModalityType: Text,
-						Content:      "The current temperature is 72°F",
+						Content:      Str("The current temperature is 72°F"),
 					},
 				},
 			},
@@ -114,13 +114,13 @@ func TestToOpenAIMessage(t *testing.T) {
 					{
 						BlockType:    Content,
 						ModalityType: Text,
-						Content:      `Let me get the weather for you:`,
+						Content:      Str(`Let me get the weather for you:`),
 					},
 					{
 						ID:           "call_123",
 						BlockType:    ToolCall,
 						ModalityType: Text,
-						Content:      `{"name": "get_weather", "parameters": {"location": "London"}}`,
+						Content:      Str(`{"name": "get_weather", "parameters": {"location": "London"}}`),
 					},
 				},
 			},
@@ -150,7 +150,7 @@ func TestToOpenAIMessage(t *testing.T) {
 					{
 						BlockType:    Content,
 						ModalityType: Video,
-						Media:        Media{},
+						Content:      Str("fake-base64-data"),
 					},
 				},
 			},
@@ -165,7 +165,7 @@ func TestToOpenAIMessage(t *testing.T) {
 					{
 						BlockType:    Content,
 						ModalityType: Text,
-						Content:      "Hello",
+						Content:      Str("Hello"),
 					},
 				},
 			},
@@ -180,15 +180,13 @@ func TestToOpenAIMessage(t *testing.T) {
 					{
 						BlockType:    Content,
 						ModalityType: Text,
-						Content:      "What's in this image?",
+						Content:      Str("What's in this image?"),
 					},
 					{
 						BlockType:    Content,
 						ModalityType: Image,
-						Media: Media{
-							Mimetype: "image/jpeg",
-							Body:     []byte("fake-image-data"),
-						},
+						MimeType:     "image/jpeg",
+						Content:      Str("fake-image-base64-data"),
 					},
 				},
 			},
@@ -200,7 +198,7 @@ func TestToOpenAIMessage(t *testing.T) {
 				oai.ChatCompletionContentPartImageParam{
 					Type: oai.F(oai.ChatCompletionContentPartImageTypeImageURL),
 					ImageURL: oai.F(oai.ChatCompletionContentPartImageImageURLParam{
-						URL: oai.F("data:image/jpeg;base64,ZmFrZS1pbWFnZS1kYXRh"),
+						URL: oai.F("data:image/jpeg;base64,fake-image-base64-data"),
 					}),
 				},
 			),
@@ -214,15 +212,13 @@ func TestToOpenAIMessage(t *testing.T) {
 					{
 						BlockType:    Content,
 						ModalityType: Text,
-						Content:      "What's in this audio?",
+						Content:      Str("What's in this audio?"),
 					},
 					{
 						BlockType:    Content,
 						ModalityType: Audio,
-						Media: Media{
-							Mimetype: "audio/wav",
-							Body:     []byte("fake-audio-data"),
-						},
+						MimeType:     "audio/wav",
+						Content:      Str("fake-audio-base64-data"),
 					},
 				},
 			},
@@ -234,7 +230,7 @@ func TestToOpenAIMessage(t *testing.T) {
 				oai.ChatCompletionContentPartInputAudioParam{
 					Type: oai.F(oai.ChatCompletionContentPartInputAudioTypeInputAudio),
 					InputAudio: oai.F(oai.ChatCompletionContentPartInputAudioInputAudioParam{
-						Data:   oai.F("ZmFrZS1hdWRpby1kYXRh"),
+						Data:   oai.F("fake-audio-base64-data"),
 						Format: oai.F(oai.ChatCompletionContentPartInputAudioInputAudioFormatWAV),
 					}),
 				},
@@ -269,7 +265,7 @@ func TestToOpenAIMessage(t *testing.T) {
 					{
 						BlockType:    Content,
 						ModalityType: Text,
-						Content:      "Here's my response:",
+						Content:      Str("Here's my response:"),
 					},
 					{
 						ID:           "audio_abc123",

@@ -186,7 +186,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 	}{
 		{
 			name:   "successful generation without tool calls",
-			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: "Hello"}}}},
+			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Hello")}}}},
 			options: &GenOpts{
 				ToolChoice: ToolChoiceAuto,
 			},
@@ -201,7 +201,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 									{
 										BlockType:    Content,
 										ModalityType: Text,
-										Content:      "Hi there!",
+										Content:      Str("Hi there!"),
 									},
 								},
 							},
@@ -215,14 +215,14 @@ func TestToolGenerator_Generate(t *testing.T) {
 				if len(dialog) != 2 {
 					t.Errorf("Expected 2 messages in dialog, got %d", len(dialog))
 				}
-				if dialog[1].Role != Assistant || dialog[1].Blocks[0].Content != "Hi there!" {
+				if dialog[1].Role != Assistant || dialog[1].Blocks[0].Content.String() != "Hi there!" {
 					t.Errorf("Expected final message to be Assistant saying 'Hi there!'")
 				}
 			},
 		},
 		{
 			name:   "invalid tool choice",
-			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: "Hello"}}}},
+			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Hello")}}}},
 			options: &GenOpts{
 				ToolChoice: "nonexistent_tool",
 			},
@@ -233,7 +233,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 		},
 		{
 			name:   "successful tool call execution",
-			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: "What time is it?"}}}},
+			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("What time is it?")}}}},
 			options: &GenOpts{
 				ToolChoice: ToolChoiceAuto,
 			},
@@ -262,7 +262,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 											ID:           "time_call_1",
 											BlockType:    ToolCall,
 											ModalityType: Text,
-											Content:      `{"name":"get_time","parameters":{}}`,
+											Content:      Str(`{"name":"get_time","parameters":{}}`),
 										},
 									},
 								},
@@ -278,7 +278,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 										{
 											BlockType:    Content,
 											ModalityType: Text,
-											Content:      "The current time is 12:34 PM",
+											Content:      Str("The current time is 12:34 PM"),
 										},
 									},
 								},
@@ -312,8 +312,8 @@ func TestToolGenerator_Generate(t *testing.T) {
 				if toolResult.Role != ToolResult || len(toolResult.Blocks) != 1 {
 					t.Errorf("Expected tool result message")
 				}
-				if toolResult.Blocks[0].Content != "12:34 PM" {
-					t.Errorf("Expected tool result '12:34 PM', got %q", toolResult.Blocks[0].Content)
+				if toolResult.Blocks[0].Content.String() != "12:34 PM" {
+					t.Errorf("Expected tool result '12:34 PM', got %q", toolResult.Blocks[0].Content.String())
 				}
 
 				// Check final response
@@ -321,14 +321,14 @@ func TestToolGenerator_Generate(t *testing.T) {
 				if final.Role != Assistant || len(final.Blocks) != 1 {
 					t.Errorf("Expected final message")
 				}
-				if final.Blocks[0].Content != "The current time is 12:34 PM" {
-					t.Errorf("Unexpected final message content: %s", final.Blocks[0].Content)
+				if final.Blocks[0].Content.String() != "The current time is 12:34 PM" {
+					t.Errorf("Unexpected final message content: %s", final.Blocks[0].Content.String())
 				}
 			},
 		},
 		{
 			name:   "tool call with failed callback",
-			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: "What's the weather?"}}}},
+			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("What's the weather?")}}}},
 			options: &GenOpts{
 				ToolChoice: ToolChoiceAuto,
 			},
@@ -359,7 +359,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 										ID:           "weather_call_1",
 										BlockType:    ToolCall,
 										ModalityType: Text,
-										Content:      `{"name":"get_weather","parameters":{"location":"New York"}}`,
+										Content:      Str(`{"name":"get_weather","parameters":{"location":"New York"}}`),
 									},
 								},
 							},
@@ -379,7 +379,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 		},
 		{
 			name:   "multiple parallel tool calls",
-			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: "Compare weather in NYC and LA"}}}},
+			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Compare weather in NYC and LA")}}}},
 			options: &GenOpts{
 				ToolChoice: ToolChoiceToolsRequired,
 			},
@@ -417,13 +417,13 @@ func TestToolGenerator_Generate(t *testing.T) {
 											ID:           "weather_call_1",
 											BlockType:    ToolCall,
 											ModalityType: Text,
-											Content:      `{"name":"get_weather","parameters":{"location":"New York"}}`,
+											Content:      Str(`{"name":"get_weather","parameters":{"location":"New York"}}`),
 										},
 										{
 											ID:           "weather_call_2",
 											BlockType:    ToolCall,
 											ModalityType: Text,
-											Content:      `{"name":"get_weather","parameters":{"location":"Los Angeles"}}`,
+											Content:      Str(`{"name":"get_weather","parameters":{"location":"Los Angeles"}}`),
 										},
 									},
 								},
@@ -439,7 +439,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 										{
 											BlockType:    Content,
 											ModalityType: Text,
-											Content:      "New York is 72°F and sunny, while Los Angeles is 68°F and cloudy",
+											Content:      Str("New York is 72°F and sunny, while Los Angeles is 68°F and cloudy"),
 										},
 									},
 								},
@@ -477,10 +477,10 @@ func TestToolGenerator_Generate(t *testing.T) {
 				// Verify the results
 				var foundNY, foundLA bool
 				for _, block := range toolResults.Blocks {
-					if block.ID == "weather_call_1" && block.Content == "72°F and sunny" {
+					if block.ID == "weather_call_1" && block.Content.String() == "72°F and sunny" {
 						foundNY = true
 					}
-					if block.ID == "weather_call_2" && block.Content == "68°F and cloudy" {
+					if block.ID == "weather_call_2" && block.Content.String() == "68°F and cloudy" {
 						foundLA = true
 					}
 				}
@@ -493,14 +493,14 @@ func TestToolGenerator_Generate(t *testing.T) {
 				if final.Role != Assistant || len(final.Blocks) != 1 {
 					t.Errorf("Expected final message with comparison")
 				}
-				if final.Blocks[0].Content != "New York is 72°F and sunny, while Los Angeles is 68°F and cloudy" {
-					t.Errorf("Unexpected final message content: %s", final.Blocks[0].Content)
+				if final.Blocks[0].Content.String() != "New York is 72°F and sunny, while Los Angeles is 68°F and cloudy" {
+					t.Errorf("Unexpected final message content: %s", final.Blocks[0].Content.String())
 				}
 			},
 		},
 		{
 			name:   "sequential tool calls",
-			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: "What's the weather where I am?"}}}},
+			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("What's the weather where I am?")}}}},
 			options: &GenOpts{
 				ToolChoice: ToolChoiceAuto,
 			},
@@ -552,7 +552,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 											ID:           "location_call",
 											BlockType:    ToolCall,
 											ModalityType: Text,
-											Content:      `{"name":"get_location","parameters":{}}`,
+											Content:      Str(`{"name":"get_location","parameters":{}}`),
 										},
 									},
 								},
@@ -571,7 +571,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 											ID:           "weather_call",
 											BlockType:    ToolCall,
 											ModalityType: Text,
-											Content:      `{"name":"get_weather","parameters":{"location":"New York"}}`,
+											Content:      Str(`{"name":"get_weather","parameters":{"location":"New York"}}`),
 										},
 									},
 								},
@@ -589,7 +589,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 										{
 											BlockType:    Content,
 											ModalityType: Text,
-											Content:      "The weather in New York is 72°F and sunny.",
+											Content:      Str("The weather in New York is 72°F and sunny."),
 										},
 									},
 								},
@@ -628,8 +628,8 @@ func TestToolGenerator_Generate(t *testing.T) {
 				if locationResult.Role != ToolResult || len(locationResult.Blocks) != 1 {
 					t.Errorf("Expected location tool result message")
 				}
-				if locationResult.Blocks[0].Content != "New York" {
-					t.Errorf("Expected location result 'New York', got %q", locationResult.Blocks[0].Content)
+				if locationResult.Blocks[0].Content.String() != "New York" {
+					t.Errorf("Expected location result 'New York', got %q", locationResult.Blocks[0].Content.String())
 				}
 
 				// Check weather tool call and result
@@ -642,8 +642,8 @@ func TestToolGenerator_Generate(t *testing.T) {
 				if weatherResult.Role != ToolResult || len(weatherResult.Blocks) != 1 {
 					t.Errorf("Expected weather tool result message")
 				}
-				if weatherResult.Blocks[0].Content != "72°F and sunny" {
-					t.Errorf("Expected weather result '72°F and sunny', got %q", weatherResult.Blocks[0].Content)
+				if weatherResult.Blocks[0].Content.String() != "72°F and sunny" {
+					t.Errorf("Expected weather result '72°F and sunny', got %q", weatherResult.Blocks[0].Content.String())
 				}
 
 				// Check final response
@@ -651,14 +651,14 @@ func TestToolGenerator_Generate(t *testing.T) {
 				if final.Role != Assistant || len(final.Blocks) != 1 {
 					t.Errorf("Expected final message")
 				}
-				if final.Blocks[0].Content != "The weather in New York is 72°F and sunny." {
-					t.Errorf("Unexpected final message content: %s", final.Blocks[0].Content)
+				if final.Blocks[0].Content.String() != "The weather in New York is 72°F and sunny." {
+					t.Errorf("Unexpected final message content: %s", final.Blocks[0].Content.String())
 				}
 			},
 		},
 		{
 			name:   "non-assistant role in response",
-			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: "Hello"}}}},
+			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Hello")}}}},
 			options: &GenOpts{
 				ToolChoice: ToolChoiceAuto,
 			},
@@ -674,7 +674,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 										ID:           "tool_call_1",
 										BlockType:    ToolCall,
 										ModalityType: Text,
-										Content:      `{"name":"get_time","parameters":{}}`,
+										Content:      Str(`{"name":"get_time","parameters":{}}`),
 									},
 								},
 							},
@@ -694,7 +694,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 		},
 		{
 			name:   "multiple candidates in response",
-			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: "Hello"}}}},
+			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Hello")}}}},
 			options: &GenOpts{
 				ToolChoice: ToolChoiceAuto,
 			},
@@ -710,7 +710,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 										ID:           "tool_call_1",
 										BlockType:    ToolCall,
 										ModalityType: Text,
-										Content:      `{"name":"get_time","parameters":{}}`,
+										Content:      Str(`{"name":"get_time","parameters":{}}`),
 									},
 								},
 							},
@@ -721,7 +721,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 										ID:           "tool_call_2",
 										BlockType:    ToolCall,
 										ModalityType: Text,
-										Content:      `{"name":"get_weather","parameters":{}}`,
+										Content:      Str(`{"name":"get_weather","parameters":{}}`),
 									},
 								},
 							},

@@ -2,7 +2,6 @@ package gai
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/openai/openai-go/option"
@@ -111,16 +110,16 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 			case Text:
 				parts = append(parts, oai.ChatCompletionContentPartTextParam{
 					Type: oai.F(oai.ChatCompletionContentPartTextTypeText),
-					Text: oai.F(block.Content),
+					Text: oai.F(block.Content.String()),
 				})
 			case Image:
-				// Convert image media to an image part
-				if block.Media.Mimetype == "" {
-					return nil, fmt.Errorf("image media missing mimetype")
+				// Convert image content to an image part
+				if block.MimeType == "" {
+					return nil, fmt.Errorf("image block missing mimetype")
 				}
 				dataUrl := fmt.Sprintf("data:%s;base64,%s",
-					block.Media.Mimetype,
-					base64.StdEncoding.EncodeToString(block.Media.Body))
+					block.MimeType,
+					block.Content.String())
 				parts = append(parts, oai.ChatCompletionContentPartImageParam{
 					Type: oai.F(oai.ChatCompletionContentPartImageTypeImageURL),
 					ImageURL: oai.F(oai.ChatCompletionContentPartImageImageURLParam{
@@ -128,19 +127,19 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 					}),
 				})
 			case Audio:
-				// Convert audio media to an audio input part
-				if block.Media.Mimetype == "" {
-					return nil, fmt.Errorf("audio media missing mimetype")
+				// Convert audio content to an audio input part
+				if block.MimeType == "" {
+					return nil, fmt.Errorf("audio block missing mimetype")
 				}
 				// Extract format from mimetype (e.g., "audio/wav" -> "wav")
-				format, _ := strings.CutPrefix(block.Media.Mimetype, "audio/")
+				format, _ := strings.CutPrefix(block.MimeType, "audio/")
 				if !slices.Contains([]string{"wav", "mp3"}, format) {
-					return nil, fmt.Errorf("unsupported audio format: %v", block.Media.Mimetype)
+					return nil, fmt.Errorf("unsupported audio format: %v", block.MimeType)
 				}
 				parts = append(parts, oai.ChatCompletionContentPartInputAudioParam{
 					Type: oai.F(oai.ChatCompletionContentPartInputAudioTypeInputAudio),
 					InputAudio: oai.F(oai.ChatCompletionContentPartInputAudioInputAudioParam{
-						Data:   oai.F(base64.StdEncoding.EncodeToString(block.Media.Body)),
+						Data:   oai.F(block.Content.String()),
 						Format: oai.F(oai.ChatCompletionContentPartInputAudioInputAudioFormat(format)),
 					}),
 				})
@@ -161,7 +160,7 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 			switch block.BlockType {
 			case Content:
 				if block.ModalityType == Text {
-					contentParts = append(contentParts, oai.TextPart(block.Content))
+					contentParts = append(contentParts, oai.TextPart(block.Content.String()))
 				} else if block.ModalityType == Audio {
 					if block.ID == "" {
 						return nil, fmt.Errorf("assistant audio block missing ID")
@@ -177,7 +176,7 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 					Name       string          `json:"name"`
 					Parameters json.RawMessage `json:"parameters"`
 				}
-				if err := json.Unmarshal([]byte(block.Content), &call); err != nil {
+				if err := json.Unmarshal([]byte(block.Content.String()), &call); err != nil {
 					return nil, fmt.Errorf("invalid tool call content: %w", err)
 				}
 
@@ -209,17 +208,17 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 			})
 		}
 		return result, nil
-		
+
 	case ToolResult:
 		// For ToolResult messages, we convert them to OpenAI's tool message format
 		if len(msg.Blocks) == 0 {
 			return nil, fmt.Errorf("tool result message must have at least one block")
 		}
-		
+
 		// Get the ID from the first block and use its content
 		toolID := msg.Blocks[0].ID
-		content := msg.Blocks[0].Content
-		
+		content := msg.Blocks[0].Content.String()
+
 		return oai.ToolMessage(toolID, content), nil
 
 	default:
@@ -436,33 +435,30 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 			blocks = append(blocks, Block{
 				BlockType:    Content,
 				ModalityType: Text,
-				Content:      content,
+				MimeType:     "text/plain",
+				Content:      Str(content),
 			})
 		}
 
 		// Handle audio content if present
 		if choice.Message.Audio.ID != "" {
-			// Convert from base64
-			if audioData, err := base64.StdEncoding.DecodeString(choice.Message.Audio.Data); err == nil {
-				// Add audio block
-				blocks = append(blocks, Block{
-					ID:           choice.Message.Audio.ID,
-					BlockType:    Content,
-					ModalityType: Audio,
-					Media: Media{
-						Mimetype: "audio/" + options.AudioConfig.Format, // Default to WAV as the format is not included in response
-						Body:     audioData,
-					},
-				})
+			// Add audio block
+			blocks = append(blocks, Block{
+				ID:           choice.Message.Audio.ID,
+				BlockType:    Content,
+				ModalityType: Audio,
+				MimeType:     "audio/" + options.AudioConfig.Format,
+				Content:      Str(choice.Message.Audio.Data),
+			})
 
-				// Add transcript as a separate text block if available
-				if choice.Message.Audio.Transcript != "" {
-					blocks = append(blocks, Block{
-						BlockType:    Content,
-						ModalityType: Text,
-						Content:      choice.Message.Audio.Transcript,
-					})
-				}
+			// Add transcript as a separate text block if available
+			if choice.Message.Audio.Transcript != "" {
+				blocks = append(blocks, Block{
+					BlockType:    Content,
+					ModalityType: Text,
+					MimeType:     "text/plain",
+					Content:      Str(choice.Message.Audio.Transcript),
+				})
 			}
 		}
 
@@ -483,7 +479,8 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 					ID:           toolCall.ID,
 					BlockType:    ToolCall,
 					ModalityType: Text,
-					Content:      string(toolCallJSON),
+					MimeType:     "application/json",
+					Content:      Str(toolCallJSON),
 				})
 			}
 		}

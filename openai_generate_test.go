@@ -28,7 +28,7 @@ func TestGenerate(t *testing.T) {
 				{
 					BlockType:    Content,
 					ModalityType: Text,
-					Content:      "Hello, how are you?",
+					Content:      Str("Hello, how are you?"),
 				},
 			},
 		},
@@ -42,7 +42,7 @@ func TestGenerate(t *testing.T) {
 				{
 					BlockType:    Content,
 					ModalityType: Text,
-					Content:      "What's the weather like?",
+					Content:      Str("What's the weather like?"),
 				},
 			},
 		},
@@ -52,7 +52,7 @@ func TestGenerate(t *testing.T) {
 				{
 					BlockType:    Content,
 					ModalityType: Text,
-					Content:      "I'll check the weather for you. Where are you located?",
+					Content:      Str("I'll check the weather for you. Where are you located?"),
 				},
 			},
 		},
@@ -62,7 +62,7 @@ func TestGenerate(t *testing.T) {
 				{
 					BlockType:    Content,
 					ModalityType: Text,
-					Content:      "San Francisco",
+					Content:      Str("San Francisco"),
 				},
 			},
 		},
@@ -82,7 +82,7 @@ func TestGenerate(t *testing.T) {
 				{
 					BlockType:    Content,
 					ModalityType: Text,
-					Content:      "What's the weather like in London?",
+					Content:      Str("What's the weather like in London?"),
 				},
 			},
 		},
@@ -93,7 +93,7 @@ func TestGenerate(t *testing.T) {
 					ID:           "call_789",
 					BlockType:    ToolCall,
 					ModalityType: Text,
-					Content:      `{"name":"get_weather","arguments":{"location":"London"}}`,
+					Content:      Str(`{"name":"get_weather","arguments":{"location":"London"}}`),
 				},
 			},
 		},
@@ -103,7 +103,7 @@ func TestGenerate(t *testing.T) {
 				{
 					ID:           "call_789",
 					ModalityType: Text,
-					Content:      "The weather in London is 15°C and cloudy with a 30% chance of rain.",
+					Content:      Str("The weather in London is 15°C and cloudy with a 30% chance of rain."),
 				},
 			},
 		},
@@ -292,7 +292,7 @@ func TestGenerate(t *testing.T) {
 							{
 								BlockType:    Content,
 								ModalityType: Text,
-								Content:      "I'm doing well, thank you for asking!",
+								Content:      Str("I'm doing well, thank you for asking!"),
 							},
 						},
 					},
@@ -322,7 +322,7 @@ func TestGenerate(t *testing.T) {
 								ID:           "call_123",
 								BlockType:    ToolCall,
 								ModalityType: Text,
-								Content:      `{"name":"get_weather","arguments":{"location":"London"}}`,
+								Content:      Str(`{"name":"get_weather","arguments":{"location":"London"}}`),
 							},
 						},
 					},
@@ -352,13 +352,13 @@ func TestGenerate(t *testing.T) {
 								ID:           "call_456",
 								BlockType:    ToolCall,
 								ModalityType: Text,
-								Content:      `{"name":"get_weather","arguments":{"location":"London"}}`,
+								Content:      Str(`{"name":"get_weather","arguments":{"location":"London"}}`),
 							},
 							{
 								ID:           "call_457",
 								BlockType:    ToolCall,
 								ModalityType: Text,
-								Content:      `{"name":"get_time","arguments":{"timezone":"UTC"}}`,
+								Content:      Str(`{"name":"get_time","arguments":{"timezone":"UTC"}}`),
 							},
 						},
 					},
@@ -387,7 +387,7 @@ func TestGenerate(t *testing.T) {
 							{
 								BlockType:    Content,
 								ModalityType: Text,
-								Content:      "I'm doing well, thank you for asking!",
+								Content:      Str("I'm doing well, thank you for asking!"),
 							},
 						},
 					},
@@ -416,7 +416,7 @@ func TestGenerate(t *testing.T) {
 							{
 								BlockType:    Content,
 								ModalityType: Text,
-								Content:      "I'm doing well, thank you for asking!",
+								Content:      Str("I'm doing well, thank you for asking!"),
 							},
 						},
 					},
@@ -445,7 +445,7 @@ func TestGenerate(t *testing.T) {
 							{
 								BlockType:    Content,
 								ModalityType: Text,
-								Content:      "Based on the current weather data, it's 15°C and cloudy in London with a 30% chance of rain. You might want to take an umbrella if you're heading out!",
+								Content:      Str("Based on the current weather data, it's 15°C and cloudy in London with a 30% chance of rain. You might want to take an umbrella if you're heading out!"),
 							},
 						},
 					},
@@ -474,7 +474,7 @@ func TestGenerate(t *testing.T) {
 							{
 								BlockType:    Content,
 								ModalityType: Text,
-								Content:      "I'm doing well, thank you for asking!",
+								Content:      Str("I'm doing well, thank you for asking!"),
 							},
 						},
 					},
