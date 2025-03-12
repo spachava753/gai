@@ -9,7 +9,7 @@ import (
 	"github.com/openai/openai-go/option"
 )
 
-// mockChatCompletionService is a mock implementation of ChatCompletionService
+// mockChatCompletionService is a mock implementation of OpenAICompletionService
 type mockChatCompletionService struct {
 	response *oai.ChatCompletion
 	err      error

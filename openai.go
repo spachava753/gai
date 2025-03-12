@@ -14,7 +14,7 @@ import (
 
 // OpenAiGenerator implements the gai.Generator interface using OpenAI's API
 type OpenAiGenerator struct {
-	client             ChatCompletionService
+	client             OpenAICompletionService
 	model              string
 	tools              map[string]oai.ChatCompletionToolParam
 	systemInstructions string
@@ -211,8 +211,11 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 
 	case ToolResult:
 		// For ToolResult messages, we convert them to OpenAI's tool message format
-		if len(msg.Blocks) == 0 {
-			return nil, fmt.Errorf("tool result message must have at least one block")
+		if len(msg.Blocks) != 0 {
+			return nil, fmt.Errorf("tool result message must have exactly one block")
+		}
+		if !strings.HasPrefix(msg.Blocks[0].MimeType, "text/") {
+			return nil, fmt.Errorf("tool result message must be of type text")
 		}
 
 		// Get the ID from the first block and use its content
@@ -508,12 +511,12 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	return result, nil
 }
 
-type ChatCompletionService interface {
+type OpenAICompletionService interface {
 	New(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (res *oai.ChatCompletion, err error)
 }
 
 // NewOpenAiGenerator creates a new OpenAI generator with the specified model.
-func NewOpenAiGenerator(client ChatCompletionService, model, systemInstructions string) OpenAiGenerator {
+func NewOpenAiGenerator(client OpenAICompletionService, model, systemInstructions string) OpenAiGenerator {
 	return OpenAiGenerator{
 		client:             client,
 		systemInstructions: systemInstructions,

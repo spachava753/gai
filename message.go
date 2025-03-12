@@ -81,6 +81,8 @@ type Message struct {
 
 	// Blocks represents the collection of different blocks produced by the User or Assistant
 	Blocks []Block
+
+	ToolResultError bool
 }
 
 // Dialog represents a dialog between a User and Assistant
