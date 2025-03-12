@@ -70,7 +70,7 @@ Only output the price, like
 	)
 
 	// Register tools
-	weatherTool := Tool{
+	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
 		InputSchema: InputSchema{
@@ -84,7 +84,7 @@ Only output the price, like
 			Required: []string{"ticker"},
 		},
 	}
-	if err := gen.Register(weatherTool); err != nil {
+	if err := gen.Register(tickerTool); err != nil {
 		panic(err.Error())
 	}
 
@@ -129,6 +129,81 @@ Only output the price, like
 	}
 	fmt.Println(resp.Candidates[0].Blocks[0].Content)
 
+	// Special case, parallel tool use
+
+	// Instantiate a OpenAI Generator
+	gen = NewOpenAiGenerator(
+		client.Chat.Completions,
+		openai.ChatModelGPT4oMini,
+		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
+Only mentioned the ticker and nothing else.
+
+Only output the price, like
+<example>
+User: Which one is more expensive? Apple or NVidia?
+Assistant: calls get_stock_price for both Apple and Nvidia
+Tool Result: Apple: 123.45; Nvidia: 345.65
+Assistant: Nvidia
+</example>
+`,
+	)
+
+	// Register tools
+	tickerTool.Description += "\nYou can call this tool in parallel"
+	if err := gen.Register(tickerTool); err != nil {
+		panic(err.Error())
+	}
+
+	dialog = Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("Which stock, Apple vs. Microsoft, is more expensive?"),
+				},
+			},
+		},
+	}
+
+	// Generate a response
+	resp, err = gen.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		panic(err.Error())
+	}
+	fmt.Println(resp.Candidates[0].Blocks[0].Content)
+	fmt.Println(resp.Candidates[0].Blocks[1].Content)
+
+	dialog = append(dialog, resp.Candidates[0], Message{
+		Role: ToolResult,
+		Blocks: []Block{
+			{
+				ID:           resp.Candidates[0].Blocks[0].ID,
+				ModalityType: Text,
+				Content:      Str("123.45"),
+			},
+		},
+	}, Message{
+		Role: ToolResult,
+		Blocks: []Block{
+			{
+				ID:           resp.Candidates[0].Blocks[1].ID,
+				ModalityType: Text,
+				Content:      Str("678.45"),
+			},
+		},
+	})
+
+	resp, err = gen.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		panic(err.Error())
+	}
+	fmt.Println(resp.Candidates[0].Blocks[0].Content)
+
 	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
 	// 123.45
+	// {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
+	// {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
+	// MSFT
 }
