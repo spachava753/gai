@@ -163,19 +163,22 @@ func toAnthropicMessage(msg Message) (a.BetaMessageParam, error) {
 					Type: a.F(a.BetaTextBlockParamTypeText),
 				})
 			case ToolCall:
-				// Parse the tool call content
-				var call struct {
-					Name       string          `json:"name"`
-					Parameters json.RawMessage `json:"parameters"`
-				}
-				if err := json.Unmarshal([]byte(block.Content.String()), &call); err != nil {
+				// Parse the tool call content as ToolUseInput
+				var toolUse ToolUseInput
+				if err := json.Unmarshal([]byte(block.Content.String()), &toolUse); err != nil {
 					return a.BetaMessageParam{}, fmt.Errorf("invalid tool call content: %w", err)
+				}
+
+				// Convert parameters to JSON for Anthropic
+				inputJSON, err := json.Marshal(toolUse.Parameters)
+				if err != nil {
+					return a.BetaMessageParam{}, fmt.Errorf("failed to marshal tool parameters: %w", err)
 				}
 
 				contentParts = append(contentParts, &a.BetaToolUseBlockParam{
 					ID:    a.F(block.ID),
-					Name:  a.F(call.Name),
-					Input: a.F[interface{}](call.Parameters),
+					Name:  a.F(toolUse.Name),
+					Input: a.F[interface{}](json.RawMessage(inputJSON)),
 					Type:  a.F(a.BetaToolUseBlockParamTypeToolUse),
 				})
 			default:
@@ -432,15 +435,24 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 				Content:      Str(contentPart.Text),
 			})
 		case a.BetaContentBlockTypeToolUse:
-			inputJson, err := json.Marshal(contentPart.Input)
-			if err != nil {
-				return Response{}, fmt.Errorf("failed to marshal input: %w", err)
+			// Create a ToolUseInput with standardized format
+			toolUse := ToolUseInput{
+				Name:       contentPart.Name,
+				Parameters: contentPart.Input.(map[string]interface{}),
 			}
+			
+			// Marshal to JSON for consistent representation
+			toolUseJSON, err := json.Marshal(toolUse)
+			if err != nil {
+				return Response{}, fmt.Errorf("failed to marshal tool use: %w", err)
+			}
+			
 			blocks = append(blocks, Block{
 				ID:           contentPart.ID,
 				BlockType:    ToolCall,
 				ModalityType: Text,
-				Content:      Str(inputJson),
+				MimeType:     "application/json",
+				Content:      Str(string(toolUseJSON)),
 			})
 		case a.BetaContentBlockTypeThinking:
 			blocks = append(blocks, Block{

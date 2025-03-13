@@ -465,22 +465,26 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, options *Ge
 	}
 }
 
+// ToolUseInput represents a standardized format for tool use in all generators.
+// It contains the name of the tool to use and the parameters to pass to it.
+type ToolUseInput struct {
+	Name       string         `json:"name"`
+	Parameters map[string]any `json:"parameters"`
+}
+
 // parseToolCall extracts the tool name and parameters from a tool call content string.
 // Expected format is a JSON object with "name" and "parameters" fields.
 // Returns the tool name, input parameters as a map, and an error if parsing fails.
 func parseToolCall(content string) (string, map[string]any, error) {
-	var callData struct {
-		Name       string         `json:"name"`
-		Parameters map[string]any `json:"parameters"`
-	}
+	var toolCall ToolUseInput
 
-	if err := json.Unmarshal([]byte(content), &callData); err != nil {
+	if err := json.Unmarshal([]byte(content), &toolCall); err != nil {
 		return "", nil, fmt.Errorf("invalid tool call JSON: %w", err)
 	}
 
-	if callData.Name == "" {
+	if toolCall.Name == "" {
 		return "", nil, fmt.Errorf("missing tool name")
 	}
 
-	return callData.Name, callData.Parameters, nil
+	return toolCall.Name, toolCall.Parameters, nil
 }

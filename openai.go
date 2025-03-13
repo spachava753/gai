@@ -171,20 +171,23 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 					return nil, fmt.Errorf("unsupported modality in multi-block assistant message: %v", block.ModalityType)
 				}
 			case ToolCall:
-				// Parse the tool call content
-				var call struct {
-					Name       string          `json:"name"`
-					Parameters json.RawMessage `json:"parameters"`
-				}
-				if err := json.Unmarshal([]byte(block.Content.String()), &call); err != nil {
+				// Parse the tool call content as ToolUseInput
+				var toolUse ToolUseInput
+				if err := json.Unmarshal([]byte(block.Content.String()), &toolUse); err != nil {
 					return nil, fmt.Errorf("invalid tool call content: %w", err)
+				}
+
+				// Convert parameters to JSON string for OpenAI
+				argsJSON, err := json.Marshal(toolUse.Parameters)
+				if err != nil {
+					return nil, fmt.Errorf("failed to marshal tool parameters: %w", err)
 				}
 
 				toolCalls = append(toolCalls, oai.ChatCompletionMessageToolCallParam{
 					ID: oai.F(block.ID),
 					Function: oai.F(oai.ChatCompletionMessageToolCallFunctionParam{
-						Name:      oai.F(call.Name),
-						Arguments: oai.F(string(call.Parameters)),
+						Name:      oai.F(toolUse.Name),
+						Arguments: oai.F(string(argsJSON)),
 					}),
 					Type: oai.F(oai.ChatCompletionMessageToolCallTypeFunction),
 				})
@@ -211,17 +214,26 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 
 	case ToolResult:
 		// For ToolResult messages, we convert them to OpenAI's tool message format
-		if len(msg.Blocks) != 0 {
-			return nil, fmt.Errorf("tool result message must have exactly one block")
+		if len(msg.Blocks) == 0 {
+			return nil, fmt.Errorf("tool result message must have at least one block")
 		}
-		if !strings.HasPrefix(msg.Blocks[0].MimeType, "text/") {
-			return nil, fmt.Errorf("tool result message must be of type text")
-		}
-
+		
 		// Get the ID from the first block and use its content
 		toolID := msg.Blocks[0].ID
-		content := msg.Blocks[0].Content.String()
-
+		if toolID == "" {
+			return nil, fmt.Errorf("tool result message block must have an ID")
+		}
+		
+		// Combine content from all blocks with the same ID
+		var contentBuilder strings.Builder
+		for _, block := range msg.Blocks {
+			if block.ID != toolID {
+				return nil, fmt.Errorf("all blocks in tool result message must have the same ID")
+			}
+			contentBuilder.WriteString(block.Content.String())
+		}
+		
+		content := contentBuilder.String()
 		return oai.ToolMessage(toolID, content), nil
 
 	default:
@@ -468,14 +480,20 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		// Handle tool calls
 		if toolCalls := choice.Message.ToolCalls; len(toolCalls) > 0 {
 			for _, toolCall := range toolCalls {
-				// Create tool call block
-				toolCallContent := map[string]interface{}{
-					"name":       toolCall.Function.Name,
-					"parameters": json.RawMessage(toolCall.Function.Arguments),
+				// Create a ToolUseInput with standardized format
+				toolUse := ToolUseInput{
+					Name: toolCall.Function.Name,
 				}
-				toolCallJSON, err := json.Marshal(toolCallContent)
+				
+				// Parse the arguments string into a map
+				if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &toolUse.Parameters); err != nil {
+					return Response{}, fmt.Errorf("failed to parse tool arguments: %w", err)
+				}
+				
+				// Marshal back to JSON for consistent representation
+				toolUseJSON, err := json.Marshal(toolUse)
 				if err != nil {
-					return Response{}, fmt.Errorf("failed to marshal tool call: %w", err)
+					return Response{}, fmt.Errorf("failed to marshal tool use: %w", err)
 				}
 
 				blocks = append(blocks, Block{
@@ -483,7 +501,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 					BlockType:    ToolCall,
 					ModalityType: Text,
 					MimeType:     "application/json",
-					Content:      Str(toolCallJSON),
+					Content:      Str(string(toolUseJSON)),
 				})
 			}
 		}
