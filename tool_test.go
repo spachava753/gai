@@ -177,7 +177,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 	tests := []struct {
 		name           string
 		dialog         Dialog
-		options        *GenOpts
+		optsGen        GenOptsGenerator
 		setupTools     func(*ToolGenerator)
 		setupMockGen   func(*mockToolCapableGenerator)
 		wantErr        bool
@@ -185,10 +185,49 @@ func TestToolGenerator_Generate(t *testing.T) {
 		validateDialog func(*testing.T, Dialog)
 	}{
 		{
+			name:       "nil options generator",
+			dialog:     Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Hello")}}}},
+			optsGen:    nil,
+			setupTools: func(tg *ToolGenerator) {},
+			setupMockGen: func(m *mockToolCapableGenerator) {
+				m.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+					if options != nil {
+						t.Error("Expected nil options when optsGen is nil")
+					}
+					return Response{
+						Candidates: []Message{
+							{
+								Role: Assistant,
+								Blocks: []Block{
+									{
+										BlockType:    Content,
+										ModalityType: Text,
+										Content:      Str("Hi there!"),
+									},
+								},
+							},
+						},
+						FinishReason: EndTurn,
+					}, nil
+				}
+			},
+			wantErr: false,
+			validateDialog: func(t *testing.T, dialog Dialog) {
+				if len(dialog) != 2 {
+					t.Errorf("Expected 2 messages in dialog, got %d", len(dialog))
+				}
+				if dialog[1].Role != Assistant || dialog[1].Blocks[0].Content.String() != "Hi there!" {
+					t.Errorf("Expected final message to be Assistant saying 'Hi there!'")
+				}
+			},
+		},
+		{
 			name:   "successful generation without tool calls",
 			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Hello")}}}},
-			options: &GenOpts{
-				ToolChoice: ToolChoiceAuto,
+			optsGen: func(dialog Dialog) *GenOpts {
+				return &GenOpts{
+					ToolChoice: ToolChoiceAuto,
+				}
 			},
 			setupTools: func(tg *ToolGenerator) {},
 			setupMockGen: func(m *mockToolCapableGenerator) {
@@ -223,8 +262,10 @@ func TestToolGenerator_Generate(t *testing.T) {
 		{
 			name:   "invalid tool choice",
 			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Hello")}}}},
-			options: &GenOpts{
-				ToolChoice: "nonexistent_tool",
+			optsGen: func(dialog Dialog) *GenOpts {
+				return &GenOpts{
+					ToolChoice: "nonexistent_tool",
+				}
 			},
 			setupTools:     func(tg *ToolGenerator) {},
 			setupMockGen:   func(m *mockToolCapableGenerator) {},
@@ -234,8 +275,10 @@ func TestToolGenerator_Generate(t *testing.T) {
 		{
 			name:   "successful tool call execution",
 			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("What time is it?")}}}},
-			options: &GenOpts{
-				ToolChoice: ToolChoiceAuto,
+			optsGen: func(dialog Dialog) *GenOpts {
+				return &GenOpts{
+					ToolChoice: ToolChoiceAuto,
+				}
 			},
 			setupTools: func(tg *ToolGenerator) {
 				tg.Register(Tool{
@@ -329,8 +372,10 @@ func TestToolGenerator_Generate(t *testing.T) {
 		{
 			name:   "tool call with failed callback",
 			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("What's the weather?")}}}},
-			options: &GenOpts{
-				ToolChoice: ToolChoiceAuto,
+			optsGen: func(dialog Dialog) *GenOpts {
+				return &GenOpts{
+					ToolChoice: ToolChoiceAuto,
+				}
 			},
 			setupTools: func(tg *ToolGenerator) {
 				tg.Register(Tool{
@@ -380,8 +425,10 @@ func TestToolGenerator_Generate(t *testing.T) {
 		{
 			name:   "multiple parallel tool calls",
 			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Compare weather in NYC and LA")}}}},
-			options: &GenOpts{
-				ToolChoice: ToolChoiceToolsRequired,
+			optsGen: func(dialog Dialog) *GenOpts {
+				return &GenOpts{
+					ToolChoice: ToolChoiceToolsRequired,
+				}
 			},
 			setupTools: func(tg *ToolGenerator) {
 				tg.Register(Tool{
@@ -501,8 +548,10 @@ func TestToolGenerator_Generate(t *testing.T) {
 		{
 			name:   "sequential tool calls",
 			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("What's the weather where I am?")}}}},
-			options: &GenOpts{
-				ToolChoice: ToolChoiceAuto,
+			optsGen: func(dialog Dialog) *GenOpts {
+				return &GenOpts{
+					ToolChoice: ToolChoiceAuto,
+				}
 			},
 			setupTools: func(tg *ToolGenerator) {
 				// Register a location tool
@@ -659,8 +708,10 @@ func TestToolGenerator_Generate(t *testing.T) {
 		{
 			name:   "non-assistant role in response",
 			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Hello")}}}},
-			options: &GenOpts{
-				ToolChoice: ToolChoiceAuto,
+			optsGen: func(dialog Dialog) *GenOpts {
+				return &GenOpts{
+					ToolChoice: ToolChoiceAuto,
+				}
 			},
 			setupTools: func(tg *ToolGenerator) {},
 			setupMockGen: func(m *mockToolCapableGenerator) {
@@ -695,8 +746,10 @@ func TestToolGenerator_Generate(t *testing.T) {
 		{
 			name:   "multiple candidates in response",
 			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Hello")}}}},
-			options: &GenOpts{
-				ToolChoice: ToolChoiceAuto,
+			optsGen: func(dialog Dialog) *GenOpts {
+				return &GenOpts{
+					ToolChoice: ToolChoiceAuto,
+				}
 			},
 			setupTools: func(tg *ToolGenerator) {},
 			setupMockGen: func(m *mockToolCapableGenerator) {
@@ -752,7 +805,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 			}
 			tt.setupTools(toolGen)
 
-			dialog, err := toolGen.Generate(context.Background(), tt.dialog, tt.options)
+			dialog, err := toolGen.Generate(context.Background(), tt.dialog, tt.optsGen)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Generate() error = %v, wantErr %v", err, tt.wantErr)

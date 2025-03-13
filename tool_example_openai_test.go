@@ -89,7 +89,9 @@ Only output the price, like
 	}
 
 	// Generate a response
-	newDialog, err := tg.Generate(context.Background(), dialog, nil)
+	newDialog, err := tg.Generate(context.Background(), dialog, func(d Dialog) *GenOpts {
+		return nil
+	})
 	if err != nil {
 		panic(err.Error())
 	}

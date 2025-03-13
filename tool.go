@@ -331,10 +331,49 @@ func (t *ToolGenerator) Register(tool Tool, callback ToolCallback) error {
 	return nil
 }
 
+// GenOptsGenerator is a function that takes a dialog and returns generation options.
+// This allows customizing the options based on the current state of the dialog.
+type GenOptsGenerator func(dialog Dialog) *GenOpts
+
 // Generate executes the given dialog with the underlying ToolCapableGenerator,
 // handling any tool calls by executing their registered callbacks and feeding
 // the results back into the generator. It returns the complete dialog including
 // all intermediate tool calls, tool results, and the final response.
+//
+// The optsGen parameter is a function that generates generation options based on
+// the current state of the dialog. This allows customizing options like temperature,
+// tool choice, or modalities based on the conversation context. If optsGen is nil,
+// a default function that returns nil options will be used.
+//
+// Example usage with dynamic options:
+//
+//	dialog, err := toolGen.Generate(ctx, dialog, func(d Dialog) *GenOpts {
+//	    // Increase temperature after each tool use
+//	    toolUses := 0
+//	    for _, msg := range d {
+//	        if msg.Role == ToolResult {
+//	            toolUses++
+//	        }
+//	    }
+//	    return &GenOpts{
+//	        Temperature: 0.2 * float64(toolUses),
+//	        ToolChoice: ToolChoiceAuto,
+//	    }
+//	})
+//
+// Example usage with static options:
+//
+//	// Always use the same options
+//	dialog, err := toolGen.Generate(ctx, dialog, func(d Dialog) *GenOpts {
+//	    return &GenOpts{
+//	        ToolChoice: ToolChoiceToolsRequired,
+//	    }
+//	})
+//
+// Example usage with no options:
+//
+//	// Use default options (nil)
+//	dialog, err := toolGen.Generate(ctx, dialog, nil)
 //
 // The returned dialog will contain:
 // 1. The original input dialog
@@ -351,7 +390,21 @@ func (t *ToolGenerator) Register(tool Tool, callback ToolCallback) error {
 //	[3] Assistant: Tool call to get_weather with location="New York"
 //	[4] Assistant: Tool result "72°F and sunny"
 //	[5] Assistant: "The weather in New York is 72°F and sunny"
-func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Dialog, error) {
+func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen GenOptsGenerator) (Dialog, error) {
+	// Start with a copy of the input dialog
+	currentDialog := make(Dialog, len(dialog))
+	copy(currentDialog, dialog)
+
+	// If no options generator is provided, use a default one that returns nil
+	if optsGen == nil {
+		optsGen = func(dialog Dialog) *GenOpts {
+			return nil
+		}
+	}
+
+	// Get the options for the current dialog state
+	options := optsGen(currentDialog)
+
 	// Validate the tool choice if provided
 	if options != nil && options.ToolChoice != "" && options.ToolChoice != ToolChoiceAuto && options.ToolChoice != ToolChoiceToolsRequired {
 		// ToolChoice specifies a specific tool; verify it exists
@@ -359,10 +412,6 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, options *Ge
 			return nil, InvalidToolChoiceErr(fmt.Sprintf("tool '%s' not found", options.ToolChoice))
 		}
 	}
-
-	// Start with a copy of the input dialog
-	currentDialog := make(Dialog, len(dialog))
-	copy(currentDialog, dialog)
 
 	// Loop to handle sequential tool calls
 	for {
