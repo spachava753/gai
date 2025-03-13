@@ -190,6 +190,16 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 		return result, nil
 
 	case ToolResult:
+		// Anthropic handles tool results differently from OpenAI:
+		// - Anthropic: Multiple tool results for parallel tool calls must be in a single message
+		//   as separate tool_result blocks, each with its own tool_use_id
+		// - OpenAI: Each tool result must be in a separate message with a single tool_call_id.
+		//   All blocks in the message must have the same tool ID and be text modality.
+		//
+		// This implementation supports both approaches by:
+		// 1. Allowing a single tool result message to contain blocks with different tool use IDs (Anthropic style)
+		// 2. Grouping blocks by their tool use ID and creating separate tool result blocks for each group
+		
 		// Validate that there's at least one block
 		if len(msg.Blocks) == 0 {
 			return a.MessageParam{}, fmt.Errorf("tool result message must have at least one block")
@@ -289,7 +299,10 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		return Response{}, fmt.Errorf("openai: client not initialized")
 	}
 
-	// First, preprocess the dialog to combine consecutive tool result messages for parallel tool use
+	// First, preprocess the dialog to combine consecutive tool result messages for parallel tool use.
+	// This is a key difference from OpenAI: Anthropic requires all tool results for parallel tool calls
+	// to be in a single message with multiple tool_result blocks, while our internal Dialog representation
+	// (and OpenAI) use separate messages where all blocks must have the same tool ID.
 	processedDialog := preprocessToolResults(dialog)
 
 	// Convert each message to Anthropic format
@@ -501,6 +514,17 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 // preprocessToolResults consolidates consecutive tool result messages that respond to tool calls
 // from the same previous assistant message.
+//
+// This function is specific to the Anthropic implementation and addresses a key difference in how
+// parallel tool use is handled between Anthropic and OpenAI:
+//
+// - Anthropic API expects all tool results for parallel tool calls to be bundled in a single message
+//   with multiple tool result blocks, each with its own tool_use_id.
+// - OpenAI API expects each tool result to be a separate message in the conversation,
+//   where all blocks in a message must have the same tool ID and be text modality.
+//
+// Our internal Dialog representation follows OpenAI's approach with separate messages for each tool result,
+// so we need this preprocessing step to adapt to Anthropic's API expectations.
 func preprocessToolResults(dialog Dialog) Dialog {
 	if len(dialog) <= 1 {
 		return dialog

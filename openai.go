@@ -213,28 +213,54 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 		return result, nil
 
 	case ToolResult:
+		// OpenAI handles tool results differently from Anthropic:
+		// - OpenAI: Each tool result must be in a separate message with a single tool_call_id.
+		//   All blocks in the message must have the same tool ID and be text modality.
+		// - Anthropic: Multiple tool results for parallel tool calls must be in a single message
+		//   with multiple tool_result blocks, each with its own tool_use_id.
+		//
+		// OpenAI's API has these requirements for tool results:
+		// 1. Each tool result message must reference exactly one tool_call_id
+		// 2. All blocks in a tool result message must have the same tool ID
+		// 3. All blocks must be text modality
+		// 4. Multiple tool results (for parallel tool calls) require separate messages
+		
 		// For ToolResult messages, we convert them to OpenAI's tool message format
 		if len(msg.Blocks) == 0 {
 			return nil, fmt.Errorf("tool result message must have at least one block")
 		}
 		
-		// Get the ID from the first block and use its content
+		// Get the ID from the first block
 		toolID := msg.Blocks[0].ID
 		if toolID == "" {
 			return nil, fmt.Errorf("tool result message block must have an ID")
 		}
 		
-		// Combine content from all blocks with the same ID
-		var contentBuilder strings.Builder
+		// Create text parts for each block with the same ID
+		var textParts []oai.ChatCompletionContentPartTextParam
 		for _, block := range msg.Blocks {
+			// Verify all blocks have the same tool ID
 			if block.ID != toolID {
 				return nil, fmt.Errorf("all blocks in tool result message must have the same ID")
 			}
-			contentBuilder.WriteString(block.Content.String())
+			
+			// Verify all blocks are text modality
+			if block.ModalityType != Text {
+				return nil, fmt.Errorf("OpenAI only supports text modality in tool result messages")
+			}
+			
+			textParts = append(textParts, oai.ChatCompletionContentPartTextParam{
+				Type: oai.F(oai.ChatCompletionContentPartTextTypeText),
+				Text: oai.F(block.Content.String()),
+			})
 		}
 		
-		content := contentBuilder.String()
-		return oai.ToolMessage(toolID, content), nil
+		// Create the tool message with the text parts
+		return oai.ChatCompletionToolMessageParam{
+			Role:       oai.F(oai.ChatCompletionToolMessageParamRoleTool),
+			ToolCallID: oai.F(toolID),
+			Content:    oai.F(textParts),
+		}, nil
 
 	default:
 		return nil, fmt.Errorf("unsupported role: %v", msg.Role)
