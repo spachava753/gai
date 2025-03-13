@@ -82,7 +82,7 @@ func TestToOpenAIMessage(t *testing.T) {
 						ID: oai.F("call_123"),
 						Function: oai.F(oai.ChatCompletionMessageToolCallFunctionParam{
 							Name:      oai.F("get_weather"),
-							Arguments: oai.F(`{"location": "London"}`),
+							Arguments: oai.F(`{"location":"London"}`),
 						}),
 						Type: oai.F(oai.ChatCompletionMessageToolCallTypeFunction),
 					},
@@ -134,7 +134,7 @@ func TestToOpenAIMessage(t *testing.T) {
 						ID: oai.F("call_123"),
 						Function: oai.F(oai.ChatCompletionMessageToolCallFunctionParam{
 							Name:      oai.F("get_weather"),
-							Arguments: oai.F(`{"location": "London"}`),
+							Arguments: oai.F(`{"location":"London"}`),
 						}),
 						Type: oai.F(oai.ChatCompletionMessageToolCallTypeFunction),
 					},
