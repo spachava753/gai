@@ -11,7 +11,7 @@ func ExampleAnthropicGenerator_Generate() {
 	client := a.NewClient()
 
 	// Instantiate an Anthropic Generator
-	gen := NewAnthropicGenerator(client.Beta.Messages, a.ModelClaude_3_5_Sonnet_20240620, "You are a helpful assistant")
+	gen := NewAnthropicGenerator(client.Messages, a.ModelClaude_3_5_Sonnet_20240620, "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -55,7 +55,7 @@ func ExampleAnthropicGenerator_Register() {
 
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
-		client.Beta.Messages,
+		client.Messages,
 		a.ModelClaude_3_5_Sonnet_20240620,
 		`You are a helpful assistant that returns the price of a stock and nothing else.
 
@@ -124,7 +124,7 @@ Only output the price, like
 		},
 	})
 
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 8096})
 	if err != nil {
 		panic(err.Error())
 	}
@@ -134,7 +134,7 @@ Only output the price, like
 
 	// Instantiate an Anthropic Generator
 	gen = NewAnthropicGenerator(
-		client.Beta.Messages,
+		client.Messages,
 		a.ModelClaude_3_5_Sonnet_20240620,
 		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
 Only mentioned the ticker and nothing else.
@@ -169,18 +169,19 @@ Assistant: Nvidia
 	}
 
 	// Generate a response
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 8096})
 	if err != nil {
 		panic(err.Error())
 	}
 	fmt.Println(resp.Candidates[0].Blocks[0].Content)
 	fmt.Println(resp.Candidates[0].Blocks[1].Content)
+	fmt.Println(resp.Candidates[0].Blocks[2].Content)
 
 	dialog = append(dialog, resp.Candidates[0], Message{
 		Role: ToolResult,
 		Blocks: []Block{
 			{
-				ID:           resp.Candidates[0].Blocks[0].ID,
+				ID:           resp.Candidates[0].Blocks[1].ID,
 				ModalityType: Text,
 				Content:      Str("123.45"),
 			},
@@ -189,14 +190,14 @@ Assistant: Nvidia
 		Role: ToolResult,
 		Blocks: []Block{
 			{
-				ID:           resp.Candidates[0].Blocks[1].ID,
+				ID:           resp.Candidates[0].Blocks[2].ID,
 				ModalityType: Text,
 				Content:      Str("678.45"),
 			},
 		},
 	})
 
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 8096})
 	if err != nil {
 		panic(err.Error())
 	}

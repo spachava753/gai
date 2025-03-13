@@ -12,12 +12,12 @@ import (
 type AnthropicGenerator struct {
 	client             AnthropicCompletionService
 	model              string
-	tools              map[string]a.BetaToolParam
+	tools              map[string]a.ToolParam
 	systemInstructions string
 }
 
 // convertToolToAnthropic converts our tool definition to Anthropic's format
-func convertToolToAnthropic(tool Tool) a.BetaToolParam {
+func convertToolToAnthropic(tool Tool) a.ToolParam {
 	if tool.InputSchema.Type != Object {
 		panic("invalid tool type")
 	}
@@ -31,8 +31,8 @@ func convertToolToAnthropic(tool Tool) a.BetaToolParam {
 	}
 
 	// Create the input schema with the properties
-	inputSchema := a.BetaToolInputSchemaParam{
-		Type:        a.F(a.BetaToolInputSchemaTypeObject),
+	inputSchema := a.ToolInputSchemaParam{
+		Type:        a.F(a.ToolInputSchemaTypeObject),
 		Properties:  a.F[any](parameters),
 		ExtraFields: make(map[string]interface{}),
 	}
@@ -42,10 +42,10 @@ func convertToolToAnthropic(tool Tool) a.BetaToolParam {
 		inputSchema.ExtraFields["required"] = tool.InputSchema.Required
 	}
 
-	return a.BetaToolParam{
+	return a.ToolParam{
 		Name:        a.F(tool.Name),
 		Description: a.F(tool.Description),
-		InputSchema: a.F(inputSchema),
+		InputSchema: a.F[interface{}](inputSchema),
 	}
 }
 
@@ -85,15 +85,15 @@ func convertPropertyToAnthropicMap(prop Property) map[string]interface{} {
 
 // toAnthropicMessage converts a gai.Message to an OpenAI chat message.
 // It returns an error if the message contains unsupported modalities or block types.
-func toAnthropicMessage(msg Message) (a.BetaMessageParam, error) {
+func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 	if len(msg.Blocks) == 0 {
-		return a.BetaMessageParam{}, fmt.Errorf("message must have at least one block")
+		return a.MessageParam{}, fmt.Errorf("message must have at least one block")
 	}
 
 	// Check for video modality in any block
 	for _, block := range msg.Blocks {
 		if block.ModalityType == Video || block.ModalityType == Audio {
-			return a.BetaMessageParam{}, fmt.Errorf("unsupported modality: %v", block.ModalityType)
+			return a.MessageParam{}, fmt.Errorf("unsupported modality: %v", block.ModalityType)
 		}
 	}
 
@@ -102,87 +102,87 @@ func toAnthropicMessage(msg Message) (a.BetaMessageParam, error) {
 		// User messages should only have Content blocks
 		for _, block := range msg.Blocks {
 			if block.BlockType != Content {
-				return a.BetaMessageParam{}, fmt.Errorf("unsupported block type for user: %v", block.BlockType)
+				return a.MessageParam{}, fmt.Errorf("unsupported block type for user: %v", block.BlockType)
 			}
 		}
 
 		// Handle multimodal content
-		var parts []a.BetaContentBlockParamUnion
+		var parts []a.ContentBlockParamUnion
 		for _, block := range msg.Blocks {
 			switch block.ModalityType {
 			case Text:
-				parts = append(parts, a.BetaTextBlockParam{
-					Type: a.F(a.BetaTextBlockParamTypeText),
+				parts = append(parts, a.TextBlockParam{
+					Type: a.F(a.TextBlockParamTypeText),
 					Text: a.F(block.Content.String()),
 				})
 			case Image:
 				// Convert image media to an image part
 				if block.MimeType == "" {
-					return a.BetaMessageParam{}, fmt.Errorf("image media missing mimetype")
+					return a.MessageParam{}, fmt.Errorf("image media missing mimetype")
 				}
 
-				var imageBlock a.BetaImageBlockParamSourceUnion = &a.BetaBase64ImageSourceParam{
-					Type:      a.F(a.BetaBase64ImageSourceTypeBase64),
-					MediaType: a.F(a.BetaBase64ImageSourceMediaType(block.MimeType)),
+				var imageBlock a.ImageBlockParamSourceUnion = &a.Base64ImageSourceParam{
+					Type:      a.F(a.Base64ImageSourceTypeBase64),
+					MediaType: a.F(a.Base64ImageSourceMediaType(block.MimeType)),
 					Data:      a.F(block.Content.String()),
 				}
 
-				parts = append(parts, a.BetaImageBlockParam{
-					Type:   a.F(a.BetaImageBlockParamTypeImage),
+				parts = append(parts, a.ImageBlockParam{
+					Type:   a.F(a.ImageBlockParamTypeImage),
 					Source: a.F(imageBlock),
 				})
 			default:
-				return a.BetaMessageParam{}, fmt.Errorf("unsupported modality for user: %v", block.ModalityType)
+				return a.MessageParam{}, fmt.Errorf("unsupported modality for user: %v", block.ModalityType)
 			}
 		}
 
-		return a.BetaMessageParam{
+		return a.MessageParam{
 			Content: a.F(parts),
-			Role:    a.F(a.BetaMessageParamRoleUser),
+			Role:    a.F(a.MessageParamRoleUser),
 		}, nil
 
 	case Assistant:
 		// Handle multiple blocks
-		var contentParts []a.BetaContentBlockParamUnion
+		var contentParts []a.ContentBlockParamUnion
 
-		result := a.BetaMessageParam{
-			Role: a.F(a.BetaMessageParamRoleAssistant),
+		result := a.MessageParam{
+			Role: a.F(a.MessageParamRoleAssistant),
 		}
 
 		for _, block := range msg.Blocks {
 			switch block.BlockType {
 			case Content:
 				if block.ModalityType != Text {
-					return a.BetaMessageParam{}, fmt.Errorf(
+					return a.MessageParam{}, fmt.Errorf(
 						"unsupported modality in multi-block assistant message: %v",
 						block.ModalityType,
 					)
 				}
-				contentParts = append(contentParts, &a.BetaTextBlockParam{
+				contentParts = append(contentParts, &a.TextBlockParam{
 					Text: a.F(block.Content.String()),
-					Type: a.F(a.BetaTextBlockParamTypeText),
+					Type: a.F(a.TextBlockParamTypeText),
 				})
 			case ToolCall:
 				// Parse the tool call content as ToolUseInput
 				var toolUse ToolUseInput
 				if err := json.Unmarshal([]byte(block.Content.String()), &toolUse); err != nil {
-					return a.BetaMessageParam{}, fmt.Errorf("invalid tool call content: %w", err)
+					return a.MessageParam{}, fmt.Errorf("invalid tool call content: %w", err)
 				}
 
 				// Convert parameters to JSON for Anthropic
 				inputJSON, err := json.Marshal(toolUse.Parameters)
 				if err != nil {
-					return a.BetaMessageParam{}, fmt.Errorf("failed to marshal tool parameters: %w", err)
+					return a.MessageParam{}, fmt.Errorf("failed to marshal tool parameters: %w", err)
 				}
 
-				contentParts = append(contentParts, &a.BetaToolUseBlockParam{
+				contentParts = append(contentParts, &a.ToolUseBlockParam{
 					ID:    a.F(block.ID),
 					Name:  a.F(toolUse.Name),
 					Input: a.F[interface{}](json.RawMessage(inputJSON)),
-					Type:  a.F(a.BetaToolUseBlockParamTypeToolUse),
+					Type:  a.F(a.ToolUseBlockParamTypeToolUse),
 				})
 			default:
-				return a.BetaMessageParam{}, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
+				return a.MessageParam{}, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
 			}
 		}
 
@@ -192,19 +192,19 @@ func toAnthropicMessage(msg Message) (a.BetaMessageParam, error) {
 	case ToolResult:
 		// Validate that all blocks have the same tool use ID
 		if len(msg.Blocks) == 0 {
-			return a.BetaMessageParam{}, fmt.Errorf("tool result message must have at least one block")
+			return a.MessageParam{}, fmt.Errorf("tool result message must have at least one block")
 		}
 
 		// Get the ID from the first block
 		toolUseID := msg.Blocks[0].ID
 		if toolUseID == "" {
-			return a.BetaMessageParam{}, fmt.Errorf("tool result message must have a tool use ID")
+			return a.MessageParam{}, fmt.Errorf("tool result message must have a tool use ID")
 		}
 
 		// Check that all blocks have the same tool use ID
 		for i, block := range msg.Blocks {
 			if block.ID != toolUseID {
-				return a.BetaMessageParam{}, fmt.Errorf(
+				return a.MessageParam{}, fmt.Errorf(
 					"all blocks in a tool result message must have the same tool use ID (block %d has ID %q, expected %q)",
 					i,
 					block.ID,
@@ -213,40 +213,40 @@ func toAnthropicMessage(msg Message) (a.BetaMessageParam, error) {
 			}
 		}
 
-		resultContent := a.BetaToolResultBlockParam{
+		resultContent := a.ToolResultBlockParam{
+			Type:      a.F(a.ToolResultBlockParamTypeToolResult),
 			ToolUseID: a.F(toolUseID),
-			Type:      a.F(a.BetaToolResultBlockParamTypeToolResult),
 			IsError:   a.F(msg.ToolResultError),
 		}
 
 		// A tool result message can have multiple content blocks of text or image
-		var content []a.BetaToolResultBlockParamContentUnion
+		var content []a.ToolResultBlockParamContentUnion
 		for _, block := range msg.Blocks {
-			var b a.BetaToolResultBlockParamContent
+			var b a.ToolResultBlockParamContent
 			switch block.ModalityType {
 			case Text:
-				b.Type = a.F(a.BetaToolResultBlockParamContentTypeText)
+				b.Type = a.F(a.ToolResultBlockParamContentTypeText)
 				b.Text = a.F(block.Content.String())
 			case Image:
-				b.Type = a.F(a.BetaToolResultBlockParamContentTypeImage)
+				b.Type = a.F(a.ToolResultBlockParamContentTypeImage)
 				b.Source = a.F[interface{}](block.Content.String())
 			default:
-				return a.BetaMessageParam{}, fmt.Errorf("unsupported modality for tool result: %v", block.ModalityType)
+				return a.MessageParam{}, fmt.Errorf("unsupported modality for tool result: %v", block.ModalityType)
 			}
 			content = append(content, &b)
 		}
 
 		resultContent.Content = a.F(content)
 
-		return a.BetaMessageParam{
+		return a.MessageParam{
 			// For tool result blocks, we actually want the role to be user
-			Role: a.F(a.BetaMessageParamRoleUser),
-			Content: a.F([]a.BetaContentBlockParamUnion{
+			Role: a.F(a.MessageParamRoleUser),
+			Content: a.F([]a.ContentBlockParamUnion{
 				resultContent,
 			}),
 		}, nil
 	default:
-		return a.BetaMessageParam{}, fmt.Errorf("unsupported role: %v", msg.Role)
+		return a.MessageParam{}, fmt.Errorf("unsupported role: %v", msg.Role)
 	}
 }
 
@@ -270,7 +270,7 @@ func (g *AnthropicGenerator) Register(tool Tool) error {
 
 	// Initialize tools map if needed
 	if g.tools == nil {
-		g.tools = make(map[string]a.BetaToolParam)
+		g.tools = make(map[string]a.ToolParam)
 	}
 
 	// Check for conflicts with existing tools
@@ -294,7 +294,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	}
 
 	// Convert each message to OpenAI format
-	var messages []a.BetaMessageParam
+	var messages []a.MessageParam
 	for _, msg := range dialog {
 		anthropicMsg, err := toAnthropicMessage(msg)
 		if err != nil {
@@ -304,17 +304,17 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	}
 
 	// Create OpenAI chat completion params
-	params := a.BetaMessageNewParams{
+	params := a.MessageNewParams{
 		Model:    a.F(g.model),
 		Messages: a.F(messages),
 	}
 
 	// Add system instructions if present
 	if g.systemInstructions != "" {
-		params.System = a.F([]a.BetaTextBlockParam{
+		params.System = a.F([]a.TextBlockParam{
 			{
 				Text: a.String(g.systemInstructions),
-				Type: a.F(a.BetaTextBlockParamTypeText),
+				Type: a.F(a.TextBlockParamTypeText),
 			},
 		})
 	}
@@ -360,18 +360,18 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		if options.ToolChoice != "" {
 			switch options.ToolChoice {
 			case ToolChoiceAuto:
-				params.ToolChoice = a.F[a.BetaToolChoiceUnionParam](a.BetaToolChoiceAutoParam{
-					Type: a.F(a.BetaToolChoiceAutoTypeAuto),
+				params.ToolChoice = a.F[a.ToolChoiceUnionParam](a.ToolChoiceAutoParam{
+					Type: a.F(a.ToolChoiceAutoTypeAuto),
 				})
 			case ToolChoiceToolsRequired:
-				params.ToolChoice = a.F[a.BetaToolChoiceUnionParam](a.BetaToolChoiceAnyParam{
-					Type: a.F(a.BetaToolChoiceAnyTypeAny),
+				params.ToolChoice = a.F[a.ToolChoiceUnionParam](a.ToolChoiceAnyParam{
+					Type: a.F(a.ToolChoiceAnyTypeAny),
 				})
 			default:
 				// Specific tool name
-				params.ToolChoice = a.F[a.BetaToolChoiceUnionParam](a.BetaToolChoiceToolParam{
+				params.ToolChoice = a.F[a.ToolChoiceUnionParam](a.ToolChoiceToolParam{
 					Name: a.F(options.ToolChoice),
-					Type: a.F(a.BetaToolChoiceToolTypeTool),
+					Type: a.F(a.ToolChoiceToolTypeTool),
 				})
 			}
 		}
@@ -393,7 +393,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 	// Add tools if any are registered
 	if len(g.tools) > 0 {
-		var tools []a.BetaToolUnionUnionParam
+		var tools []a.ToolUnionUnionParam
 		for _, tool := range g.tools {
 			tools = append(tools, &tool)
 		}
@@ -427,41 +427,46 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	// Handle text content
 	for _, contentPart := range resp.Content {
 		switch contentPart.Type {
-		case a.BetaContentBlockTypeText:
+		case a.ContentBlockTypeText:
 			blocks = append(blocks, Block{
 				ID:           contentPart.ID,
 				BlockType:    Content,
 				ModalityType: Text,
 				Content:      Str(contentPart.Text),
 			})
-		case a.BetaContentBlockTypeToolUse:
+		case a.ContentBlockTypeToolUse:
 			// Create a ToolUseInput with standardized format
+			var toolParams map[string]interface{}
+			if err := json.Unmarshal(contentPart.Input, &toolParams); err != nil {
+				return Response{}, fmt.Errorf("failed to unmarshal tool use input: %w", err)
+			}
+
 			toolUse := ToolUseInput{
 				Name:       contentPart.Name,
-				Parameters: contentPart.Input.(map[string]interface{}),
+				Parameters: toolParams,
 			}
-			
+
 			// Marshal to JSON for consistent representation
 			toolUseJSON, err := json.Marshal(toolUse)
 			if err != nil {
 				return Response{}, fmt.Errorf("failed to marshal tool use: %w", err)
 			}
-			
+
 			blocks = append(blocks, Block{
 				ID:           contentPart.ID,
 				BlockType:    ToolCall,
 				ModalityType: Text,
 				MimeType:     "application/json",
-				Content:      Str(string(toolUseJSON)),
+				Content:      Str(toolUseJSON),
 			})
-		case a.BetaContentBlockTypeThinking:
+		case a.ContentBlockTypeThinking:
 			blocks = append(blocks, Block{
 				ID:           contentPart.ID,
 				BlockType:    Thinking,
 				ModalityType: Text,
 				Content:      Str(contentPart.Thinking),
 			})
-		case a.BetaContentBlockTypeRedactedThinking:
+		case a.ContentBlockTypeRedactedThinking:
 			blocks = append(blocks, Block{
 				ID:           contentPart.ID,
 				BlockType:    "redacted_thinking",
@@ -480,13 +485,13 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 	// Set finish reason
 	switch resp.StopReason {
-	case a.BetaMessageStopReasonEndTurn:
+	case a.MessageStopReasonEndTurn:
 		result.FinishReason = EndTurn
-	case a.BetaMessageStopReasonMaxTokens:
+	case a.MessageStopReasonMaxTokens:
 		result.FinishReason = MaxGenerationLimit
-	case a.BetaMessageStopReasonStopSequence:
+	case a.MessageStopReasonStopSequence:
 		result.FinishReason = StopSequence
-	case a.BetaMessageStopReasonToolUse:
+	case a.MessageStopReasonToolUse:
 		result.FinishReason = ToolUse
 	default:
 		result.FinishReason = Unknown
@@ -496,7 +501,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 }
 
 type AnthropicCompletionService interface {
-	New(ctx context.Context, params a.BetaMessageNewParams, opts ...option.RequestOption) (res *a.BetaMessage, err error)
+	New(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error)
 }
 
 // NewAnthropicGenerator creates a new OpenAI generator with the specified model.
@@ -505,7 +510,7 @@ func NewAnthropicGenerator(client AnthropicCompletionService, model, systemInstr
 		client:             client,
 		systemInstructions: systemInstructions,
 		model:              model,
-		tools:              make(map[string]a.BetaToolParam),
+		tools:              make(map[string]a.ToolParam),
 	}
 }
 
