@@ -16,30 +16,71 @@ type AnthropicGenerator struct {
 	systemInstructions string
 }
 
-// convertToolToAnthropic converts our tool definition to OpenAI's format
+// convertToolToAnthropic converts our tool definition to Anthropic's format
 func convertToolToAnthropic(tool Tool) a.BetaToolParam {
-	// Convert our tool schema to OpenAI's JSON schema format
-	parameters := make(map[string]interface{})
-	parameters["type"] = tool.InputSchema.Type.String()
+	if tool.InputSchema.Type != Object {
+		panic("invalid tool type")
+	}
 
-	// Only include properties and required fields if we have an object type
-	if tool.InputSchema.Type == Object && tool.InputSchema.Properties != nil {
-		properties := make(map[string]interface{})
-		for name, prop := range tool.InputSchema.Properties {
-			properties[name] = convertPropertyToMap(prop)
-		}
-		parameters["properties"] = properties
-		parameters["required"] = tool.InputSchema.Required
+	// Convert our tool schema to JSON schema format
+	parameters := make(map[string]interface{})
+
+	// Convert each property to Anthropic's format
+	for name, prop := range tool.InputSchema.Properties {
+		parameters[name] = convertPropertyToAnthropicMap(prop)
+	}
+
+	// Create the input schema with the properties
+	inputSchema := a.BetaToolInputSchemaParam{
+		Type:        a.F(a.BetaToolInputSchemaTypeObject),
+		Properties:  a.F[any](parameters),
+		ExtraFields: make(map[string]interface{}),
+	}
+
+	// Add required properties if any
+	if len(tool.InputSchema.Required) > 0 {
+		inputSchema.ExtraFields["required"] = tool.InputSchema.Required
 	}
 
 	return a.BetaToolParam{
 		Name:        a.F(tool.Name),
 		Description: a.F(tool.Description),
-		InputSchema: a.F(a.BetaToolInputSchemaParam{
-			Type:       a.F(a.BetaToolInputSchemaTypeObject),
-			Properties: a.F[any](parameters),
-		}),
+		InputSchema: a.F(inputSchema),
 	}
+}
+
+// convertPropertyToAnthropicMap converts a Property to a map[string]interface{} suitable for Anthropic's format
+func convertPropertyToAnthropicMap(prop Property) map[string]interface{} {
+	result := map[string]interface{}{
+		"type":        prop.Type.String(),
+		"description": prop.Description,
+	}
+
+	// Add enum if present
+	if len(prop.Enum) > 0 {
+		result["enum"] = prop.Enum
+	}
+
+	// Add properties for object types
+	if prop.Type == Object && prop.Properties != nil {
+		properties := make(map[string]interface{})
+		for name, p := range prop.Properties {
+			properties[name] = convertPropertyToAnthropicMap(p)
+		}
+		result["properties"] = properties
+
+		// Add required fields for object types
+		if len(prop.Required) > 0 {
+			result["required"] = prop.Required
+		}
+	}
+
+	// Add items for array types
+	if prop.Type == Array && prop.Items != nil {
+		result["items"] = convertPropertyToAnthropicMap(*prop.Items)
+	}
+
+	return result
 }
 
 // toAnthropicMessage converts a gai.Message to an OpenAI chat message.
@@ -55,10 +96,6 @@ func toAnthropicMessage(msg Message) (a.BetaMessageParam, error) {
 			return a.BetaMessageParam{}, fmt.Errorf("unsupported modality: %v", block.ModalityType)
 		}
 	}
-
-	// A message can contain only tool result blocks, or no tool result blocks at all,
-	// but cannot mix tool result blocks with other blocks
-	// TODO: implement validation
 
 	switch msg.Role {
 	case User:
@@ -275,9 +312,6 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 			{
 				Text: a.String(g.systemInstructions),
 				Type: a.F(a.BetaTextBlockParamTypeText),
-				CacheControl: a.F(a.BetaCacheControlEphemeralParam{
-					Type: a.F(a.BetaCacheControlEphemeralTypeEphemeral),
-				}),
 			},
 		})
 	}
