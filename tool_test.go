@@ -86,15 +86,14 @@ func TestToolGenerator_Register(t *testing.T) {
 			wantErr:   false,
 		},
 		{
-			name: "nil callback",
+			name: "nil callback - should be allowed",
 			tool: Tool{
 				Name:        "test_tool",
 				Description: "A test tool",
 			},
 			callback:  nil,
 			setupMock: func(m *mockToolCapableGenerator) {},
-			wantErr:   true,
-			errType:   reflect.TypeOf(&ToolRegistrationErr{}),
+			wantErr:   false,
 		},
 		{
 			name: "duplicate tool registration",
@@ -162,9 +161,9 @@ func TestToolGenerator_Register(t *testing.T) {
 				}
 
 				// Verify the callback was stored in the ToolGenerator
-				storedCallback := toolGen.toolCallbacks[tt.tool.Name]
-				if storedCallback == nil {
-					t.Errorf("Expected non-nil callback, got nil")
+				storedCallback, exists := toolGen.toolCallbacks[tt.tool.Name]
+				if !exists {
+					t.Errorf("Callback entry not found in toolCallbacks map")
 				} else if storedCallback != tt.callback {
 					t.Errorf("Callback mismatch: got %v, want %v", storedCallback, tt.callback)
 				}
@@ -260,17 +259,64 @@ func TestToolGenerator_Generate(t *testing.T) {
 			},
 		},
 		{
-			name:   "invalid tool choice",
-			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Hello")}}}},
+			name:   "nil callback terminates execution",
+			dialog: Dialog{Message{Role: User, Blocks: []Block{{Content: Str("Stop now")}}}},
 			optsGen: func(dialog Dialog) *GenOpts {
 				return &GenOpts{
-					ToolChoice: "nonexistent_tool",
+					ToolChoice: ToolChoiceAuto,
 				}
 			},
-			setupTools:     func(tg *ToolGenerator) {},
-			setupMockGen:   func(m *mockToolCapableGenerator) {},
-			wantErr:        true,
-			expectedErrMsg: "tool 'nonexistent_tool' not found",
+			setupTools: func(tg *ToolGenerator) {
+				// Register a tool with nil callback
+				tg.Register(Tool{
+					Name:        "finish_execution",
+					Description: "Finish the execution immediately",
+				}, nil)
+			},
+			setupMockGen: func(m *mockToolCapableGenerator) {
+				m.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+					return Response{
+						Candidates: []Message{
+							{
+								Role: Assistant,
+								Blocks: []Block{
+									{
+										ID:           "finish_call",
+										BlockType:    ToolCall,
+										ModalityType: Text,
+										Content:      Str(`{"name":"finish_execution","parameters":{}}`),
+									},
+								},
+							},
+						},
+						FinishReason: ToolUse,
+					}, nil
+				}
+			},
+			wantErr: false,
+			validateDialog: func(t *testing.T, dialog Dialog) {
+				// Expected dialog:
+				// [0] User: "Stop now"
+				// [1] Assistant: Tool call to finish_execution
+				// No more messages since execution should terminate
+
+				if len(dialog) != 2 {
+					t.Errorf("Expected 2 messages in dialog, got %d", len(dialog))
+					return
+				}
+
+				// Check that the last message is the tool call
+				toolCall := dialog[1]
+				if toolCall.Role != Assistant || len(toolCall.Blocks) != 1 || toolCall.Blocks[0].BlockType != ToolCall {
+					t.Errorf("Expected tool call message as the last message")
+				}
+
+				// Verify the tool call is to finish_execution
+				content := toolCall.Blocks[0].Content.String()
+				if !strings.Contains(content, "finish_execution") {
+					t.Errorf("Expected tool call to finish_execution, got: %s", content)
+				}
+			},
 		},
 		{
 			name:   "successful tool call execution",

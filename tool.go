@@ -269,6 +269,10 @@ type ToolCapableGenerator interface {
 // interface, it will be treated as a tool execution error and fed as a tool result
 // into the underlying Generator.
 //
+// Tools can be registered with nil callbacks, in which case execution will be
+// terminated immediately when the tool is called. This is useful for tools like
+// "finish_execution" that are meant to interrupt generation and return the dialog.
+//
 // The behavior of tool usage is controlled via GenOpts.ToolChoice:
 //   - ToolChoiceAuto: Generator decides when to use tools
 //   - ToolChoiceToolsRequired: Generator must use at least one tool
@@ -284,33 +288,29 @@ type ToolCapableGenerator interface {
 //
 //	// Register a tool with automatic execution via callback
 //	toolGen.Register(stockPriceTool, &StockAPI{})
+//
+//	// Register a tool that terminates execution when called
+//	toolGen.Register(Tool{Name: "finish_execution"}, nil)
 type ToolGenerator struct {
 	G ToolCapableGenerator
 
 	toolCallbacks map[string]ToolCallback
 }
 
-// Register adds a tool to the ToolGenerator's available tools with a required callback.
-// The callback will be automatically executed when the tool is called during generation.
+// Register adds a tool to the ToolGenerator's available tools with an optional callback.
+// If a callback is provided, it will be automatically executed when the tool is called during generation.
+// If the callback is nil, no automatic execution will occur. This is useful for tools that are meant to
+// interrupt or terminate execution, such as a "finish_execution" tool that should end the generation process.
 //
 // Returns an error if:
 //   - Tool name is empty
 //   - Tool name conflicts with an already registered tool
 //   - Tool name matches special values ToolChoiceAuto or ToolChoiceToolsRequired
 //   - The underlying ToolCapableGenerator's Register method returns an error
-//   - The callback is nil
 func (t *ToolGenerator) Register(tool Tool, callback ToolCallback) error {
 	// Initialize the callbacks map if it doesn't exist
 	if t.toolCallbacks == nil {
 		t.toolCallbacks = make(map[string]ToolCallback)
-	}
-
-	// Check if callback is provided
-	if callback == nil {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("callback cannot be nil"),
-		}
 	}
 
 	// Check if the tool is already registered with a callback
@@ -326,7 +326,7 @@ func (t *ToolGenerator) Register(tool Tool, callback ToolCallback) error {
 		return err
 	}
 
-	// Store the callback
+	// Store the callback (which may be nil)
 	t.toolCallbacks[tool.Name] = callback
 	return nil
 }
@@ -472,6 +472,12 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen Gen
 			callback, exists := t.toolCallbacks[toolName]
 			if !exists {
 				return currentDialog, fmt.Errorf("tool '%s' not found", toolName)
+			}
+
+			// If the callback is nil, this indicates the tool is meant to terminate execution
+			// So we return the current dialog with what we have so far
+			if callback == nil {
+				return currentDialog, nil
 			}
 
 			// Execute the callback
