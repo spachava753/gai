@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	a "github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 func ExampleAnthropicGenerator_Generate() {
@@ -51,7 +52,7 @@ func ExampleAnthropicGenerator_Generate() {
 
 func ExampleAnthropicGenerator_Register() {
 	// Create an Anthropic client
-	client := a.NewClient()
+	client := a.NewClient(option.WithBaseURL("https://gateway.ai.cloudflare.com/v1/4eee6dd2fdc8cebc7802c5a638f460fe/cpe/anthropic/"))
 
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
@@ -137,7 +138,7 @@ Only output the price, like
 		client.Messages,
 		a.ModelClaude_3_5_Sonnet_20240620,
 		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
-Only mentioned the ticker and nothing else.
+Only mention one of the stock tickers and nothing else.
 
 Only output the price, like
 <example>
@@ -145,6 +146,13 @@ User: Which one is more expensive? Apple or NVidia?
 Assistant: calls get_stock_price for both Apple and Nvidia
 Tool Result: Apple: 123.45; Nvidia: 345.65
 Assistant: Nvidia
+</example>
+
+<example>
+User: Which one is more expensive? Microsft or Netflix?
+Assistant: calls get_stock_price for both Apple and Nvidia
+Tool Result: MSFT: 876.45; NFLX: 345.65
+Assistant: MSFT
 </example>
 `,
 	)
@@ -173,7 +181,6 @@ Assistant: Nvidia
 	if err != nil {
 		panic(err.Error())
 	}
-	fmt.Println(resp.Candidates[0].Blocks[0].Content)
 	fmt.Println(resp.Candidates[0].Blocks[1].Content)
 	fmt.Println(resp.Candidates[0].Blocks[2].Content)
 

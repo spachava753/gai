@@ -83,7 +83,7 @@ func convertPropertyToAnthropicMap(prop Property) map[string]interface{} {
 	return result
 }
 
-// toAnthropicMessage converts a gai.Message to an OpenAI chat message.
+// toAnthropicMessage converts a gai.Message to an Anthropic message.
 // It returns an error if the message contains unsupported modalities or block types.
 func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 	if len(msg.Blocks) == 0 {
@@ -190,60 +190,56 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 		return result, nil
 
 	case ToolResult:
-		// Validate that all blocks have the same tool use ID
+		// Validate that there's at least one block
 		if len(msg.Blocks) == 0 {
 			return a.MessageParam{}, fmt.Errorf("tool result message must have at least one block")
 		}
 
-		// Get the ID from the first block
-		toolUseID := msg.Blocks[0].ID
-		if toolUseID == "" {
-			return a.MessageParam{}, fmt.Errorf("tool result message must have a tool use ID")
-		}
-
-		// Check that all blocks have the same tool use ID
-		for i, block := range msg.Blocks {
-			if block.ID != toolUseID {
-				return a.MessageParam{}, fmt.Errorf(
-					"all blocks in a tool result message must have the same tool use ID (block %d has ID %q, expected %q)",
-					i,
-					block.ID,
-					toolUseID,
-				)
-			}
-		}
-
-		resultContent := a.ToolResultBlockParam{
-			Type:      a.F(a.ToolResultBlockParamTypeToolResult),
-			ToolUseID: a.F(toolUseID),
-			IsError:   a.F(msg.ToolResultError),
-		}
-
-		// A tool result message can have multiple content blocks of text or image
-		var content []a.ToolResultBlockParamContentUnion
+		// Group blocks by tool use ID
+		blocksByToolID := make(map[string][]Block)
 		for _, block := range msg.Blocks {
-			var b a.ToolResultBlockParamContent
-			switch block.ModalityType {
-			case Text:
-				b.Type = a.F(a.ToolResultBlockParamContentTypeText)
-				b.Text = a.F(block.Content.String())
-			case Image:
-				b.Type = a.F(a.ToolResultBlockParamContentTypeImage)
-				b.Source = a.F[interface{}](block.Content.String())
-			default:
-				return a.MessageParam{}, fmt.Errorf("unsupported modality for tool result: %v", block.ModalityType)
+			if block.ID == "" {
+				return a.MessageParam{}, fmt.Errorf("tool result message block must have a tool use ID")
 			}
-			content = append(content, &b)
+			blocksByToolID[block.ID] = append(blocksByToolID[block.ID], block)
 		}
 
-		resultContent.Content = a.F(content)
+		// Create tool result content for each group of blocks
+		var contentParts []a.ContentBlockParamUnion
+		
+		for toolUseID, blocks := range blocksByToolID {
+			// A tool result for a specific tool use ID
+			resultContent := a.ToolResultBlockParam{
+				Type:      a.F(a.ToolResultBlockParamTypeToolResult),
+				ToolUseID: a.F(toolUseID),
+				IsError:   a.F(msg.ToolResultError),
+			}
+
+			// Process all blocks for this tool use ID
+			var blockContent []a.ToolResultBlockParamContentUnion
+			for _, block := range blocks {
+				var b a.ToolResultBlockParamContent
+				switch block.ModalityType {
+				case Text:
+					b.Type = a.F(a.ToolResultBlockParamContentTypeText)
+					b.Text = a.F(block.Content.String())
+				case Image:
+					b.Type = a.F(a.ToolResultBlockParamContentTypeImage)
+					b.Source = a.F[interface{}](block.Content.String())
+				default:
+					return a.MessageParam{}, fmt.Errorf("unsupported modality for tool result: %v", block.ModalityType)
+				}
+				blockContent = append(blockContent, &b)
+			}
+
+			resultContent.Content = a.F(blockContent)
+			contentParts = append(contentParts, resultContent)
+		}
 
 		return a.MessageParam{
-			// For tool result blocks, we actually want the role to be user
-			Role: a.F(a.MessageParamRoleUser),
-			Content: a.F([]a.ContentBlockParamUnion{
-				resultContent,
-			}),
+			// For tool result blocks, we use the user role
+			Role:    a.F(a.MessageParamRoleUser),
+			Content: a.F(contentParts),
 		}, nil
 	default:
 		return a.MessageParam{}, fmt.Errorf("unsupported role: %v", msg.Role)
@@ -293,9 +289,12 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		return Response{}, fmt.Errorf("openai: client not initialized")
 	}
 
-	// Convert each message to OpenAI format
+	// First, preprocess the dialog to combine consecutive tool result messages for parallel tool use
+	processedDialog := preprocessToolResults(dialog)
+
+	// Convert each message to Anthropic format
 	var messages []a.MessageParam
-	for _, msg := range dialog {
+	for _, msg := range processedDialog {
 		anthropicMsg, err := toAnthropicMessage(msg)
 		if err != nil {
 			return Response{}, fmt.Errorf("failed to convert message: %w", err)
@@ -303,7 +302,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		messages = append(messages, anthropicMsg)
 	}
 
-	// Create OpenAI chat completion params
+	// Create Anthropic message params
 	params := a.MessageNewParams{
 		Model:    a.F(g.model),
 		Messages: a.F(messages),
@@ -319,7 +318,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		})
 	}
 
-	// Map our options to OpenAI params if options are provided
+	// Map our options to Anthropic params if options are provided
 	if options != nil {
 		// Set temperature if non-zero
 		if options.Temperature != 0 {
@@ -498,6 +497,133 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	}
 
 	return result, nil
+}
+
+// preprocessToolResults consolidates consecutive tool result messages that respond to tool calls
+// from the same previous assistant message.
+func preprocessToolResults(dialog Dialog) Dialog {
+	if len(dialog) <= 1 {
+		return dialog
+	}
+
+	result := make(Dialog, 0, len(dialog))
+	i := 0
+
+	for i < len(dialog) {
+		// Always add non-tool-result messages as they are
+		if dialog[i].Role != ToolResult {
+			result = append(result, dialog[i])
+			i++
+			continue
+		}
+
+		// We have found a tool result message
+		
+		// First, find the previous assistant message that might have tool calls
+		assistantMsgIndex := -1
+		for j := i - 1; j >= 0; j-- {
+			if dialog[j].Role == Assistant {
+				// Check if this assistant message has tool calls
+				hasToolCalls := false
+				for _, block := range dialog[j].Blocks {
+					if block.BlockType == ToolCall {
+						hasToolCalls = true
+						break
+					}
+				}
+				
+				if hasToolCalls {
+					assistantMsgIndex = j
+					break
+				}
+			}
+		}
+		
+		// If we can't find a previous assistant message with tool calls,
+		// just add the tool result as is
+		if assistantMsgIndex == -1 {
+			result = append(result, dialog[i])
+			i++
+			continue
+		}
+		
+		// Check if this is a parallel tool use scenario (multiple tool calls in the assistant message)
+		var toolCallIDs []string
+		for _, block := range dialog[assistantMsgIndex].Blocks {
+			if block.BlockType == ToolCall {
+				toolCallIDs = append(toolCallIDs, block.ID)
+			}
+		}
+		
+		// If there's only one tool call, don't do any special handling
+		if len(toolCallIDs) <= 1 {
+			result = append(result, dialog[i])
+			i++
+			continue
+		}
+		
+		// This could be the start of a sequence of tool result messages
+		// for parallel tool use. Look ahead to collect consecutive tool results.
+		startIndex := i
+		j := i + 1
+		
+		// Look ahead for consecutive tool result messages
+		for j < len(dialog) && dialog[j].Role == ToolResult {
+			j++
+		}
+		
+		// If we found multiple consecutive tool result messages
+		if j - startIndex > 1 {
+			// Check if these tool results correspond to the tool calls in the previous assistant message
+			toolResultMessagesByToolID := make(map[string][]Block)
+			
+			// Group all blocks from these consecutive tool result messages by tool ID
+			for k := startIndex; k < j; k++ {
+				for _, block := range dialog[k].Blocks {
+					if block.ID != "" {
+						toolResultMessagesByToolID[block.ID] = append(toolResultMessagesByToolID[block.ID], block)
+					}
+				}
+			}
+			
+			// Create a consolidated tool result message if we found results for the tools
+			isThisParallelToolUse := false
+			for _, id := range toolCallIDs {
+				if _, found := toolResultMessagesByToolID[id]; found {
+					isThisParallelToolUse = true
+					break
+				}
+			}
+			
+			if isThisParallelToolUse {
+				// Create a consolidated message with all blocks from these consecutive tool results
+				var consolidatedBlocks []Block
+				anyError := false
+				
+				for k := startIndex; k < j; k++ {
+					consolidatedBlocks = append(consolidatedBlocks, dialog[k].Blocks...)
+					if dialog[k].ToolResultError {
+						anyError = true
+					}
+				}
+				
+				result = append(result, Message{
+					Role:           ToolResult,
+					Blocks:         consolidatedBlocks,
+					ToolResultError: anyError,
+				})
+				
+				i = j // Skip past all the consolidated messages
+				continue
+			}
+		}
+		
+		// If not parallel tool use or only one tool result message, add it as is
+		result = append(result, dialog[i])
+		i++
+	}
+	
+	return result
 }
 
 type AnthropicCompletionService interface {

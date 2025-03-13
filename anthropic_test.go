@@ -17,7 +17,7 @@ func TestConvertToolToAnthropic(t *testing.T) {
 	tests := []struct {
 		name string
 		tool Tool
-		want a.BetaToolParam
+		want a.ToolParam
 	}{
 		{
 			name: "Simple tool with single parameter",
@@ -35,11 +35,11 @@ func TestConvertToolToAnthropic(t *testing.T) {
 					Required: []string{"location"},
 				},
 			},
-			want: a.BetaToolParam{
+			want: a.ToolParam{
 				Name:        a.F("get_weather"),
 				Description: a.F("Get the weather for a location"),
-				InputSchema: a.F(a.BetaToolInputSchemaParam{
-					Type:       a.F(a.BetaToolInputSchemaTypeObject),
+				InputSchema: a.F[interface{}](a.ToolInputSchemaParam{
+					Type: a.F(a.ToolInputSchemaTypeObject),
 					Properties: a.F[any](map[string]interface{}{
 						"location": map[string]interface{}{
 							"type":        "string",
@@ -74,11 +74,11 @@ func TestConvertToolToAnthropic(t *testing.T) {
 					Required: []string{"ticker"},
 				},
 			},
-			want: a.BetaToolParam{
+			want: a.ToolParam{
 				Name:        a.F("get_stock_price"),
 				Description: a.F("Get the current stock price"),
-				InputSchema: a.F(a.BetaToolInputSchemaParam{
-					Type: a.F(a.BetaToolInputSchemaTypeObject),
+				InputSchema: a.F[interface{}](a.ToolInputSchemaParam{
+					Type: a.F(a.ToolInputSchemaTypeObject),
 					Properties: a.F[any](map[string]interface{}{
 						"ticker": map[string]interface{}{
 							"type":        "string",
@@ -132,11 +132,11 @@ func TestConvertToolToAnthropic(t *testing.T) {
 					Required: []string{"name", "address"},
 				},
 			},
-			want: a.BetaToolParam{
+			want: a.ToolParam{
 				Name:        a.F("create_user"),
 				Description: a.F("Create a new user"),
-				InputSchema: a.F(a.BetaToolInputSchemaParam{
-					Type: a.F(a.BetaToolInputSchemaTypeObject),
+				InputSchema: a.F[interface{}](a.ToolInputSchemaParam{
+					Type: a.F(a.ToolInputSchemaTypeObject),
 					Properties: a.F[any](map[string]interface{}{
 						"name": map[string]interface{}{
 							"type":        "string",
@@ -192,11 +192,11 @@ func TestConvertToolToAnthropic(t *testing.T) {
 					Required: []string{"documents"},
 				},
 			},
-			want: a.BetaToolParam{
+			want: a.ToolParam{
 				Name:        a.F("summarize_documents"),
 				Description: a.F("Summarize multiple documents"),
-				InputSchema: a.F(a.BetaToolInputSchemaParam{
-					Type: a.F(a.BetaToolInputSchemaTypeObject),
+				InputSchema: a.F[interface{}](a.ToolInputSchemaParam{
+					Type: a.F(a.ToolInputSchemaTypeObject),
 					Properties: a.F[any](map[string]interface{}{
 						"documents": map[string]interface{}{
 							"type":        "array",
@@ -245,11 +245,11 @@ func TestConvertToolToAnthropic(t *testing.T) {
 					Required: []string{"principal", "interest_rate", "term_years"},
 				},
 			},
-			want: a.BetaToolParam{
+			want: a.ToolParam{
 				Name:        a.F("calculate_mortgage"),
 				Description: a.F("Calculate mortgage payment"),
-				InputSchema: a.F(a.BetaToolInputSchemaParam{
-					Type: a.F(a.BetaToolInputSchemaTypeObject),
+				InputSchema: a.F[interface{}](a.ToolInputSchemaParam{
+					Type: a.F(a.ToolInputSchemaTypeObject),
 					Properties: a.F[any](map[string]interface{}{
 						"principal": map[string]interface{}{
 							"type":        "number",
@@ -279,7 +279,7 @@ func TestConvertToolToAnthropic(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := convertToolToAnthropic(tt.tool)
-			
+
 			// Use deep comparison for complex structures
 			if diff := cmp.Diff(tt.want, got, sortFieldsFn); diff != "" {
 				t.Errorf("convertToolToAnthropic() mismatch (-want +got):\n%s", diff)
@@ -417,7 +417,7 @@ func TestConvertPropertyToAnthropicMap(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := convertPropertyToAnthropicMap(tt.property)
-			
+
 			// Use deep comparison
 			if diff := cmp.Diff(tt.want, got, sortFieldsFn); diff != "" {
 				t.Errorf("convertPropertyToAnthropicMap() mismatch (-want +got):\n%s", diff)
