@@ -32,6 +32,22 @@ const (
 	Video
 )
 
+// String returns the string representation of the modality
+func (m Modality) String() string {
+	switch m {
+	case Text:
+		return "text"
+	case Image:
+		return "image"
+	case Audio:
+		return "audio"
+	case Video:
+		return "video"
+	default:
+		return fmt.Sprintf("unknown modality %d", m)
+	}
+}
+
 const (
 	Content  = "content"
 	Thinking = "thinking"

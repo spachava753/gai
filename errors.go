@@ -8,7 +8,7 @@ import (
 // MaxGenerationLimitErr is returned when a Generator has generated the maximum number of tokens
 // specified by GenOpts.MaxGenerationTokens. This error indicates that the generation was terminated
 // due to reaching the token limit rather than natural completion.
-var MaxGenerationLimitErr = errors.New("maximum generation limit exceeded")
+var MaxGenerationLimitErr = errors.New("maximum generation limit reached")
 
 // UnsupportedInputModalityErr is returned when a Generator encounters an input Message
 // with a Block that contains an unsupported Modality. The string value of this error

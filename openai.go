@@ -88,7 +88,7 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 	// Check for video modality in any block
 	for _, block := range msg.Blocks {
 		if block.ModalityType == Video {
-			return nil, fmt.Errorf("unsupported modality: %v", block.ModalityType)
+			return nil, UnsupportedInputModalityErr("video")
 		}
 	}
 
@@ -144,7 +144,7 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 					}),
 				})
 			default:
-				return nil, fmt.Errorf("unsupported modality for user: %v", block.ModalityType)
+				return nil, UnsupportedInputModalityErr(block.ModalityType.String())
 			}
 		}
 
@@ -168,7 +168,7 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 					// Remember audio ID for later use
 					audioID = block.ID
 				} else {
-					return nil, fmt.Errorf("unsupported modality in multi-block assistant message: %v", block.ModalityType)
+					return nil, UnsupportedInputModalityErr(block.ModalityType.String())
 				}
 			case ToolCall:
 				// Parse the tool call content as ToolUseInput
@@ -224,18 +224,18 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 		// 2. All blocks in a tool result message must have the same tool ID
 		// 3. All blocks must be text modality
 		// 4. Multiple tool results (for parallel tool calls) require separate messages
-		
+
 		// For ToolResult messages, we convert them to OpenAI's tool message format
 		if len(msg.Blocks) == 0 {
 			return nil, fmt.Errorf("tool result message must have at least one block")
 		}
-		
+
 		// Get the ID from the first block
 		toolID := msg.Blocks[0].ID
 		if toolID == "" {
 			return nil, fmt.Errorf("tool result message block must have an ID")
 		}
-		
+
 		// Create text parts for each block with the same ID
 		var textParts []oai.ChatCompletionContentPartTextParam
 		for _, block := range msg.Blocks {
@@ -243,18 +243,18 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 			if block.ID != toolID {
 				return nil, fmt.Errorf("all blocks in tool result message must have the same ID")
 			}
-			
+
 			// Verify all blocks are text modality
 			if block.ModalityType != Text {
 				return nil, fmt.Errorf("OpenAI only supports text modality in tool result messages")
 			}
-			
+
 			textParts = append(textParts, oai.ChatCompletionContentPartTextParam{
 				Type: oai.F(oai.ChatCompletionContentPartTextTypeText),
 				Text: oai.F(block.Content.String()),
 			})
 		}
-		
+
 		// Create the tool message with the text parts
 		return oai.ChatCompletionToolMessageParam{
 			Role:       oai.F(oai.ChatCompletionToolMessageParamRoleTool),
@@ -308,6 +308,11 @@ func (g *OpenAiGenerator) Register(tool Tool) error {
 func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("openai: client not initialized")
+	}
+
+	// Check for empty dialog
+	if len(dialog) == 0 {
+		return Response{}, EmptyDialogErr
 	}
 
 	// Convert each message to OpenAI format
@@ -510,12 +515,12 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 				toolUse := ToolUseInput{
 					Name: toolCall.Function.Name,
 				}
-				
+
 				// Parse the arguments string into a map
 				if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &toolUse.Parameters); err != nil {
 					return Response{}, fmt.Errorf("failed to parse tool arguments: %w", err)
 				}
-				
+
 				// Marshal back to JSON for consistent representation
 				toolUseJSON, err := json.Marshal(toolUse)
 				if err != nil {
@@ -545,8 +550,20 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 			result.FinishReason = EndTurn
 		case oai.ChatCompletionChoicesFinishReasonLength:
 			result.FinishReason = MaxGenerationLimit
+			// Return MaxGenerationLimitErr when the model reaches its token limit,
+			// regardless of whether MaxGenerationTokens was explicitly set
+			return result, MaxGenerationLimitErr
 		case oai.ChatCompletionChoicesFinishReasonToolCalls:
 			result.FinishReason = ToolUse
+		case oai.ChatCompletionChoicesFinishReasonContentFilter:
+			result.FinishReason = Unknown
+			// If content was filtered, check for refusal message and return ContentPolicyErr
+			refusalMessage := resp.Choices[0].Message.Refusal
+			if refusalMessage == "" {
+				// Default message if no specific reason provided
+				refusalMessage = "content policy violation detected"
+			}
+			return result, ContentPolicyErr(refusalMessage)
 		default:
 			result.FinishReason = Unknown
 		}
