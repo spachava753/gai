@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -293,7 +294,7 @@ func (g *AnthropicGenerator) Register(tool Tool) error {
 // Generate implements gai.Generator
 func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
 	if g.client == nil {
-		return Response{}, fmt.Errorf("openai: client not initialized")
+		return Response{}, fmt.Errorf("anthropic: client not initialized")
 	}
 
 	// Check for empty dialog
@@ -417,6 +418,54 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	// Make the API call
 	resp, err := g.client.New(ctx, params)
 	if err != nil {
+		// Convert Anthropic SDK error to our error types based on status code
+		var apierr *a.Error
+		if errors.As(err, &apierr) {
+			// Map HTTP status codes to our error types
+			switch apierr.StatusCode {
+			case 401:
+				return Response{}, AuthenticationErr(apierr.Error())
+			case 403:
+				return Response{}, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "permission_error",
+					Message:    apierr.Error(),
+				}
+			case 404:
+				return Response{}, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "not_found_error",
+					Message:    apierr.Error(),
+				}
+			case 413:
+				return Response{}, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "request_too_large",
+					Message:    apierr.Error(),
+				}
+			case 429:
+				return Response{}, RateLimitErr(apierr.Error())
+			case 500:
+				return Response{}, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "api_error",
+					Message:    apierr.Error(),
+				}
+			case 529:
+				return Response{}, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "overloaded_error",
+					Message:    apierr.Error(),
+				}
+			default:
+				// Default to invalid_request_error for 400 and other status codes
+				return Response{}, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "invalid_request_error",
+					Message:    apierr.Error(),
+				}
+			}
+		}
 		return Response{}, fmt.Errorf("failed to create new message: %w", err)
 	}
 

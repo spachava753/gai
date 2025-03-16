@@ -121,3 +121,39 @@ type AuthenticationErr string
 func (a AuthenticationErr) Error() string {
 	return fmt.Sprintf("authentication error: %s", string(a))
 }
+
+// RateLimitErr is returned when the API request exceeds the allowed rate limits.
+// This can include:
+//   - Too many requests in a short time period
+//   - Quota limits being reached
+//   - Per-minute, per-hour, or per-day limits exceeded
+//
+// The string value contains details about the specific rate limit issue.
+type RateLimitErr string
+
+func (r RateLimitErr) Error() string {
+	return fmt.Sprintf("rate limit error: %s", string(r))
+}
+
+// ApiErr is returned when the API returns a non-success status code that doesn't
+// fall into more specific error categories. This can include:
+//   - 400 Bad Request errors (invalid_request_error)
+//   - 404 Not Found errors (not_found_error)
+//   - 413 Request Too Large errors (request_too_large)
+//   - 500 Internal Server errors (api_error)
+//   - 529 Service Overloaded errors (overloaded_error)
+//
+// The struct contains the HTTP status code, error type, and message to provide
+// detailed information about the API error.
+type ApiErr struct {
+	// StatusCode is the HTTP status code returned by the API
+	StatusCode int
+	// Type is the error type returned by the API (e.g., "invalid_request_error")
+	Type string
+	// Message is the error message returned by the API
+	Message string
+}
+
+func (a ApiErr) Error() string {
+	return fmt.Sprintf("%d %s: %s", a.StatusCode, a.Type, a.Message)
+}
