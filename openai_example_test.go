@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+	"os"
 )
 
 func ExampleOpenAiGenerator_Generate() {
@@ -45,8 +47,47 @@ func ExampleOpenAiGenerator_Generate() {
 	}
 	fmt.Println(len(resp.Candidates))
 
+	// Create an OpenAI client against open router
+	client = openai.NewClient(
+		option.WithBaseURL("https://openrouter.ai/api/v1/"),
+		option.WithAPIKey(os.Getenv("OPEN_ROUTER_API_KEY")),
+	)
+
+	// Instantiate a OpenAI Generator
+	gen = NewOpenAiGenerator(
+		client.Chat.Completions,
+		"google/gemini-2.5-pro-preview-03-25",
+		"You are a helpful assistant",
+	)
+	dialog = Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("Hi!"),
+				},
+			},
+		},
+	}
+
+	// Customize generation parameters
+	opts = GenOpts{
+		MaxGenerationTokens: 1024,
+	}
+
+	// Generate a response
+	resp, err = gen.Generate(context.Background(), dialog, &opts)
+	if err != nil {
+		panic(err.Error())
+	}
+	// The exact response text may vary, so we'll just print a placeholder
+	fmt.Println("Response received")
+
 	// Output: Response received
 	// 2
+	// Response received
 }
 
 func ExampleOpenAiGenerator_Register() {

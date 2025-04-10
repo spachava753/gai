@@ -44,7 +44,10 @@ func TestToOpenAIMessage(t *testing.T) {
 					},
 				},
 			},
-			want:    oai.UserMessage("Hello, how are you?"),
+			want: oai.ChatCompletionMessageParam{
+				Role:    oai.F(oai.ChatCompletionMessageParamRoleUser),
+				Content: oai.F[interface{}]("Hello, how are you?"),
+			},
 			wantErr: false,
 		},
 		{

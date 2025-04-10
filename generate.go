@@ -94,6 +94,15 @@ type GenOpts struct {
 	// AudioConfig are parameters for audio output.
 	// Required when audio output is requested with Modality Audio in OutputModalities
 	AudioConfig AudioConfig
+
+	// ThinkingBudget is an optional parameter used for a Generator that can perform reasoning.
+	//
+	// Note that if a Generator does not support this parameter, it will simply be ignored, even if set
+	ThinkingBudget string
+
+	// ExtraArgs is an optional parameter used to pass a Generator-specific generation parameters not
+	// already supported by any of the above fields
+	ExtraArgs map[string]any
 }
 
 // FinishReason represents the reason why a Generator stopped generating and returned a Response

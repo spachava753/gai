@@ -97,6 +97,17 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 
 	switch msg.Role {
 	case User:
+		// Special case for single text block, to supply the content directly as a string,
+		// instead of as a part of an object. This is especially helpful when using third-party
+		// providers like open-router or deepseek, which do not support multiple objects supplied as
+		// content for a message.
+		if len(msg.Blocks) == 1 && msg.Blocks[0].ModalityType == Text {
+			return oai.ChatCompletionMessageParam{
+				Role:    oai.F(oai.ChatCompletionMessageParamRoleUser),
+				Content: oai.F[interface{}](msg.Blocks[0].Content.String()),
+			}, nil
+		}
+
 		// User messages should only have Content blocks
 		for _, block := range msg.Blocks {
 			if block.BlockType != Content {
