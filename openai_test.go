@@ -106,7 +106,11 @@ func TestToOpenAIMessage(t *testing.T) {
 					},
 				},
 			},
-			want:    oai.ToolMessage("call_123", "The current temperature is 72°F"),
+			want: oai.ChatCompletionMessageParam{
+				Role:       oai.F(oai.ChatCompletionMessageParamRoleTool),
+				ToolCallID: oai.F("call_123"),
+				Content:    oai.F[interface{}]("The current temperature is 72°F"),
+			},
 			wantErr: false,
 		},
 		{

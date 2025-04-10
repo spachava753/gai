@@ -248,6 +248,18 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 			return nil, fmt.Errorf("tool result message block must have an ID")
 		}
 
+		// Special case for single text block, to supply the content directly as a string,
+		// instead of as a part of an object. This is especially helpful when using third-party
+		// providers like open-router or deepseek, which do not support multiple objects supplied as
+		// content for a message.
+		if len(msg.Blocks) == 1 && msg.Blocks[0].ModalityType == Text {
+			return oai.ChatCompletionMessageParam{
+				Role:       oai.F(oai.ChatCompletionMessageParamRoleTool),
+				ToolCallID: oai.F(toolID),
+				Content:    oai.F[interface{}](msg.Blocks[0].Content.String()),
+			}, nil
+		}
+
 		// Create text parts for each block with the same ID
 		var textParts []oai.ChatCompletionContentPartTextParam
 		for _, block := range msg.Blocks {
