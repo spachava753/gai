@@ -547,11 +547,12 @@ func TestToolGenerator_Generate(t *testing.T) {
 				// Expected dialog:
 				// [0] User: "Compare weather in NYC and LA"
 				// [1] Assistant: Tool calls to get_weather (2 calls)
-				// [2] Assistant: Tool results (2 results)
-				// [3] Assistant: Final comparison
+				// [2] Assistant: Tool result
+				// [3] Assistant: Tool result
+				// [4] Assistant: Final comparison
 
-				if len(dialog) != 4 {
-					t.Errorf("Expected 4 messages in dialog, got %d", len(dialog))
+				if len(dialog) != 5 {
+					t.Errorf("Expected 5 messages in dialog, got %d", len(dialog))
 					return
 				}
 
@@ -561,28 +562,27 @@ func TestToolGenerator_Generate(t *testing.T) {
 					t.Errorf("Expected tool call message with 2 calls")
 				}
 
-				// Check tool result message has both results
-				toolResults := dialog[2]
-				if toolResults.Role != ToolResult || len(toolResults.Blocks) != 2 {
-					t.Errorf("Expected tool result message with 2 results")
+				// Check tool result message has a result
+				toolResult1 := dialog[2]
+				if toolResult1.Role != ToolResult || len(toolResult1.Blocks) != 1 {
+					t.Errorf("Expected tool result message with a result")
+				}
+
+				// Check tool result message has a result
+				toolResult2 := dialog[3]
+				if toolResult2.Role != ToolResult || len(toolResult2.Blocks) != 1 {
+					t.Errorf("Expected tool result message with a result")
 				}
 
 				// Verify the results
-				var foundNY, foundLA bool
-				for _, block := range toolResults.Blocks {
-					if block.ID == "weather_call_1" && block.Content.String() == "72°F and sunny" {
-						foundNY = true
-					}
-					if block.ID == "weather_call_2" && block.Content.String() == "68°F and cloudy" {
-						foundLA = true
-					}
-				}
+				foundNY := toolResult1.Blocks[0].Content.String() == "72°F and sunny"
+				foundLA := toolResult2.Blocks[0].Content.String() == "68°F and cloudy"
 				if !foundNY || !foundLA {
 					t.Errorf("Missing weather results. Found NY: %v, Found LA: %v", foundNY, foundLA)
 				}
 
 				// Check final response
-				final := dialog[3]
+				final := dialog[4]
 				if final.Role != Assistant || len(final.Blocks) != 1 {
 					t.Errorf("Expected final message with comparison")
 				}

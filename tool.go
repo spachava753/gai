@@ -507,11 +507,12 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen Gen
 			toolResultBlocks = append(toolResultBlocks, resultBlock)
 		}
 
-		// Create a message with tool results and append to dialog
-		if len(toolResultBlocks) > 0 {
+		// Create messages with tool results and append to dialog.
+		// Each tool result is its own message
+		for _, toolResultBlock := range toolResultBlocks {
 			resultMessage := Message{
 				Role:   ToolResult,
-				Blocks: toolResultBlocks,
+				Blocks: []Block{toolResultBlock},
 			}
 
 			// Append the result message to the dialog
