@@ -86,6 +86,10 @@ type Block struct {
 	// return base64 encoded data. The MimeType field should be set appropriately to indicate the
 	// content type.
 	Content fmt.Stringer
+
+	// ExtraFields allows a Generator to store Generator-specific extra information that can used
+	// in a later invocation
+	ExtraFields map[string]interface{}
 }
 
 // Message represents a collection of blocks produced by the user or meant for the assistant.

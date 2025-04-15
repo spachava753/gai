@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	a "github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 func ExampleAnthropicGenerator_Generate() {
@@ -12,7 +11,7 @@ func ExampleAnthropicGenerator_Generate() {
 	client := a.NewClient()
 
 	// Instantiate an Anthropic Generator
-	gen := NewAnthropicGenerator(client.Messages, a.ModelClaude_3_5_Sonnet_20240620, "You are a helpful assistant")
+	gen := NewAnthropicGenerator(client.Messages, a.ModelClaude3_5HaikuLatest, "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -50,9 +49,60 @@ func ExampleAnthropicGenerator_Generate() {
 	// 1
 }
 
+func ExampleAnthropicGenerator_Generate_thinking() {
+	// Create an Anthropic client
+	client := a.NewClient()
+
+	// Instantiate an Anthropic Generator
+	gen := NewAnthropicGenerator(client.Messages, a.ModelClaude3_7SonnetLatest, "You are a helpful assistant")
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("Hi!"),
+				},
+			},
+		},
+	}
+
+	// Use thinking
+	opts := GenOpts{
+		Temperature:         1.0,
+		MaxGenerationTokens: 9000,
+		ThinkingBudget:      "5000",
+	}
+	resp, err := gen.Generate(context.Background(), dialog, &opts)
+	if err != nil {
+		panic(err.Error())
+	}
+	fmt.Println(len(resp.Candidates))
+
+	dialog = append(dialog, resp.Candidates[0], Message{
+		Role: User,
+		Blocks: []Block{
+			{
+				BlockType:    Content,
+				ModalityType: Text,
+				Content:      Str("What can you do?"),
+			},
+		},
+	})
+	resp, err = gen.Generate(context.Background(), dialog, &opts)
+	if err != nil {
+		panic(err.Error())
+	}
+	fmt.Println(len(resp.Candidates))
+
+	// Output: 1
+	// 1
+}
+
 func ExampleAnthropicGenerator_Register() {
 	// Create an Anthropic client
-	client := a.NewClient(option.WithBaseURL("https://gateway.ai.cloudflare.com/v1/4eee6dd2fdc8cebc7802c5a638f460fe/cpe/anthropic/"))
+	client := a.NewClient()
 
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
@@ -131,10 +181,32 @@ Only output the price, like
 	}
 	fmt.Println(resp.Candidates[0].Blocks[0].Content)
 
-	// Special case, parallel tool use
+	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
+	// 123.45
+}
+
+func ExampleAnthropicGenerator_Register_parallelToolUse() {
+	// Create an Anthropic client
+	client := a.NewClient()
+
+	// Register tools
+	tickerTool := Tool{
+		Name:        "get_stock_price",
+		Description: "Get the current stock price for a given ticker symbol.",
+		InputSchema: InputSchema{
+			Type: Object,
+			Properties: map[string]Property{
+				"ticker": {
+					Type:        String,
+					Description: "The stock ticker symbol, e.g. AAPL for Apple Inc.",
+				},
+			},
+			Required: []string{"ticker"},
+		},
+	}
 
 	// Instantiate an Anthropic Generator
-	gen = NewAnthropicGenerator(
+	gen := NewAnthropicGenerator(
 		client.Messages,
 		a.ModelClaude_3_5_Sonnet_20240620,
 		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
@@ -163,7 +235,7 @@ Assistant: MSFT
 		panic(err.Error())
 	}
 
-	dialog = Dialog{
+	dialog := Dialog{
 		{
 			Role: User,
 			Blocks: []Block{
@@ -177,7 +249,7 @@ Assistant: MSFT
 	}
 
 	// Generate a response
-	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 8096})
+	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 8096})
 	if err != nil {
 		panic(err.Error())
 	}
@@ -211,8 +283,6 @@ Assistant: MSFT
 	fmt.Println(resp.Candidates[0].Blocks[0].Content)
 
 	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
-	// 123.45
-	// {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
 	// {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
 	// MSFT
 }

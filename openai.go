@@ -463,6 +463,21 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 				})
 			}
 		}
+
+		if options.ThinkingBudget != "" {
+			switch options.ThinkingBudget {
+			case "low", "medium", "high":
+				params.ReasoningEffort = oai.F(oai.ChatCompletionReasoningEffort(options.ThinkingBudget))
+			default:
+				return Response{}, &InvalidParameterErr{
+					Parameter: "thinking budget",
+					Reason: fmt.Sprintf(
+						"invalid thinking budget, expected 'low', 'medium', or 'high': %s",
+						options.ThinkingBudget,
+					),
+				}
+			}
+		}
 	}
 
 	// Add tools if any are registered

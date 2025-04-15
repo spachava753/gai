@@ -25,22 +25,22 @@ func (t TickerTool) Call(ctx context.Context, input map[string]any) (any, error)
 
 var _ ToolCallback = (*TickerTool)(nil)
 
-var tickerTool = Tool{
-	Name:        "get_stock_price",
-	Description: "Get the current stock price for a given ticker symbol.",
-	InputSchema: InputSchema{
-		Type: Object,
-		Properties: map[string]Property{
-			"ticker": {
-				Type:        String,
-				Description: "The stock ticker symbol, e.g. AAPL for Apple Inc.",
-			},
-		},
-		Required: []string{"ticker"},
-	},
-}
-
 func ExampleToolGenerator_Generate() {
+	tickerTool := Tool{
+		Name:        "get_stock_price",
+		Description: "Get the current stock price for a given ticker symbol.",
+		InputSchema: InputSchema{
+			Type: Object,
+			Properties: map[string]Property{
+				"ticker": {
+					Type:        String,
+					Description: "The stock ticker symbol, e.g. AAPL for Apple Inc.",
+				},
+			},
+			Required: []string{"ticker"},
+		},
+	}
+
 	client := openai.NewClient()
 
 	// Instantiate a OpenAI Generator

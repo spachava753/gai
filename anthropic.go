@@ -7,6 +7,7 @@ import (
 	"fmt"
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"strconv"
 )
 
 // AnthropicGenerator implements the gai.Generator interface using OpenAI's API
@@ -83,6 +84,9 @@ func convertPropertyToAnthropicMap(prop Property) map[string]interface{} {
 
 	return result
 }
+
+const generatorPrefix = "anthropic_"
+const thinkingSignatureKey = "thinking_signature"
 
 // toAnthropicMessage converts a gai.Message to an Anthropic message.
 // It returns an error if the message contains unsupported modalities or block types.
@@ -178,6 +182,25 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 					Name:  a.F(toolUse.Name),
 					Input: a.F[interface{}](json.RawMessage(inputJSON)),
 					Type:  a.F(a.ToolUseBlockParamTypeToolUse),
+				})
+			case Thinking:
+				if block.ModalityType != Text {
+					return a.MessageParam{}, UnsupportedInputModalityErr(block.ModalityType.String())
+				}
+
+				var thinkingSig string
+				var ok bool
+				if block.ExtraFields[generatorPrefix+thinkingSignatureKey] != nil {
+					thinkingSig, ok = block.ExtraFields[generatorPrefix+thinkingSignatureKey].(string)
+					if !ok {
+						return a.MessageParam{}, fmt.Errorf("invalid thinking signature")
+					}
+				}
+
+				contentParts = append(contentParts, &a.ThinkingBlockParam{
+					Signature: a.F(thinkingSig),
+					Thinking:  a.F(block.Content.String()),
+					Type:      a.F(a.ThinkingBlockParamTypeThinking),
 				})
 			default:
 				return a.MessageParam{}, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
@@ -404,6 +427,21 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 				}
 			}
 		}
+
+		if options.ThinkingBudget != "" {
+			budget, err := strconv.ParseUint(options.ThinkingBudget, 10, 64)
+			if err != nil {
+				return Response{}, &InvalidParameterErr{
+					Parameter: "thinking budget",
+					Reason:    fmt.Sprintf("value is not a unsigned int: %s", err),
+				}
+			}
+
+			params.Thinking = a.F[a.ThinkingConfigParamUnion](a.ThinkingConfigParam{
+				Type:         a.F(a.ThinkingConfigParamTypeEnabled),
+				BudgetTokens: a.F(int64(budget)),
+			})
+		}
 	}
 
 	// Add tools if any are registered
@@ -528,6 +566,9 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 				BlockType:    Thinking,
 				ModalityType: Text,
 				Content:      Str(contentPart.Thinking),
+				ExtraFields: map[string]interface{}{
+					generatorPrefix + thinkingSignatureKey: contentPart.Signature,
+				},
 			})
 		case a.ContentBlockTypeRedactedThinking:
 			blocks = append(blocks, Block{

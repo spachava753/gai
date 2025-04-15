@@ -9,7 +9,7 @@ import (
 
 // ExampleMixGenerators demonstrates how to mix different AI model providers
 // in a single conversation, switching between Anthropic and OpenAI models.
-func ExampleMixGenerators() {
+func Example_mixGenerators() {
 	// Initialize clients for both providers
 	anthropicClient := a.NewClient()
 	openaiClient := openai.NewClient()
@@ -101,7 +101,7 @@ func ExampleMixGenerators() {
 	if err := anthropicGen.Register(stockTool); err != nil {
 		panic(err)
 	}
-	
+
 	if err := openaiGen.Register(stockTool); err != nil {
 		panic(err)
 	}
@@ -136,7 +136,7 @@ func ExampleMixGenerators() {
 
 	// Add GPT's tool call to the conversation
 	stockDialog = append(stockDialog, gptToolResp.Candidates[0])
-	
+
 	// Add mock tool result
 	stockDialog = append(stockDialog, Message{
 		Role: ToolResult,
