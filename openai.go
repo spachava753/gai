@@ -33,6 +33,9 @@ func convertToolToOpenAI(tool Tool) oai.ChatCompletionToolParam {
 			properties[name] = convertPropertyToMap(prop)
 		}
 		parameters["properties"] = properties
+		if tool.InputSchema.Required == nil {
+			tool.InputSchema.Required = []string{}
+		}
 		parameters["required"] = tool.InputSchema.Required
 	}
 
