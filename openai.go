@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/shared"
 	"slices"
 	"strings"
 
@@ -38,12 +37,11 @@ func convertToolToOpenAI(tool Tool) oai.ChatCompletionToolParam {
 	}
 
 	return oai.ChatCompletionToolParam{
-		Type: oai.F(oai.ChatCompletionToolTypeFunction),
-		Function: oai.F(oai.FunctionDefinitionParam{
-			Name:        oai.F(tool.Name),
-			Description: oai.F(tool.Description),
-			Parameters:  oai.F(oai.FunctionParameters(parameters)),
-		}),
+		Function: oai.FunctionDefinitionParam{
+			Name:        tool.Name,
+			Description: oai.String(tool.Description),
+			Parameters:  parameters,
+		},
 	}
 }
 
@@ -83,13 +81,13 @@ func convertPropertyToMap(prop Property) map[string]interface{} {
 // It returns an error if the message contains unsupported modalities or block types.
 func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 	if len(msg.Blocks) == 0 {
-		return nil, fmt.Errorf("message must have at least one block")
+		return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("message must have at least one block")
 	}
 
 	// Check for video modality in any block
 	for _, block := range msg.Blocks {
 		if block.ModalityType == Video {
-			return nil, UnsupportedInputModalityErr("video")
+			return oai.ChatCompletionMessageParamUnion{}, UnsupportedInputModalityErr("video")
 		}
 	}
 
@@ -102,16 +100,13 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 		// providers like open-router or deepseek, which do not support multiple objects supplied as
 		// content for a message.
 		if len(msg.Blocks) == 1 && msg.Blocks[0].ModalityType == Text {
-			return oai.ChatCompletionMessageParam{
-				Role:    oai.F(oai.ChatCompletionMessageParamRoleUser),
-				Content: oai.F[interface{}](msg.Blocks[0].Content.String()),
-			}, nil
+			return oai.UserMessage(msg.Blocks[0].Content.String()), nil
 		}
 
 		// User messages should only have Content blocks
 		for _, block := range msg.Blocks {
 			if block.BlockType != Content {
-				return nil, fmt.Errorf("unsupported block type for user: %v", block.BlockType)
+				return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("unsupported block type for user: %v", block.BlockType)
 			}
 		}
 
@@ -120,51 +115,43 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 		for _, block := range msg.Blocks {
 			switch block.ModalityType {
 			case Text:
-				parts = append(parts, oai.ChatCompletionContentPartTextParam{
-					Type: oai.F(oai.ChatCompletionContentPartTextTypeText),
-					Text: oai.F(block.Content.String()),
-				})
+				parts = append(parts, oai.TextContentPart(block.Content.String()))
 			case Image:
 				// Convert image content to an image part
 				if block.MimeType == "" {
-					return nil, fmt.Errorf("image block missing mimetype")
+					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("image block missing mimetype")
 				}
 				dataUrl := fmt.Sprintf("data:%s;base64,%s",
 					block.MimeType,
 					block.Content.String())
-				parts = append(parts, oai.ChatCompletionContentPartImageParam{
-					Type: oai.F(oai.ChatCompletionContentPartImageTypeImageURL),
-					ImageURL: oai.F(oai.ChatCompletionContentPartImageImageURLParam{
-						URL: oai.F(dataUrl),
-					}),
-				})
+
+				parts = append(parts, oai.ImageContentPart(oai.ChatCompletionContentPartImageImageURLParam{
+					URL: dataUrl,
+				}))
 			case Audio:
 				// Convert audio content to an audio input part
 				if block.MimeType == "" {
-					return nil, fmt.Errorf("audio block missing mimetype")
+					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("audio block missing mimetype")
 				}
 				// Extract format from mimetype (e.g., "audio/wav" -> "wav")
 				format, _ := strings.CutPrefix(block.MimeType, "audio/")
 				if !slices.Contains([]string{"wav", "mp3"}, format) {
-					return nil, fmt.Errorf("unsupported audio format: %v", block.MimeType)
+					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("unsupported audio format: %v", block.MimeType)
 				}
-				parts = append(parts, oai.ChatCompletionContentPartInputAudioParam{
-					Type: oai.F(oai.ChatCompletionContentPartInputAudioTypeInputAudio),
-					InputAudio: oai.F(oai.ChatCompletionContentPartInputAudioInputAudioParam{
-						Data:   oai.F(block.Content.String()),
-						Format: oai.F(oai.ChatCompletionContentPartInputAudioInputAudioFormat(format)),
-					}),
-				})
+				parts = append(parts, oai.InputAudioContentPart(oai.ChatCompletionContentPartInputAudioInputAudioParam{
+					Data:   block.Content.String(),
+					Format: format,
+				}))
 			default:
-				return nil, UnsupportedInputModalityErr(block.ModalityType.String())
+				return oai.ChatCompletionMessageParamUnion{}, UnsupportedInputModalityErr(block.ModalityType.String())
 			}
 		}
 
-		return oai.UserMessageParts(parts...), nil
+		return oai.UserMessage(parts), nil
 
 	case Assistant:
 		// Handle multiple blocks
-		var contentParts []oai.ChatCompletionAssistantMessageParamContentUnion
+		var contentParts oai.ChatCompletionAssistantMessageParamContentUnion
 		var toolCalls []oai.ChatCompletionMessageToolCallParam
 		var audioID string
 
@@ -172,55 +159,61 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 			switch block.BlockType {
 			case Content:
 				if block.ModalityType == Text {
-					contentParts = append(contentParts, oai.TextPart(block.Content.String()))
+					contentParts.OfArrayOfContentParts = append(
+						contentParts.OfArrayOfContentParts,
+						oai.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion{
+							OfText: &oai.ChatCompletionContentPartTextParam{
+								Text: block.Content.String(),
+							},
+						},
+					)
 				} else if block.ModalityType == Audio {
 					if block.ID == "" {
-						return nil, fmt.Errorf("assistant audio block missing ID")
+						return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("assistant audio block missing ID")
 					}
 					// Remember audio ID for later use
 					audioID = block.ID
 				} else {
-					return nil, UnsupportedInputModalityErr(block.ModalityType.String())
+					return oai.ChatCompletionMessageParamUnion{}, UnsupportedInputModalityErr(block.ModalityType.String())
 				}
 			case ToolCall:
 				// Parse the tool call content as ToolUseInput
 				var toolUse ToolUseInput
 				if err := json.Unmarshal([]byte(block.Content.String()), &toolUse); err != nil {
-					return nil, fmt.Errorf("invalid tool call content: %w", err)
+					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("invalid tool call content: %w", err)
 				}
 
 				// Convert parameters to JSON string for OpenAI
 				argsJSON, err := json.Marshal(toolUse.Parameters)
 				if err != nil {
-					return nil, fmt.Errorf("failed to marshal tool parameters: %w", err)
+					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("failed to marshal tool parameters: %w", err)
 				}
 
 				toolCalls = append(toolCalls, oai.ChatCompletionMessageToolCallParam{
-					ID: oai.F(block.ID),
-					Function: oai.F(oai.ChatCompletionMessageToolCallFunctionParam{
-						Name:      oai.F(toolUse.Name),
-						Arguments: oai.F(string(argsJSON)),
-					}),
-					Type: oai.F(oai.ChatCompletionMessageToolCallTypeFunction),
+					ID: block.ID,
+					Function: oai.ChatCompletionMessageToolCallFunctionParam{
+						Name:      toolUse.Name,
+						Arguments: string(argsJSON),
+					},
 				})
 			default:
-				return nil, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
+				return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
 			}
 		}
 
-		result := oai.ChatCompletionAssistantMessageParam{
-			Role: oai.F(oai.ChatCompletionAssistantMessageParamRoleAssistant),
+		result := oai.ChatCompletionMessageParamUnion{
+			OfAssistant: &oai.ChatCompletionAssistantMessageParam{},
 		}
-		if len(contentParts) > 0 {
-			result.Content = oai.F(contentParts)
+		if len(contentParts.OfArrayOfContentParts) > 0 {
+			result.OfAssistant.Content = contentParts
 		}
 		if len(toolCalls) > 0 {
-			result.ToolCalls = oai.F(toolCalls)
+			result.OfAssistant.ToolCalls = toolCalls
 		}
 		if audioID != "" {
-			result.Audio = oai.F(oai.ChatCompletionAssistantMessageParamAudio{
-				ID: oai.F(audioID),
-			})
+			result.OfAssistant.Audio = oai.ChatCompletionAssistantMessageParamAudio{
+				ID: audioID,
+			}
 		}
 		return result, nil
 
@@ -239,13 +232,13 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 
 		// For ToolResult messages, we convert them to OpenAI's tool message format
 		if len(msg.Blocks) == 0 {
-			return nil, fmt.Errorf("tool result message must have at least one block")
+			return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("tool result message must have at least one block")
 		}
 
 		// Get the ID from the first block
 		toolID := msg.Blocks[0].ID
 		if toolID == "" {
-			return nil, fmt.Errorf("tool result message block must have an ID")
+			return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("tool result message block must have an ID")
 		}
 
 		// Special case for single text block, to supply the content directly as a string,
@@ -253,11 +246,7 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 		// providers like open-router or deepseek, which do not support multiple objects supplied as
 		// content for a message.
 		if len(msg.Blocks) == 1 && msg.Blocks[0].ModalityType == Text {
-			return oai.ChatCompletionMessageParam{
-				Role:       oai.F(oai.ChatCompletionMessageParamRoleTool),
-				ToolCallID: oai.F(toolID),
-				Content:    oai.F[interface{}](msg.Blocks[0].Content.String()),
-			}, nil
+			return oai.ToolMessage(msg.Blocks[0].Content.String(), toolID), nil
 		}
 
 		// Create text parts for each block with the same ID
@@ -265,29 +254,24 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 		for _, block := range msg.Blocks {
 			// Verify all blocks have the same tool ID
 			if block.ID != toolID {
-				return nil, fmt.Errorf("all blocks in tool result message must have the same ID")
+				return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("all blocks in tool result message must have the same ID")
 			}
 
 			// Verify all blocks are text modality
 			if block.ModalityType != Text {
-				return nil, fmt.Errorf("OpenAI only supports text modality in tool result messages")
+				return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("OpenAI only supports text modality in tool result messages")
 			}
 
 			textParts = append(textParts, oai.ChatCompletionContentPartTextParam{
-				Type: oai.F(oai.ChatCompletionContentPartTextTypeText),
-				Text: oai.F(block.Content.String()),
+				Text: block.Content.String(),
 			})
 		}
 
 		// Create the tool message with the text parts
-		return oai.ChatCompletionToolMessageParam{
-			Role:       oai.F(oai.ChatCompletionToolMessageParamRoleTool),
-			ToolCallID: oai.F(toolID),
-			Content:    oai.F(textParts),
-		}, nil
+		return oai.ToolMessage(textParts, toolID), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported role: %v", msg.Role)
+		return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("unsupported role: %v", msg.Role)
 	}
 }
 
@@ -351,56 +335,56 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 	// Create OpenAI chat completion params
 	params := oai.ChatCompletionNewParams{
-		Model:    oai.F(g.model),
-		Messages: oai.F(messages),
+		Model:    g.model,
+		Messages: messages,
 	}
 
 	// Add system instructions if present
 	if g.systemInstructions != "" {
-		params.Messages = oai.F(append([]oai.ChatCompletionMessageParamUnion{
+		params.Messages = append([]oai.ChatCompletionMessageParamUnion{
 			oai.SystemMessage(g.systemInstructions),
-		}, messages...))
+		}, messages...)
 	}
 
 	// Map our options to OpenAI params if options are provided
 	if options != nil {
 		// Set temperature if non-zero
 		if options.Temperature != 0 {
-			params.Temperature = oai.F(options.Temperature)
+			params.Temperature = oai.Float(options.Temperature)
 		}
 
 		// Set top_p if non-zero
 		if options.TopP != 0 {
-			params.TopP = oai.F(options.TopP)
+			params.TopP = oai.Float(options.TopP)
 		}
 
 		// Set frequency penalty if non-zero
 		if options.FrequencyPenalty != 0 {
-			params.FrequencyPenalty = oai.F(options.FrequencyPenalty)
+			params.FrequencyPenalty = oai.Float(options.FrequencyPenalty)
 		}
 
 		// Set presence penalty if non-zero
 		if options.PresencePenalty != 0 {
-			params.PresencePenalty = oai.F(options.PresencePenalty)
+			params.PresencePenalty = oai.Float(options.PresencePenalty)
 		}
 
 		// Set max tokens if specified
 		if options.MaxGenerationTokens > 0 {
-			params.MaxCompletionTokens = oai.F(int64(options.MaxGenerationTokens))
+			params.MaxCompletionTokens = oai.Int(int64(options.MaxGenerationTokens))
 		}
 
 		// Set number of completions if specified
 		if options.N > 0 {
-			params.N = oai.F(int64(options.N))
+			params.N = oai.Int(int64(options.N))
 		}
 
 		// Set stop sequences if specified
 		if len(options.StopSequences) > 0 {
 			// OpenAI accepts either a single string or array of strings
 			if len(options.StopSequences) == 1 {
-				params.Stop = oai.F(oai.ChatCompletionNewParamsStopUnion(shared.UnionString(options.StopSequences[0])))
+				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfString: oai.String(options.StopSequences[0])}
 			} else {
-				params.Stop = oai.F(oai.ChatCompletionNewParamsStopUnion(oai.ChatCompletionNewParamsStopArray(options.StopSequences)))
+				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfChatCompletionNewsStopArray: options.StopSequences}
 			}
 		}
 
@@ -408,31 +392,30 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		if options.ToolChoice != "" {
 			switch options.ToolChoice {
 			case ToolChoiceAuto:
-				params.ToolChoice = oai.F(oai.ChatCompletionToolChoiceOptionUnionParam(oai.ChatCompletionToolChoiceOptionAuto("auto")))
+				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceAuto)}
 			case ToolChoiceToolsRequired:
-				params.ToolChoice = oai.F(oai.ChatCompletionToolChoiceOptionUnionParam(oai.ChatCompletionToolChoiceOptionAuto("required")))
+				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceToolsRequired)}
 			default:
 				// Specific tool name
-				params.ToolChoice = oai.F(oai.ChatCompletionToolChoiceOptionUnionParam(oai.ChatCompletionNamedToolChoiceParam{
-					Type: oai.F(oai.ChatCompletionNamedToolChoiceType("function")),
-					Function: oai.F(oai.ChatCompletionNamedToolChoiceFunctionParam{
-						Name: oai.F(options.ToolChoice),
-					}),
-				}))
+				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfChatCompletionNamedToolChoice: &oai.ChatCompletionNamedToolChoiceParam{
+					Function: oai.ChatCompletionNamedToolChoiceFunctionParam{
+						Name: options.ToolChoice,
+					},
+				}}
 			}
 		}
 
 		// Handle multimodality options
 		if len(options.OutputModalities) > 0 {
 			// Set requested modalities
-			modalities := make([]oai.ChatCompletionModality, 0, len(options.OutputModalities))
+			modalities := make([]string, 0, len(options.OutputModalities))
 			hasAudio := false
 			for _, m := range options.OutputModalities {
 				switch m {
 				case Text:
-					modalities = append(modalities, oai.ChatCompletionModalityText)
+					modalities = append(modalities, "text")
 				case Audio:
-					modalities = append(modalities, oai.ChatCompletionModalityAudio)
+					modalities = append(modalities, "audio")
 					hasAudio = true
 				case Image:
 					return Response{}, UnsupportedOutputModalityErr("image output not supported by model")
@@ -440,7 +423,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 					return Response{}, UnsupportedOutputModalityErr("video output not supported by model")
 				}
 			}
-			params.Modalities = oai.F(modalities)
+			params.Modalities = modalities
 
 			// Set audio configuration if audio output is requested
 			if hasAudio {
@@ -457,17 +440,17 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 					}
 				}
 
-				params.Audio = oai.F(oai.ChatCompletionAudioParam{
-					Voice:  oai.F(oai.ChatCompletionAudioParamVoice(options.AudioConfig.VoiceName)),
-					Format: oai.F(oai.ChatCompletionAudioParamFormat(options.AudioConfig.Format)),
-				})
+				params.Audio = oai.ChatCompletionAudioParam{
+					Voice:  oai.ChatCompletionAudioParamVoice(options.AudioConfig.VoiceName),
+					Format: oai.ChatCompletionAudioParamFormat(options.AudioConfig.Format),
+				}
 			}
 		}
 
 		if options.ThinkingBudget != "" {
 			switch options.ThinkingBudget {
 			case "low", "medium", "high":
-				params.ReasoningEffort = oai.F(oai.ChatCompletionReasoningEffort(options.ThinkingBudget))
+				params.ReasoningEffort = oai.ReasoningEffort(options.ThinkingBudget)
 			default:
 				return Response{}, &InvalidParameterErr{
 					Parameter: "thinking budget",
@@ -486,7 +469,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		for _, tool := range g.tools {
 			tools = append(tools, tool)
 		}
-		params.Tools = oai.F(tools)
+		params.Tools = tools
 	}
 
 	// Make the API call
@@ -627,16 +610,16 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	// Set finish reason
 	if len(resp.Choices) > 0 {
 		switch resp.Choices[0].FinishReason {
-		case oai.ChatCompletionChoicesFinishReasonStop:
+		case "stop":
 			result.FinishReason = EndTurn
-		case oai.ChatCompletionChoicesFinishReasonLength:
+		case "length":
 			result.FinishReason = MaxGenerationLimit
 			// Return MaxGenerationLimitErr when the model reaches its token limit,
 			// regardless of whether MaxGenerationTokens was explicitly set
 			return result, MaxGenerationLimitErr
-		case oai.ChatCompletionChoicesFinishReasonToolCalls:
+		case "tool_calls":
 			result.FinishReason = ToolUse
-		case oai.ChatCompletionChoicesFinishReasonContentFilter:
+		case "content_filter":
 			result.FinishReason = Unknown
 			// If content was filtered, check for refusal message and return ContentPolicyErr
 			refusalMessage := resp.Choices[0].Message.Refusal
@@ -669,3 +652,4 @@ func NewOpenAiGenerator(client OpenAICompletionService, model, systemInstruction
 
 var _ Generator = (*OpenAiGenerator)(nil)
 var _ ToolRegister = (*OpenAiGenerator)(nil)
+var _ OpenAICompletionService = (*oai.ChatCompletionService)(nil)

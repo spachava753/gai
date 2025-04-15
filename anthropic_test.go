@@ -36,20 +36,19 @@ func TestConvertToolToAnthropic(t *testing.T) {
 				},
 			},
 			want: a.ToolParam{
-				Name:        a.F("get_weather"),
-				Description: a.F("Get the weather for a location"),
-				InputSchema: a.F[interface{}](a.ToolInputSchemaParam{
-					Type: a.F(a.ToolInputSchemaTypeObject),
-					Properties: a.F[any](map[string]interface{}{
+				Name:        "get_weather",
+				Description: a.String("Get the weather for a location"),
+				InputSchema: a.ToolInputSchemaParam{
+					Properties: map[string]interface{}{
 						"location": map[string]interface{}{
 							"type":        "string",
 							"description": "The city and state, e.g. San Francisco, CA",
 						},
-					}),
+					},
 					ExtraFields: map[string]interface{}{
 						"required": []string{"location"},
 					},
-				}),
+				},
 			},
 		},
 		{
@@ -75,11 +74,10 @@ func TestConvertToolToAnthropic(t *testing.T) {
 				},
 			},
 			want: a.ToolParam{
-				Name:        a.F("get_stock_price"),
-				Description: a.F("Get the current stock price"),
-				InputSchema: a.F[interface{}](a.ToolInputSchemaParam{
-					Type: a.F(a.ToolInputSchemaTypeObject),
-					Properties: a.F[any](map[string]interface{}{
+				Name:        "get_stock_price",
+				Description: a.String("Get the current stock price"),
+				InputSchema: a.ToolInputSchemaParam{
+					Properties: map[string]interface{}{
 						"ticker": map[string]interface{}{
 							"type":        "string",
 							"description": "Stock ticker symbol",
@@ -90,11 +88,11 @@ func TestConvertToolToAnthropic(t *testing.T) {
 							"description": "Currency to show price in",
 							"enum":        []string{"USD", "EUR", "GBP"},
 						},
-					}),
+					},
 					ExtraFields: map[string]interface{}{
 						"required": []string{"ticker"},
 					},
-				}),
+				},
 			},
 		},
 		{
@@ -133,11 +131,10 @@ func TestConvertToolToAnthropic(t *testing.T) {
 				},
 			},
 			want: a.ToolParam{
-				Name:        a.F("create_user"),
-				Description: a.F("Create a new user"),
-				InputSchema: a.F[interface{}](a.ToolInputSchemaParam{
-					Type: a.F(a.ToolInputSchemaTypeObject),
-					Properties: a.F[any](map[string]interface{}{
+				Name:        "create_user",
+				Description: a.String("Create a new user"),
+				InputSchema: a.ToolInputSchemaParam{
+					Properties: map[string]interface{}{
 						"name": map[string]interface{}{
 							"type":        "string",
 							"description": "User's full name",
@@ -161,11 +158,11 @@ func TestConvertToolToAnthropic(t *testing.T) {
 							},
 							"required": []string{"street", "city"},
 						},
-					}),
+					},
 					ExtraFields: map[string]interface{}{
 						"required": []string{"name", "address"},
 					},
-				}),
+				},
 			},
 		},
 		{
@@ -193,11 +190,10 @@ func TestConvertToolToAnthropic(t *testing.T) {
 				},
 			},
 			want: a.ToolParam{
-				Name:        a.F("summarize_documents"),
-				Description: a.F("Summarize multiple documents"),
-				InputSchema: a.F[interface{}](a.ToolInputSchemaParam{
-					Type: a.F(a.ToolInputSchemaTypeObject),
-					Properties: a.F[any](map[string]interface{}{
+				Name:        "summarize_documents",
+				Description: a.String("Summarize multiple documents"),
+				InputSchema: a.ToolInputSchemaParam{
+					Properties: map[string]interface{}{
 						"documents": map[string]interface{}{
 							"type":        "array",
 							"description": "Array of documents to summarize",
@@ -210,11 +206,11 @@ func TestConvertToolToAnthropic(t *testing.T) {
 							"type":        "integer",
 							"description": "Maximum length of summary",
 						},
-					}),
+					},
 					ExtraFields: map[string]interface{}{
 						"required": []string{"documents"},
 					},
-				}),
+				},
 			},
 		},
 		{
@@ -246,11 +242,10 @@ func TestConvertToolToAnthropic(t *testing.T) {
 				},
 			},
 			want: a.ToolParam{
-				Name:        a.F("calculate_mortgage"),
-				Description: a.F("Calculate mortgage payment"),
-				InputSchema: a.F[interface{}](a.ToolInputSchemaParam{
-					Type: a.F(a.ToolInputSchemaTypeObject),
-					Properties: a.F[any](map[string]interface{}{
+				Name:        "calculate_mortgage",
+				Description: a.String("Calculate mortgage payment"),
+				InputSchema: a.ToolInputSchemaParam{
+					Properties: map[string]interface{}{
 						"principal": map[string]interface{}{
 							"type":        "number",
 							"description": "Loan amount",
@@ -267,11 +262,11 @@ func TestConvertToolToAnthropic(t *testing.T) {
 							"type":        "boolean",
 							"description": "Whether mortgage insurance is required",
 						},
-					}),
+					},
 					ExtraFields: map[string]interface{}{
 						"required": []string{"principal", "interest_rate", "term_years"},
 					},
-				}),
+				},
 			},
 		},
 	}
@@ -281,7 +276,11 @@ func TestConvertToolToAnthropic(t *testing.T) {
 			got := convertToolToAnthropic(tt.tool)
 
 			// Use deep comparison for complex structures
-			if diff := cmp.Diff(tt.want, got, sortFieldsFn); diff != "" {
+			if diff := cmp.Diff(tt.want, got, sortFieldsFn, cmpopts.IgnoreUnexported(
+				a.ToolParam{},
+				a.ToolInputSchemaParam{},
+				a.CacheControlEphemeralParam{},
+			)); diff != "" {
 				t.Errorf("convertToolToAnthropic() mismatch (-want +got):\n%s", diff)
 			}
 		})

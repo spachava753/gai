@@ -3,9 +3,9 @@ module github.com/spachava753/gai
 go 1.23.2
 
 require (
-	github.com/anthropics/anthropic-sdk-go v0.2.0-alpha.13
+	github.com/anthropics/anthropic-sdk-go v0.2.0-beta.3
 	github.com/google/go-cmp v0.7.0
-	github.com/openai/openai-go v0.1.0-alpha.62
+	github.com/openai/openai-go v0.1.0-beta.10
 )
 
 require (

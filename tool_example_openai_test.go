@@ -45,7 +45,7 @@ func ExampleToolGenerator_Generate() {
 
 	// Instantiate a OpenAI Generator
 	gen := NewOpenAiGenerator(
-		client.Chat.Completions,
+		&client.Chat.Completions,
 		openai.ChatModelGPT4oMini,
 		`You are a helpful assistant that returns the price of a stock and nothing else.
 

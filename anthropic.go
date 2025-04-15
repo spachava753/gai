@@ -34,8 +34,7 @@ func convertToolToAnthropic(tool Tool) a.ToolParam {
 
 	// Create the input schema with the properties
 	inputSchema := a.ToolInputSchemaParam{
-		Type:        a.F(a.ToolInputSchemaTypeObject),
-		Properties:  a.F[any](parameters),
+		Properties:  parameters,
 		ExtraFields: make(map[string]interface{}),
 	}
 
@@ -45,9 +44,9 @@ func convertToolToAnthropic(tool Tool) a.ToolParam {
 	}
 
 	return a.ToolParam{
-		Name:        a.F(tool.Name),
-		Description: a.F(tool.Description),
-		InputSchema: a.F[interface{}](inputSchema),
+		Name:        tool.Name,
+		Description: a.String(tool.Description),
+		InputSchema: inputSchema,
 	}
 }
 
@@ -116,34 +115,27 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 		for _, block := range msg.Blocks {
 			switch block.ModalityType {
 			case Text:
-				parts = append(parts, a.TextBlockParam{
-					Type: a.F(a.TextBlockParamTypeText),
-					Text: a.F(block.Content.String()),
-				})
+				parts = append(parts, a.ContentBlockParamOfRequestTextBlock(block.Content.String()))
 			case Image:
 				// Convert image media to an image part
 				if block.MimeType == "" {
 					return a.MessageParam{}, fmt.Errorf("image media missing mimetype")
 				}
 
-				var imageBlock a.ImageBlockParamSourceUnion = &a.Base64ImageSourceParam{
-					Type:      a.F(a.Base64ImageSourceTypeBase64),
-					MediaType: a.F(a.Base64ImageSourceMediaType(block.MimeType)),
-					Data:      a.F(block.Content.String()),
-				}
-
-				parts = append(parts, a.ImageBlockParam{
-					Type:   a.F(a.ImageBlockParamTypeImage),
-					Source: a.F(imageBlock),
+				imageBlock := a.ContentBlockParamOfRequestImageBlock(a.Base64ImageSourceParam{
+					MediaType: a.Base64ImageSourceMediaType(block.MimeType),
+					Data:      block.Content.String(),
 				})
+
+				parts = append(parts, imageBlock)
 			default:
 				return a.MessageParam{}, UnsupportedInputModalityErr(block.ModalityType.String())
 			}
 		}
 
 		return a.MessageParam{
-			Content: a.F(parts),
-			Role:    a.F(a.MessageParamRoleUser),
+			Content: parts,
+			Role:    a.MessageParamRoleUser,
 		}, nil
 
 	case Assistant:
@@ -151,7 +143,7 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 		var contentParts []a.ContentBlockParamUnion
 
 		result := a.MessageParam{
-			Role: a.F(a.MessageParamRoleAssistant),
+			Role: a.MessageParamRoleAssistant,
 		}
 
 		for _, block := range msg.Blocks {
@@ -160,10 +152,7 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 				if block.ModalityType != Text {
 					return a.MessageParam{}, UnsupportedInputModalityErr(block.ModalityType.String())
 				}
-				contentParts = append(contentParts, &a.TextBlockParam{
-					Text: a.F(block.Content.String()),
-					Type: a.F(a.TextBlockParamTypeText),
-				})
+				contentParts = append(contentParts, a.ContentBlockParamOfRequestTextBlock(block.Content.String()))
 			case ToolCall:
 				// Parse the tool call content as ToolUseInput
 				var toolUse ToolUseInput
@@ -177,12 +166,11 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 					return a.MessageParam{}, fmt.Errorf("failed to marshal tool parameters: %w", err)
 				}
 
-				contentParts = append(contentParts, &a.ToolUseBlockParam{
-					ID:    a.F(block.ID),
-					Name:  a.F(toolUse.Name),
-					Input: a.F[interface{}](json.RawMessage(inputJSON)),
-					Type:  a.F(a.ToolUseBlockParamTypeToolUse),
-				})
+				contentParts = append(contentParts, a.ContentBlockParamOfRequestToolUseBlock(
+					block.ID,
+					json.RawMessage(inputJSON),
+					toolUse.Name,
+				))
 			case Thinking:
 				if block.ModalityType != Text {
 					return a.MessageParam{}, UnsupportedInputModalityErr(block.ModalityType.String())
@@ -197,17 +185,16 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 					}
 				}
 
-				contentParts = append(contentParts, &a.ThinkingBlockParam{
-					Signature: a.F(thinkingSig),
-					Thinking:  a.F(block.Content.String()),
-					Type:      a.F(a.ThinkingBlockParamTypeThinking),
-				})
+				contentParts = append(contentParts, a.ContentBlockParamOfRequestThinkingBlock(
+					thinkingSig,
+					block.Content.String(),
+				))
 			default:
 				return a.MessageParam{}, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
 			}
 		}
 
-		result.Content = a.F(contentParts)
+		result.Content = contentParts
 		return result, nil
 
 	case ToolResult:
@@ -241,36 +228,42 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 		for toolUseID, blocks := range blocksByToolID {
 			// A tool result for a specific tool use ID
 			resultContent := a.ToolResultBlockParam{
-				Type:      a.F(a.ToolResultBlockParamTypeToolResult),
-				ToolUseID: a.F(toolUseID),
-				IsError:   a.F(msg.ToolResultError),
+				ToolUseID: toolUseID,
+				IsError:   a.Bool(msg.ToolResultError),
 			}
 
 			// Process all blocks for this tool use ID
 			var blockContent []a.ToolResultBlockParamContentUnion
 			for _, block := range blocks {
-				var b a.ToolResultBlockParamContent
+				var b a.ToolResultBlockParamContentUnion
 				switch block.ModalityType {
 				case Text:
-					b.Type = a.F(a.ToolResultBlockParamContentTypeText)
-					b.Text = a.F(block.Content.String())
+					b.OfRequestTextBlock = &a.TextBlockParam{
+						Text: block.Content.String(),
+					}
 				case Image:
-					b.Type = a.F(a.ToolResultBlockParamContentTypeImage)
-					b.Source = a.F[interface{}](block.Content.String())
+					b.OfRequestImageBlock = &a.ImageBlockParam{
+						Source: a.ImageBlockParamSourceUnion{
+							OfBase64ImageSource: &a.Base64ImageSourceParam{
+								Data:      block.Content.String(),
+								MediaType: a.Base64ImageSourceMediaType(block.MimeType),
+							},
+						},
+					}
 				default:
 					return a.MessageParam{}, UnsupportedInputModalityErr(block.ModalityType.String())
 				}
-				blockContent = append(blockContent, &b)
+				blockContent = append(blockContent, b)
 			}
 
-			resultContent.Content = a.F(blockContent)
-			contentParts = append(contentParts, resultContent)
+			resultContent.Content = blockContent
+			contentParts = append(contentParts, a.ContentBlockParamUnion{OfRequestToolResultBlock: &resultContent})
 		}
 
 		return a.MessageParam{
 			// For tool result blocks, we use the user role
-			Role:    a.F(a.MessageParamRoleUser),
-			Content: a.F(contentParts),
+			Role:    a.MessageParamRoleUser,
+			Content: contentParts,
 		}, nil
 	default:
 		return a.MessageParam{}, fmt.Errorf("unsupported role: %v", msg.Role)
@@ -343,30 +336,29 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 	// Create Anthropic message params
 	params := a.MessageNewParams{
-		Model:    a.F(g.model),
-		Messages: a.F(messages),
+		Model:    g.model,
+		Messages: messages,
 	}
 
 	// Add system instructions if present
 	if g.systemInstructions != "" {
-		params.System = a.F([]a.TextBlockParam{
+		params.System = []a.TextBlockParam{
 			{
-				Text: a.String(g.systemInstructions),
-				Type: a.F(a.TextBlockParamTypeText),
+				Text: g.systemInstructions,
 			},
-		})
+		}
 	}
 
 	// Map our options to Anthropic params if options are provided
 	if options != nil {
 		// Set temperature if non-zero
 		if options.Temperature != 0 {
-			params.Temperature = a.F(options.Temperature)
+			params.Temperature = a.Float(options.Temperature)
 		}
 
 		// Set top_p if non-zero
 		if options.TopP != 0 {
-			params.TopP = a.F(options.TopP)
+			params.TopP = a.Float(options.TopP)
 		}
 
 		// Set frequency penalty if non-zero
@@ -381,7 +373,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 		// Set max tokens if specified
 		if options.MaxGenerationTokens > 0 {
-			params.MaxTokens = a.F(int64(options.MaxGenerationTokens))
+			params.MaxTokens = int64(options.MaxGenerationTokens)
 		}
 
 		// Set number of completions if specified
@@ -391,26 +383,27 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 		// Set stop sequences if specified
 		if len(options.StopSequences) > 0 {
-			params.StopSequences = a.F(options.StopSequences)
+			params.StopSequences = options.StopSequences
 		}
 
 		// Set tool choice if specified
 		if options.ToolChoice != "" {
 			switch options.ToolChoice {
 			case ToolChoiceAuto:
-				params.ToolChoice = a.F[a.ToolChoiceUnionParam](a.ToolChoiceAutoParam{
-					Type: a.F(a.ToolChoiceAutoTypeAuto),
-				})
+				params.ToolChoice = a.ToolChoiceUnionParam{
+					OfToolChoiceAuto: &a.ToolChoiceAutoParam{},
+				}
 			case ToolChoiceToolsRequired:
-				params.ToolChoice = a.F[a.ToolChoiceUnionParam](a.ToolChoiceAnyParam{
-					Type: a.F(a.ToolChoiceAnyTypeAny),
-				})
+				params.ToolChoice = a.ToolChoiceUnionParam{
+					OfToolChoiceAny: &a.ToolChoiceAnyParam{},
+				}
 			default:
 				// Specific tool name
-				params.ToolChoice = a.F[a.ToolChoiceUnionParam](a.ToolChoiceToolParam{
-					Name: a.F(options.ToolChoice),
-					Type: a.F(a.ToolChoiceToolTypeTool),
-				})
+				params.ToolChoice = a.ToolChoiceUnionParam{
+					OfToolChoiceTool: &a.ToolChoiceToolParam{
+						Name: options.ToolChoice,
+					},
+				}
 			}
 		}
 
@@ -437,20 +430,23 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 				}
 			}
 
-			params.Thinking = a.F[a.ThinkingConfigParamUnion](a.ThinkingConfigParam{
-				Type:         a.F(a.ThinkingConfigParamTypeEnabled),
-				BudgetTokens: a.F(int64(budget)),
-			})
+			params.Thinking = a.ThinkingConfigParamUnion{
+				OfThinkingConfigEnabled: &a.ThinkingConfigEnabledParam{
+					BudgetTokens: int64(budget),
+				},
+			}
 		}
 	}
 
 	// Add tools if any are registered
 	if len(g.tools) > 0 {
-		var tools []a.ToolUnionUnionParam
+		var tools []a.ToolUnionParam
 		for _, tool := range g.tools {
-			tools = append(tools, &tool)
+			tools = append(tools, a.ToolUnionParam{
+				OfTool: &tool,
+			})
 		}
-		params.Tools = a.F(tools)
+		params.Tools = tools
 	}
 
 	// Make the API call
@@ -528,14 +524,14 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	// Handle text content
 	for _, contentPart := range resp.Content {
 		switch contentPart.Type {
-		case a.ContentBlockTypeText:
+		case "text":
 			blocks = append(blocks, Block{
 				ID:           contentPart.ID,
 				BlockType:    Content,
 				ModalityType: Text,
 				Content:      Str(contentPart.Text),
 			})
-		case a.ContentBlockTypeToolUse:
+		case "tool_use":
 			// Create a ToolUseInput with standardized format
 			var toolParams map[string]interface{}
 			if err := json.Unmarshal(contentPart.Input, &toolParams); err != nil {
@@ -560,7 +556,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 				MimeType:     "application/json",
 				Content:      Str(toolUseJSON),
 			})
-		case a.ContentBlockTypeThinking:
+		case "thinking":
 			blocks = append(blocks, Block{
 				ID:           contentPart.ID,
 				BlockType:    Thinking,
@@ -570,7 +566,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 					generatorPrefix + thinkingSignatureKey: contentPart.Signature,
 				},
 			})
-		case a.ContentBlockTypeRedactedThinking:
+		case "redacted_thinking":
 			blocks = append(blocks, Block{
 				ID:           contentPart.ID,
 				BlockType:    "redacted_thinking",

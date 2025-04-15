@@ -13,7 +13,7 @@ func ExampleOpenAiGenerator_Generate() {
 	client := openai.NewClient()
 
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(client.Chat.Completions, openai.ChatModelGPT4oMini, "You are a helpful assistant")
+	gen := NewOpenAiGenerator(&client.Chat.Completions, openai.ChatModelGPT4oMini, "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -55,7 +55,7 @@ func ExampleOpenAiGenerator_Generate() {
 
 	// Instantiate a OpenAI Generator
 	gen = NewOpenAiGenerator(
-		client.Chat.Completions,
+		&client.Chat.Completions,
 		"google/gemini-2.5-pro-preview-03-25",
 		"You are a helpful assistant",
 	)
@@ -100,7 +100,7 @@ func ExampleOpenAiGenerator_Generate_openRouter() {
 
 	// Instantiate a OpenAI Generator
 	gen := NewOpenAiGenerator(
-		client.Chat.Completions,
+		&client.Chat.Completions,
 		"google/gemini-2.5-pro-preview-03-25",
 		"You are a helpful assistant",
 	)
@@ -140,7 +140,7 @@ func ExampleOpenAiGenerator_Generate_thinking() {
 	client := openai.NewClient()
 
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(client.Chat.Completions, openai.ChatModelO3Mini, "You are a helpful assistant")
+	gen := NewOpenAiGenerator(&client.Chat.Completions, openai.ChatModelO3Mini, "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -196,7 +196,7 @@ func ExampleOpenAiGenerator_Register() {
 
 	// Instantiate a OpenAI Generator
 	gen := NewOpenAiGenerator(
-		client.Chat.Completions,
+		&client.Chat.Completions,
 		openai.ChatModelGPT4oMini,
 		`You are a helpful assistant that returns the price of a stock and nothing else.
 
@@ -296,7 +296,7 @@ func ExampleOpenAiGenerator_Register_parallelToolUse() {
 
 	// Instantiate a OpenAI Generator
 	gen := NewOpenAiGenerator(
-		client.Chat.Completions,
+		&client.Chat.Completions,
 		openai.ChatModelGPT4oMini,
 		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
 Only mentioned the ticker and nothing else.
@@ -394,7 +394,7 @@ func ExampleOpenAiGenerator_Register_openRouter() {
 
 	// Instantiate a OpenAI Generator
 	gen := NewOpenAiGenerator(
-		client.Chat.Completions,
+		&client.Chat.Completions,
 		"google/gemini-2.5-pro-preview-03-25",
 		`You are a helpful assistant that returns the price of a stock and nothing else.
 
@@ -482,7 +482,7 @@ func ExampleOpenAiGenerator_Register_openRouterParallelToolUse() {
 
 	// Instantiate a OpenAI Generator
 	gen := NewOpenAiGenerator(
-		client.Chat.Completions,
+		&client.Chat.Completions,
 		"google/gemini-2.5-pro-preview-03-25",
 		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
 Only mentioned the ticker and nothing else.

@@ -16,13 +16,13 @@ func Example_mixGenerators() {
 
 	// Create generators for each provider
 	anthropicGen := NewAnthropicGenerator(
-		anthropicClient.Messages,
+		&anthropicClient.Messages,
 		a.ModelClaude_3_5_Sonnet_20240620,
 		"You are Claude, a helpful AI assistant from Anthropic. Always mention you are Claude in your responses.",
 	)
 
 	openaiGen := NewOpenAiGenerator(
-		openaiClient.Chat.Completions,
+		&openaiClient.Chat.Completions,
 		openai.ChatModelGPT4oMini,
 		"You are GPT-4o Mini, a helpful AI assistant from OpenAI. Always mention you are GPT-4o Mini in your responses.",
 	)
