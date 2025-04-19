@@ -153,14 +153,16 @@ type GeminiGenerator struct {
 }
 
 // NewGeminiGenerator creates a new Gemini generator with the specified API key, model name, and system instructions.
+// Returns a ToolCapableGenerator that preprocesses dialog for parallel tool use compatibility.
 // Example model names: "gemini-1.5-pro", "gemini-1.5-flash"
 // The API key should be a valid Google Gemini API Key.
-func NewGeminiGenerator(client *genai.Client, modelName, systemInstructions string) (*GeminiGenerator, error) {
-	return &GeminiGenerator{
+func NewGeminiGenerator(client *genai.Client, modelName, systemInstructions string) (ToolCapableGenerator, error) {
+	inner := &GeminiGenerator{
 		client:             client,
 		modelName:          modelName,
 		systemInstructions: systemInstructions,
-	}, nil
+	}
+	return &PreprocessingGenerator{Inner: inner}, nil
 }
 
 // Generate implements gai.Generator
@@ -171,8 +173,6 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	if len(dialog) == 0 {
 		return Response{}, EmptyDialogErr
 	}
-
-	dialog = preprocessToolResults(dialog)
 
 	// We'll keep a mapping of toolCallID -> functionName for this call.
 	toolCallIDToFunc := make(map[string]string)

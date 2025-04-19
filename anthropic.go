@@ -318,15 +318,9 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		return Response{}, EmptyDialogErr
 	}
 
-	// First, preprocess the dialog to combine consecutive tool result messages for parallel tool use.
-	// This is a key difference from OpenAI: Anthropic requires all tool results for parallel tool calls
-	// to be in a single message with multiple tool_result blocks, while our internal Dialog representation
-	// (and OpenAI) use separate messages where all blocks must have the same tool ID.
-	processedDialog := preprocessToolResults(dialog)
-
 	// Convert each message to Anthropic format
 	var messages []a.MessageParam
-	for _, msg := range processedDialog {
+	for _, msg := range dialog {
 		anthropicMsg, err := toAnthropicMessage(msg)
 		if err != nil {
 			return Response{}, fmt.Errorf("failed to convert message: %w", err)
@@ -603,156 +597,22 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	return result, nil
 }
 
-// preprocessToolResults consolidates consecutive tool result messages that respond to tool calls
-// from the same previous assistant message.
-//
-// This function is specific to the Anthropic implementation and addresses a key difference in how
-// parallel tool use is handled between Anthropic and OpenAI:
-//
-//   - Anthropic API expects all tool results for parallel tool calls to be bundled in a single message
-//     with multiple tool result blocks, each with its own tool_use_id.
-//   - OpenAI API expects each tool result to be a separate message in the conversation,
-//     where all blocks in a message must have the same tool ID and be text modality.
-//
-// Our internal Dialog representation follows OpenAI's approach with separate messages for each tool result,
-// so we need this preprocessing step to adapt to Anthropic's API expectations.
-func preprocessToolResults(dialog Dialog) Dialog {
-	if len(dialog) <= 1 {
-		return dialog
-	}
-
-	result := make(Dialog, 0, len(dialog))
-	i := 0
-
-	for i < len(dialog) {
-		// Always add non-tool-result messages as they are
-		if dialog[i].Role != ToolResult {
-			result = append(result, dialog[i])
-			i++
-			continue
-		}
-
-		// We have found a tool result message
-
-		// First, find the previous assistant message that might have tool calls
-		assistantMsgIndex := -1
-		for j := i - 1; j >= 0; j-- {
-			if dialog[j].Role == Assistant {
-				// Check if this assistant message has tool calls
-				hasToolCalls := false
-				for _, block := range dialog[j].Blocks {
-					if block.BlockType == ToolCall {
-						hasToolCalls = true
-						break
-					}
-				}
-
-				if hasToolCalls {
-					assistantMsgIndex = j
-					break
-				}
-			}
-		}
-
-		// If we can't find a previous assistant message with tool calls,
-		// just add the tool result as is
-		if assistantMsgIndex == -1 {
-			result = append(result, dialog[i])
-			i++
-			continue
-		}
-
-		// Check if this is a parallel tool use scenario (multiple tool calls in the assistant message)
-		var toolCallIDs []string
-		for _, block := range dialog[assistantMsgIndex].Blocks {
-			if block.BlockType == ToolCall {
-				toolCallIDs = append(toolCallIDs, block.ID)
-			}
-		}
-
-		// If there's only one tool call, don't do any special handling
-		if len(toolCallIDs) <= 1 {
-			result = append(result, dialog[i])
-			i++
-			continue
-		}
-
-		// This could be the start of a sequence of tool result messages
-		// for parallel tool use. Look ahead to collect consecutive tool results.
-		startIndex := i
-		j := i + 1
-
-		// Look ahead for consecutive tool result messages
-		for j < len(dialog) && dialog[j].Role == ToolResult {
-			j++
-		}
-
-		// If we found multiple consecutive tool result messages
-		if j-startIndex > 1 {
-			// Check if these tool results correspond to the tool calls in the previous assistant message
-			toolResultMessagesByToolID := make(map[string][]Block)
-
-			// Group all blocks from these consecutive tool result messages by tool ID
-			for k := startIndex; k < j; k++ {
-				for _, block := range dialog[k].Blocks {
-					if block.ID != "" {
-						toolResultMessagesByToolID[block.ID] = append(toolResultMessagesByToolID[block.ID], block)
-					}
-				}
-			}
-
-			// Create a consolidated tool result message if we found results for the tools
-			isThisParallelToolUse := false
-			for _, id := range toolCallIDs {
-				if _, found := toolResultMessagesByToolID[id]; found {
-					isThisParallelToolUse = true
-					break
-				}
-			}
-
-			if isThisParallelToolUse {
-				// Create a consolidated message with all blocks from these consecutive tool results
-				var consolidatedBlocks []Block
-				anyError := false
-
-				for k := startIndex; k < j; k++ {
-					consolidatedBlocks = append(consolidatedBlocks, dialog[k].Blocks...)
-					if dialog[k].ToolResultError {
-						anyError = true
-					}
-				}
-
-				result = append(result, Message{
-					Role:            ToolResult,
-					Blocks:          consolidatedBlocks,
-					ToolResultError: anyError,
-				})
-
-				i = j // Skip past all the consolidated messages
-				continue
-			}
-		}
-
-		// If not parallel tool use or only one tool result message, add it as is
-		result = append(result, dialog[i])
-		i++
-	}
-
-	return result
-}
+// (removed, see PreprocessingGenerator wrapper for normalization)
 
 type AnthropicCompletionService interface {
 	New(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error)
 }
 
-// NewAnthropicGenerator creates a new OpenAI generator with the specified model.
-func NewAnthropicGenerator(client AnthropicCompletionService, model, systemInstructions string) AnthropicGenerator {
-	return AnthropicGenerator{
+// NewAnthropicGenerator creates a new Anthropic generator with the specified model.
+// It returns a ToolCapableGenerator that preprocesses dialog for parallel tool use compatibility.
+func NewAnthropicGenerator(client AnthropicCompletionService, model, systemInstructions string) ToolCapableGenerator {
+	inner := &AnthropicGenerator{
 		client:             client,
 		systemInstructions: systemInstructions,
 		model:              model,
 		tools:              make(map[string]a.ToolParam),
 	}
+	return &PreprocessingGenerator{Inner: inner}
 }
 
 var _ Generator = (*AnthropicGenerator)(nil)
