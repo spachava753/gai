@@ -208,7 +208,7 @@ func ExampleAnthropicGenerator_Register_parallelToolUse() {
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
 		&client.Messages,
-		a.ModelClaude_3_5_Sonnet_20240620,
+		a.ModelClaude3_5SonnetLatest,
 		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
 Only mention one of the stock tickers and nothing else.
 
@@ -253,14 +253,14 @@ Assistant: MSFT
 	if err != nil {
 		panic(err.Error())
 	}
+	fmt.Println(resp.Candidates[0].Blocks[0].Content)
 	fmt.Println(resp.Candidates[0].Blocks[1].Content)
-	fmt.Println(resp.Candidates[0].Blocks[2].Content)
 
 	dialog = append(dialog, resp.Candidates[0], Message{
 		Role: ToolResult,
 		Blocks: []Block{
 			{
-				ID:           resp.Candidates[0].Blocks[1].ID,
+				ID:           resp.Candidates[0].Blocks[0].ID,
 				ModalityType: Text,
 				Content:      Str("123.45"),
 			},
@@ -269,7 +269,7 @@ Assistant: MSFT
 		Role: ToolResult,
 		Blocks: []Block{
 			{
-				ID:           resp.Candidates[0].Blocks[2].ID,
+				ID:           resp.Candidates[0].Blocks[1].ID,
 				ModalityType: Text,
 				Content:      Str("678.45"),
 			},
