@@ -2,6 +2,7 @@ package gai
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/google/generative-ai-go/genai"
@@ -275,6 +276,8 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		}
 	}
 
+	toolCallCount = len(toolCallIDToFunc)
+
 	// Map candidates to gai.Messages
 	var hasToolCalls bool
 	for _, cand := range resp.Candidates {
@@ -334,9 +337,84 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	return result, nil
 }
 
+// msgToGeminiContent is a helper to map a Message to a Gemini Content, with support for tool calls/results
+func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) *genai.Content {
+	var parts []genai.Part
+	var role string
+	switch msg.Role {
+	case User:
+		role = "user"
+		for _, block := range msg.Blocks {
+			if block.BlockType != Content {
+				continue
+			}
+			switch block.ModalityType {
+			case Text:
+				parts = append(parts, genai.Text(block.Content.String()))
+			case Image:
+				fileContent, decodeErr := base64.StdEncoding.DecodeString(block.Content.String())
+				if decodeErr != nil {
+					panic("unexpected error decoding image content: " + decodeErr.Error())
+				}
+				parts = append(parts, genai.Blob{
+					MIMEType: block.MimeType,
+					Data:     fileContent,
+				})
+			}
+		}
+	case Assistant:
+		role = "model"
+		for _, block := range msg.Blocks {
+			if block.BlockType == Content && block.ModalityType == Text {
+				parts = append(parts, genai.Text(block.Content.String()))
+			}
+			if block.BlockType == ToolCall && block.ModalityType == Text {
+				// Unmarshal to get function name, params
+				var toolUse ToolUseInput
+				_ = json.Unmarshal([]byte(block.Content.String()), &toolUse)
+				id := block.ID
+				if toolUse.Name == "" {
+					toolUse.Name, _ = block.ExtraFields["function_name"].(string)
+				}
+				toolCallIDToFuncName[id] = toolUse.Name
+				parts = append(parts, genai.FunctionCall{
+					Name: toolUse.Name, Args: toolUse.Parameters,
+				})
+			}
+		}
+	case ToolResult:
+		role = "user"
+		for _, block := range msg.Blocks {
+			if block.ModalityType == Text {
+				id := block.ID
+				fn, ok := toolCallIDToFuncName[id]
+				if !ok || fn == "" {
+					err := fmt.Errorf("tool result references unknown tool call id: %q (history)", id)
+					if err != nil {
+						panic("unexpected error: " + err.Error())
+					}
+					return nil
+				}
+				var maybeObj map[string]any
+				e := json.Unmarshal([]byte(block.Content.String()), &maybeObj)
+				respObj := make(map[string]any)
+				if e == nil {
+					respObj = maybeObj
+				} else {
+					respObj["result"] = block.Content.String()
+				}
+				parts = append(parts, genai.FunctionResponse{
+					Name: fn, Response: respObj,
+				})
+			}
+		}
+	}
+	return &genai.Content{Parts: parts, Role: role}
+}
+
 // dialogToGeminiHistoryWithTools splits dialog into chat history and user input, with tool result mapping support
 // This will populate toolCallIDToFunc with tool call id -> function name when populating ToolCall blocks in history
-func dialogToGeminiHistoryWithTools(dialog Dialog, toolCallIDToFunc map[string]string) (history []*genai.Content, userInput []genai.Part, err error) {
+func dialogToGeminiHistoryWithTools(dialog Dialog, toolCallIDToFuncName map[string]string) (history []*genai.Content, userInput []genai.Part, err error) {
 	// Early validation: last message must be User or ToolResult
 	if len(dialog) == 0 {
 		return nil, nil, nil
@@ -346,68 +424,9 @@ func dialogToGeminiHistoryWithTools(dialog Dialog, toolCallIDToFunc map[string]s
 		return nil, nil, fmt.Errorf("invalid dialog: last message must be user or tool result, got %v", lastMsg.Role)
 	}
 
-	// Helper to map a Message to a Gemini Content, with support for tool calls/results
-	msgToGeminiContent := func(msg Message) *genai.Content {
-		var parts []genai.Part
-		role := "user"
-		switch msg.Role {
-		case User:
-			role = "user"
-			for _, block := range msg.Blocks {
-				if block.BlockType == Content && block.ModalityType == Text {
-					parts = append(parts, genai.Text(block.Content.String()))
-				}
-			}
-		case Assistant:
-			role = "model"
-			for _, block := range msg.Blocks {
-				if block.BlockType == Content && block.ModalityType == Text {
-					parts = append(parts, genai.Text(block.Content.String()))
-				}
-				if block.BlockType == ToolCall && block.ModalityType == Text {
-					// Unmarshal to get function name, params
-					var toolUse ToolUseInput
-					_ = json.Unmarshal([]byte(block.Content.String()), &toolUse)
-					id := block.ID
-					if toolUse.Name == "" {
-						toolUse.Name, _ = block.ExtraFields["function_name"].(string)
-					}
-					toolCallIDToFunc[id] = toolUse.Name
-					parts = append(parts, genai.FunctionCall{
-						Name: toolUse.Name, Args: toolUse.Parameters,
-					})
-				}
-			}
-		case ToolResult:
-			role = "user"
-			for _, block := range msg.Blocks {
-				if block.ModalityType == Text {
-					id := block.ID
-					fn, ok := toolCallIDToFunc[id]
-					if !ok || fn == "" {
-						err = fmt.Errorf("tool result references unknown tool call id: %q (history)", id)
-						return nil
-					}
-					var maybeObj map[string]any
-					e := json.Unmarshal([]byte(block.Content.String()), &maybeObj)
-					respObj := make(map[string]any)
-					if e == nil {
-						respObj = maybeObj
-					} else {
-						respObj["result"] = block.Content.String()
-					}
-					parts = append(parts, genai.FunctionResponse{
-						Name: fn, Response: respObj,
-					})
-				}
-			}
-		}
-		return &genai.Content{Parts: parts, Role: role}
-	}
-
 	// All previous messages go to history EXCEPT the last, which we just validated
 	for i := 0; i < len(dialog)-1; i++ {
-		history = append(history, msgToGeminiContent(dialog[i]))
+		history = append(history, msgToGeminiContent(dialog[i], toolCallIDToFuncName))
 	}
 
 	// The last message is the input for this call. Handle based on its role:
@@ -421,7 +440,7 @@ func dialogToGeminiHistoryWithTools(dialog Dialog, toolCallIDToFunc map[string]s
 		for _, block := range lastMsg.Blocks {
 			if block.ModalityType == Text {
 				id := block.ID
-				fn, ok := toolCallIDToFunc[id]
+				fn, ok := toolCallIDToFuncName[id]
 				if !ok || fn == "" {
 					return nil, nil, fmt.Errorf("tool result references unknown tool call id: %q (input)", id)
 				}

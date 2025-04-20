@@ -7,6 +7,7 @@ import (
 	genaiopts "google.golang.org/api/option"
 	"os"
 	"strings"
+	"time"
 )
 
 func ExampleGeminiGenerator_Generate() {
@@ -77,7 +78,14 @@ func ExampleGeminiGenerator_Register() {
 	_ = g.Register(stockTool)
 	_ = g.Register(getServerTimeTool)
 	dialog := Dialog{
-		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("What is the stock price for AAPL, and also tell me the server time?")}}},
+		{
+			Role: User,
+			Blocks: []Block{{
+				BlockType:    Content,
+				ModalityType: Text,
+				Content:      Str("What is the stock price for AAPL, and also tell me the server time?"),
+			}},
+		},
 	}
 
 	// Expect tool call for both tools
@@ -93,7 +101,7 @@ func ExampleGeminiGenerator_Register() {
 
 	dialog = append(dialog, response.Candidates[0])
 
-	// Simulate tool result for get_stock_price
+	// Simulate tool result for tool calls
 	dialog = append(dialog,
 		Message{
 			Role: ToolResult,
@@ -112,29 +120,90 @@ func ExampleGeminiGenerator_Register() {
 				BlockType:    Content,
 				ModalityType: Text,
 				MimeType:     "text/plain",
-				Content:      Str("2025-04-18 10:19:00 UTC"),
+				Content:      Str(time.Time{}.String()),
 			}},
 		},
 	)
 
-	// Final answer
 	response, err = g.Generate(context.Background(), dialog, nil)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
 	}
-	fmt.Println("Final candidate has tool results:", strings.Contains(
+	fmt.Println("Response has tool results:", strings.Contains(
 		response.Candidates[0].Blocks[0].Content.String(),
 		"AAPL is $200.00",
 	) && strings.Contains(
 		response.Candidates[0].Blocks[0].Content.String(),
-		"2025-04-18 10:19:00 UTC",
+		time.Time{}.String(),
+	))
+
+	dialog = append(dialog, Message{
+		Role: User,
+		Blocks: []Block{{
+			BlockType:    Content,
+			ModalityType: Text,
+			Content:      Str("What is the stock price for MSFT, and also tell me the server time again?"),
+		}},
+	})
+
+	response, err = g.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	fmt.Println("tool calling response:")
+	for _, block := range response.Candidates[0].Blocks {
+		fmt.Printf("Block type: %s | ID: %s | Content: %s\n", block.BlockType, block.ID, block.Content)
+	}
+
+	dialog = append(dialog, response.Candidates[0])
+
+	// Simulate tool result for tool calls
+	dialog = append(dialog,
+		Message{
+			Role: ToolResult,
+			Blocks: []Block{{
+				ID:           response.Candidates[0].Blocks[0].ID,
+				BlockType:    Content,
+				ModalityType: Text,
+				MimeType:     "text/plain",
+				Content:      Str("MSFT is $300.00"),
+			}},
+		},
+		Message{
+			Role: ToolResult,
+			Blocks: []Block{{
+				ID:           response.Candidates[0].Blocks[1].ID,
+				BlockType:    Content,
+				ModalityType: Text,
+				MimeType:     "text/plain",
+				Content:      Str(time.Time{}.Add(1 * time.Minute).String()),
+			}},
+		},
+	)
+
+	response, err = g.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	fmt.Println("Response has tool results:", strings.Contains(
+		response.Candidates[0].Blocks[0].Content.String(),
+		"MSFT is $300.00",
+	) && strings.Contains(
+		response.Candidates[0].Blocks[0].Content.String(),
+		time.Time{}.Add(1*time.Minute).String(),
 	))
 
 	// Output: tool calling response:
 	// Block type: tool_call | ID: toolcall-1 | Content: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
 	// Block type: tool_call | ID: toolcall-2 | Content: {"name":"get_server_time","parameters":{}}
-	// Final candidate has tool results: true
+	// Response has tool results: true
+	// tool calling response:
+	// Block type: tool_call | ID: toolcall-3 | Content: {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
+	// Block type: tool_call | ID: toolcall-4 | Content: {"name":"get_server_time","parameters":{}}
+	// Response has tool results: true
 }
 
 func ExampleGeminiGenerator_Register_parallelToolUse() {
