@@ -2,8 +2,11 @@ package gai
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	a "github.com/anthropics/anthropic-sdk-go"
+	"os"
+	"strings"
 )
 
 func ExampleAnthropicGenerator_Generate() {
@@ -98,6 +101,61 @@ func ExampleAnthropicGenerator_Generate_thinking() {
 
 	// Output: 1
 	// 1
+}
+
+func ExampleAnthropicGenerator_Generate_image() {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set ANTHROPIC_API_KEY env]")
+		return
+	}
+
+	// This example assumes that Guycrood.jpg is present in the current directory.
+	imgBytes, err := os.ReadFile("Guycrood.jpg")
+	if err != nil {
+		fmt.Println("[Skipped: could not open Guycrood.jpg]")
+		return
+	}
+	imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))
+
+	client := a.NewClient()
+
+	gen := NewAnthropicGenerator(
+		&client.Messages,
+		a.ModelClaude3_7SonnetLatest,
+		"You are a helpful assistant.",
+	)
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Image,
+					MimeType:     "image/jpeg",
+					Content:      imgBase64,
+				},
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("What is in this image? (Hint, it's a character from The Croods, a DreamWorks animated movie.)"),
+				},
+			},
+		},
+	}
+	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 512})
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	if len(resp.Candidates) != 1 {
+		panic("Expected 1 candidate, got " + fmt.Sprint(len(resp.Candidates)))
+	}
+	if len(resp.Candidates[0].Blocks) != 1 {
+		panic("Expected 1 block, got " + fmt.Sprint(len(resp.Candidates[0].Blocks)))
+	}
+	fmt.Println(strings.Contains(resp.Candidates[0].Blocks[0].Content.String(), "Crood"))
+	// Output: true
 }
 
 func ExampleAnthropicGenerator_Register() {

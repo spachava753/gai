@@ -2,6 +2,7 @@ package gai
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"github.com/google/generative-ai-go/genai"
 	genaiopts "google.golang.org/api/option"
@@ -204,6 +205,76 @@ func ExampleGeminiGenerator_Register() {
 	// Block type: tool_call | ID: toolcall-3 | Content: {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
 	// Block type: tool_call | ID: toolcall-4 | Content: {"name":"get_server_time","parameters":{}}
 	// Response has tool results: true
+}
+
+func ExampleGeminiGenerator_Generate_image() {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
+		return
+	}
+
+	// ---
+	// This example assumes that Guycrood.jpg is present in the current directory.
+	// Place a JPEG image named Guycrood.jpg in the same directory as this file (or adjust the path).
+	imgBytes, err := os.ReadFile("Guycrood.jpg")
+	if err != nil {
+		fmt.Println("[Skipped: could not open Guycrood.jpg]")
+		return
+	}
+	// Encode as base64 for API usage
+	imgBase64 := Str(
+		// Use standard encoding, as required for image MIME input.
+		// NOTE: the Blob part in Google Gemini Go SDK accepts raw bytes, but our gai.Block expects base64 encoded string.
+		// The actual Gemini implementation will decode as needed, see gai.go.
+		// This mirrors how other examples do it.
+		base64.StdEncoding.EncodeToString(imgBytes),
+	)
+
+	ctx := context.Background()
+	client, err := genai.NewClient(
+		ctx,
+		genaiopts.WithAPIKey(apiKey),
+	)
+
+	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-03-25", "You are a helpful assistant.")
+	if err != nil {
+		fmt.Println("Error creating GeminiGenerator:", err)
+		return
+	}
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Image,
+					MimeType:     "image/jpeg",
+					Content:      imgBase64,
+				},
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("What is in this image? (Hint, it's a character from The Croods, a DreamWorks animated movie.)"),
+				},
+			},
+		},
+	}
+
+	response, err := g.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	if len(response.Candidates) != 1 {
+		panic("Expected 1 candidate, got " + fmt.Sprint(len(response.Candidates)))
+	}
+	if len(response.Candidates[0].Blocks) != 1 {
+		panic("Expected 1 block, got " + fmt.Sprint(len(response.Candidates[0].Blocks)))
+	}
+	fmt.Println(strings.Contains(response.Candidates[0].Blocks[0].Content.String(), "Crood"))
+
+	// Output: true
 }
 
 func ExampleGeminiGenerator_Register_parallelToolUse() {
