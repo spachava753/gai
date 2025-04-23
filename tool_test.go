@@ -56,14 +56,26 @@ func (m *mockToolCapableGenerator) Generate(ctx context.Context, dialog Dialog, 
 
 // mockToolCallback implements ToolCallback for testing
 type mockToolCallback struct {
-	callFunc func(ctx context.Context, input map[string]any) (any, error)
+	callFunc func(ctx context.Context, input map[string]any, toolCallID string) (Message, error)
 }
 
-func (m *mockToolCallback) Call(ctx context.Context, input map[string]any) (any, error) {
+func (m *mockToolCallback) Call(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
 	if m.callFunc != nil {
-		return m.callFunc(ctx, input)
+		return m.callFunc(ctx, input, toolCallID)
 	}
-	return "default result", nil
+	// Return a default tool result message
+	return Message{
+		Role: ToolResult,
+		Blocks: []Block{
+			{
+				ID:           toolCallID,
+				BlockType:    Content,
+				ModalityType: Text,
+				MimeType:     "text/plain",
+				Content:      Str("default result"),
+			},
+		},
+	}, nil
 }
 
 func TestToolGenerator_Register(t *testing.T) {
@@ -331,8 +343,19 @@ func TestToolGenerator_Generate(t *testing.T) {
 					Name:        "get_time",
 					Description: "Get the current time",
 				}, &mockToolCallback{
-					callFunc: func(ctx context.Context, input map[string]any) (any, error) {
-						return "12:34 PM", nil
+					callFunc: func(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
+						return Message{
+							Role: ToolResult,
+							Blocks: []Block{
+								{
+									ID:           toolCallID,
+									BlockType:    Content,
+									ModalityType: Text,
+									MimeType:     "text/plain",
+									Content:      Str("12:34 PM"),
+								},
+							},
+						}, nil
 					},
 				})
 			},
@@ -434,8 +457,8 @@ func TestToolGenerator_Generate(t *testing.T) {
 						},
 					},
 				}, &mockToolCallback{
-					callFunc: func(ctx context.Context, input map[string]any) (any, error) {
-						return nil, errors.New("API connection failed")
+					callFunc: func(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
+						return Message{}, errors.New("API connection failed")
 					},
 				})
 			},
@@ -487,12 +510,27 @@ func TestToolGenerator_Generate(t *testing.T) {
 						},
 					},
 				}, &mockToolCallback{
-					callFunc: func(ctx context.Context, input map[string]any) (any, error) {
+					callFunc: func(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
 						location := input["location"].(string)
+						var result string
 						if location == "New York" {
-							return "72°F and sunny", nil
+							result = "72°F and sunny"
+						} else {
+							result = "68°F and cloudy"
 						}
-						return "68°F and cloudy", nil
+
+						return Message{
+							Role: ToolResult,
+							Blocks: []Block{
+								{
+									ID:           toolCallID,
+									BlockType:    Content,
+									ModalityType: Text,
+									MimeType:     "text/plain",
+									Content:      Str(result),
+								},
+							},
+						}, nil
 					},
 				})
 			},
@@ -605,8 +643,19 @@ func TestToolGenerator_Generate(t *testing.T) {
 					Name:        "get_location",
 					Description: "Get the user's current location",
 				}, &mockToolCallback{
-					callFunc: func(ctx context.Context, input map[string]any) (any, error) {
-						return "New York", nil
+					callFunc: func(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
+						return Message{
+							Role: ToolResult,
+							Blocks: []Block{
+								{
+									ID:           toolCallID,
+									BlockType:    Content,
+									ModalityType: Text,
+									MimeType:     "text/plain",
+									Content:      Str("New York"),
+								},
+							},
+						}, nil
 					},
 				})
 
@@ -621,12 +670,27 @@ func TestToolGenerator_Generate(t *testing.T) {
 						},
 					},
 				}, &mockToolCallback{
-					callFunc: func(ctx context.Context, input map[string]any) (any, error) {
+					callFunc: func(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
 						location := input["location"].(string)
+						var result string
 						if location == "New York" {
-							return "72°F and sunny", nil
+							result = "72°F and sunny"
+						} else {
+							result = "Unknown location"
 						}
-						return "Unknown location", nil
+
+						return Message{
+							Role: ToolResult,
+							Blocks: []Block{
+								{
+									ID:           toolCallID,
+									BlockType:    Content,
+									ModalityType: Text,
+									MimeType:     "text/plain",
+									Content:      Str(result),
+								},
+							},
+						}, nil
 					},
 				})
 			},

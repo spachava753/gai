@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // PropertyType represents the type of a property in a JSON Schema.
@@ -192,48 +193,104 @@ type Tool struct {
 // ToolCallback represents a function that can be automatically executed by a ToolGenerator
 // when a specific tool is called during generation.
 //
-// There are two distinct ways a tool execution can signal failure:
-//  1. Returning a result that implements the error interface: This indicates the tool executed
-//     successfully but failed in an expected way (e.g., invalid stock symbol, malformed input).
-//     The error will be fed back to the Generator.
-//  2. Returning a non-nil error as the second return value: This indicates the callback itself
-//     failed to execute (e.g., network error, panic, context cancellation). This immediately
-//     stops generation and the error is propagated up.
+// The callback should return a message with role ToolResult containing
+// the result of the tool execution. The message will be validated to ensure
+// it has the correct role, at least one block, and that all blocks have:
+// - The correct ID matching the tool call ID
+// - Non-nil content
+// - A valid block type
+// - A valid modality type
+// - A MimeType appropriate for the modality
 //
 // Example implementation for a stock price tool:
 //
 //	type StockAPI struct{}
 //
-//	func (s *StockAPI) Call(ctx context.Context, input map[string]any) (any, error) {
+//	func (s *StockAPI) Call(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
 //	    // Context can be used for timeouts and cancellation
 //	    ticker := input["ticker"].(string)
 //
 //	    // Example of callback error - immediate failure
 //	    if ctx.Err() != nil {
-//	        return nil, fmt.Errorf("context cancelled: %w", ctx.Err())
+//	        return Message{}, fmt.Errorf("context cancelled: %w", ctx.Err())
 //	    }
 //
 //	    price, err := s.fetchPrice(ctx, ticker)
 //	    if err != nil {
-//	        // Example of expected error - fed back to Generator
-//	        return fmt.Errorf("failed to get price for %s: %v", ticker, err), nil
+//	        // Example of expected error - fed back to Generator as a message
+//	        return Message{
+//	            Role: ToolResult,
+//	            Blocks: []Block{
+//	                {
+//	                    ID:           toolCallID,  // Must match the tool call ID
+//	                    BlockType:    Content,     // Must specify a block type
+//	                    ModalityType: Text,
+//	                    MimeType:     "text/plain", // Required for all blocks
+//	                    Content:      Str(fmt.Sprintf("Error: failed to get price for %s: %v", ticker, err)),
+//	                },
+//	            },
+//	        }, nil
 //	    }
 //
-//	    return price, nil
+//	    // Return a successful result as a message
+//	    return Message{
+//	        Role: ToolResult,
+//	        Blocks: []Block{
+//	            {
+//	                ID:           toolCallID,
+//	                BlockType:    Content,
+//	                ModalityType: Text,
+//	                MimeType:     "text/plain",
+//	                Content:      Str(fmt.Sprintf("$%.2f", price)),
+//	            },
+//	        },
+//	    }, nil
+//	}
+//
+//	// Example of a tool returning an image
+//	type ImageGeneratorTool struct{}
+//
+//	func (t *ImageGeneratorTool) Call(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
+//	    prompt := input["prompt"].(string)
+//
+//	    imageData, err := t.generateImage(ctx, prompt)
+//	    if err != nil {
+//	        return Message{}, err
+//	    }
+//
+//	    // Base64 encode the image data
+//	    encodedImage := base64.StdEncoding.EncodeToString(imageData)
+//
+//	    return Message{
+//	        Role: ToolResult,
+//	        Blocks: []Block{
+//	            {
+//	                ID:           toolCallID,
+//	                BlockType:    Content,
+//	                ModalityType: Image,           // Image modality
+//	                MimeType:     "image/jpeg",    // MimeType is required for all modalities
+//	                Content:      Str(encodedImage),
+//	            },
+//	        },
+//	    }, nil
 //	}
 type ToolCallback interface {
-	// Call executes the tool with the given parameters.
+	// Call executes the tool with the given parameters and returns a tool result message.
 	// The context should be used for cancellation and timeouts.
 	// The input map contains the tool's parameters as defined by its InputSchema.
-	// For example, with the stock price tool, input would contain {"ticker": "AAPL"}.
+	// The toolCallID is the ID of the tool call block that initiated this tool execution.
 	//
-	// The first return value can be of any type:
-	// - On success: any value (primitive types, maps, slices, structs)
-	// - On tool execution failure: a value that implements the error interface
+	// The returned message must have the ToolResult role and at least one block.
+	// Each block must have:
+	// - ID matching the provided toolCallID
+	// - Non-nil Content
+	// - A valid BlockType (usually "content")
+	// - A valid ModalityType (Text, Image, Audio, or Video)
+	// - A MimeType appropriate for the modality (e.g., "text/plain" for text, "image/jpeg" for images)
 	//
-	// The second return value should only be non-nil if the callback itself
-	// fails to execute (e.g., network errors, panics, context cancellation).
-	Call(ctx context.Context, input map[string]any) (any, error)
+	// The second return value should only be non-nil if the callback itself fails to execute
+	// (e.g., network errors, panics, context cancellation).
+	Call(ctx context.Context, input map[string]any, toolCallID string) (Message, error)
 }
 
 type ToolRegister interface {
@@ -458,9 +515,7 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen Gen
 			return currentDialog, nil
 		}
 
-		// Process tool calls and generate result blocks
-		var toolResultBlocks []Block
-
+		// Process tool calls
 		for _, block := range toolCallBlocks {
 			// Parse tool call from the block
 			toolName, toolInput, err := parseToolCall(block.Content.String())
@@ -480,42 +535,21 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen Gen
 				return currentDialog, nil
 			}
 
-			// Execute the callback
-			result, callErr := callback.Call(ctx, toolInput)
+			// Execute the callback with the tool call ID
+			resultMessage, callErr := callback.Call(ctx, toolInput, block.ID)
 
-			// Create a tool result block
-			resultBlock := Block{
-				ID:           block.ID, // Use the same ID to link call and result
-				BlockType:    Content,
-				ModalityType: Text,
-				MimeType:     "text/plain",
-			}
-
-			// Handle callback execution errors versus tool execution errors
+			// Handle callback execution errors
 			if callErr != nil {
 				// Callback failed to execute - propagate the error up
 				return currentDialog, callErr
-			} else if resultErr, isErr := result.(error); isErr {
-				// Tool executed but returned an error - feed it back to the generator
-				resultBlock.Content = Str(fmt.Sprintf("Error: %s", resultErr.Error()))
-			} else {
-				// Tool executed successfully
-				resultBlock.Content = Str(fmt.Sprintf("%v", result))
 			}
 
-			// Add to tool result blocks
-			toolResultBlocks = append(toolResultBlocks, resultBlock)
-		}
-
-		// Create messages with tool results and append to dialog.
-		// Each tool result is its own message
-		for _, toolResultBlock := range toolResultBlocks {
-			resultMessage := Message{
-				Role:   ToolResult,
-				Blocks: []Block{toolResultBlock},
+			// Validate and sanitize the tool result message
+			if err := validateToolResultMessage(&resultMessage, block.ID); err != nil {
+				return currentDialog, fmt.Errorf("invalid tool result message: %w", err)
 			}
 
-			// Append the result message to the dialog
+			// Append the validated result message to the dialog
 			currentDialog = append(currentDialog, resultMessage)
 		}
 	}
@@ -543,4 +577,69 @@ func parseToolCall(content string) (string, map[string]any, error) {
 	}
 
 	return toolCall.Name, toolCall.Parameters, nil
+}
+
+// validateToolResultMessage validates a tool result message without modifying it.
+// It returns an error if any validation check fails.
+func validateToolResultMessage(message *Message, toolCallID string) error {
+	// Check that the message has the correct role
+	if message.Role != ToolResult {
+		return fmt.Errorf("message must have ToolResult role, got: %v", message.Role)
+	}
+
+	// Check that the message has at least one block
+	if len(message.Blocks) == 0 {
+		return fmt.Errorf("message must have at least one block")
+	}
+
+	// Validate all blocks
+	for i, block := range message.Blocks {
+		// Check block ID matches the tool call ID
+		if block.ID != toolCallID {
+			return fmt.Errorf("block %d has incorrect ID: expected %q, got %q", i, toolCallID, block.ID)
+		}
+
+		// Ensure each block has content
+		if block.Content == nil {
+			return fmt.Errorf("block %d has nil content", i)
+		}
+
+		// Check block type is set
+		if block.BlockType == "" {
+			return fmt.Errorf("block %d is missing block type", i)
+		}
+
+		// Check MIME type is always required
+		if block.MimeType == "" {
+			return fmt.Errorf("block %d is missing MIME type", i)
+		}
+
+		// Validate modality type
+		switch block.ModalityType {
+		case Text, Image, Audio, Video:
+			// Valid modality, now check if MIME type matches modality
+			switch block.ModalityType {
+			case Text:
+				if !strings.HasPrefix(block.MimeType, "text/") {
+					return fmt.Errorf("block %d has text modality but non-text MIME type: %q", i, block.MimeType)
+				}
+			case Image:
+				if !strings.HasPrefix(block.MimeType, "image/") {
+					return fmt.Errorf("block %d has image modality but non-image MIME type: %q", i, block.MimeType)
+				}
+			case Audio:
+				if !strings.HasPrefix(block.MimeType, "audio/") {
+					return fmt.Errorf("block %d has audio modality but non-audio MIME type: %q", i, block.MimeType)
+				}
+			case Video:
+				if !strings.HasPrefix(block.MimeType, "video/") {
+					return fmt.Errorf("block %d has video modality but non-video MIME type: %q", i, block.MimeType)
+				}
+			}
+		default:
+			return fmt.Errorf("block %d has invalid modality type: %v", i, block.ModalityType)
+		}
+	}
+
+	return nil
 }

@@ -10,17 +10,51 @@ type TickerTool struct {
 	ticketPrices map[string]float64
 }
 
-func (t TickerTool) Call(ctx context.Context, input map[string]any) (any, error) {
+func (t TickerTool) Call(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
 	ticker, ok := input["ticker"].(string)
 	if !ok {
-		return fmt.Errorf("invalid input, expected ticker to be a string"), nil
+		return Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           toolCallID,
+					BlockType:    Content,
+					ModalityType: Text,
+					MimeType:     "text/plain",
+					Content:      Str(fmt.Sprintf("Error: invalid input, expected ticker to be a string")),
+				},
+			},
+		}, nil
 	}
 
 	price, ok := t.ticketPrices[ticker]
 	if !ok {
-		return fmt.Errorf("ticker %s does not exist", ticker), nil
+		return Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           toolCallID,
+					BlockType:    Content,
+					ModalityType: Text,
+					MimeType:     "text/plain",
+					Content:      Str(fmt.Sprintf("Error: ticker %s does not exist", ticker)),
+				},
+			},
+		}, nil
 	}
-	return price, nil
+
+	return Message{
+		Role: ToolResult,
+		Blocks: []Block{
+			{
+				ID:           toolCallID,
+				BlockType:    Content,
+				ModalityType: Text,
+				MimeType:     "text/plain",
+				Content:      Str(fmt.Sprintf("%v", price)),
+			},
+		},
+	}, nil
 }
 
 var _ ToolCallback = (*TickerTool)(nil)
