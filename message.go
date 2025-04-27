@@ -1,6 +1,10 @@
 package gai
 
-import "fmt"
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+)
 
 // Role represents what type a Message is
 type Role uint
@@ -113,4 +117,111 @@ type Str string
 
 func (s Str) String() string {
 	return string(s)
+}
+
+// TextBlock creates a simple text content block.
+// This is a convenience function for creating basic text blocks.
+//
+// Example:
+//
+//	block := TextBlock("Hello, world!")
+func TextBlock(text string) Block {
+	return Block{
+		BlockType:    Content,
+		ModalityType: Text,
+		MimeType:     "text/plain",
+		Content:      Str(text),
+	}
+}
+
+// ImageBlock creates an image content block with the given base64-encoded data and MIME type.
+// This is a convenience function for creating image blocks.
+//
+// Example:
+//
+//	block := ImageBlock(base64EncodedJpeg, "image/jpeg")
+func ImageBlock(data []byte, mimeType string) Block {
+	base64Data := base64.StdEncoding.EncodeToString(data)
+	return Block{
+		BlockType:    Content,
+		ModalityType: Image,
+		MimeType:     mimeType,
+		Content:      Str(base64Data),
+	}
+}
+
+// ToolCallBlock creates a tool call block with the given ID, tool name, and parameters.
+// The parameters are automatically marshaled to JSON.
+//
+// Example:
+//
+//	block := ToolCallBlock("call_123", "get_weather", map[string]any{
+//		"location": "New York",
+//		"units": "fahrenheit",
+//	})
+func ToolCallBlock(id, toolName string, parameters map[string]any) (Block, error) {
+	toolUse := ToolUseInput{
+		Name:       toolName,
+		Parameters: parameters,
+	}
+
+	data, err := json.Marshal(toolUse)
+	if err != nil {
+		return Block{}, fmt.Errorf("failed to marshal tool use: %w", err)
+	}
+
+	return Block{
+		ID:           id,
+		BlockType:    ToolCall,
+		ModalityType: Text,
+		MimeType:     "text/plain",
+		Content:      Str(data),
+	}, nil
+}
+
+// ToolResultMessage creates a message representing the result of a tool execution.
+// This function constructs a Message with the ToolResult role and a single Block containing
+// the tool execution results.
+//
+// Parameters:
+//   - id: The identifier for the tool call, should match the original tool call ID
+//   - modality: The modality of the content (Text, Image, Audio, or Video)
+//   - mimeType: The MIME type of the content, e.g. "text/plain", "image/jpeg"
+//   - content: The actual content of the tool result as a fmt.Stringer
+//
+// Returns a Message configured with ToolResult role and appropriate Block settings.
+//
+// Example:
+//
+//	result := ToolResultMessage("call_123", gai.Text, "text/plain", gai.Str("Temperature: 72°F"))
+func ToolResultMessage(id string, modality Modality, mimeType string, content fmt.Stringer) Message {
+	return Message{
+		Role: ToolResult,
+		Blocks: []Block{
+			{
+				ID:           id,
+				BlockType:    Content,
+				ModalityType: modality,
+				MimeType:     mimeType,
+				Content:      content,
+			},
+		},
+	}
+}
+
+// TextToolResultMessage is a convenience function that creates a text-based tool result message.
+// This is a shorthand for creating tool result messages with text content using the default
+// "text/plain" MIME type.
+//
+// Parameters:
+//   - id: The identifier for the tool call, should match the original tool call ID
+//   - content: The text content of the tool result
+//
+// Returns a Message configured with ToolResult role and a single Text Block.
+//
+// Example:
+//
+//	result := TextToolResultMessage("call_123", "Temperature: 72°F")
+func TextToolResultMessage(id string, content string) Message {
+	return ToolResultMessage(id, Text, "text/plain", Str(content))
 }
