@@ -13,8 +13,11 @@ func ExampleAnthropicGenerator_Generate() {
 	// Create an Anthropic client
 	client := a.NewClient()
 
+	// Demonstration of how to enable system prompt caching
+	svc := NewAnthropicServiceWrapper(&client.Messages, EnableSystemCaching)
+
 	// Instantiate an Anthropic Generator
-	gen := NewAnthropicGenerator(&client.Messages, a.ModelClaude3_5HaikuLatest, "You are a helpful assistant")
+	gen := NewAnthropicGenerator(svc, a.ModelClaude3_5HaikuLatest, "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -162,9 +165,12 @@ func ExampleAnthropicGenerator_Register() {
 	// Create an Anthropic client
 	client := a.NewClient()
 
+	// Demonstration of how to enable system and multi turn message prompt caching
+	svc := NewAnthropicServiceWrapper(&client.Messages, EnableSystemCaching, EnableMultiTurnCaching)
+
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
-		&client.Messages,
+		svc,
 		a.ModelClaude_3_5_Sonnet_20240620,
 		`You are a helpful assistant that returns the price of a stock and nothing else.
 
