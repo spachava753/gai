@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -37,12 +38,34 @@ type Validator interface {
 	Validate() error
 }
 
+// CallbackExecErr is an error type that wraps a real callback execution error.
+// When returned from a callback (wrapped in this type), it signals to the caller
+// that the error is a hard failure and execution should terminate, rather than being
+// returned as an erroneous tool result.
+type CallbackExecErr struct {
+	Err error
+}
+
+// Unwrap allows errors.Unwrap and errors.As to extract the underlying error.
+func (c CallbackExecErr) Unwrap() error {
+	return c.Err
+}
+
+func (c CallbackExecErr) Error() string {
+	return c.Err.Error()
+}
+
 // ToolCallBackFunc is a generic function type that wraps a callback function
 // with a strongly-typed parameter struct, implementing the ToolCallback interface.
 //
 // The type parameter T represents the struct type that will be unmarshaled from
 // the tool's JSON parameters. This allows for type-safe tool callbacks without
 // the need to manually handle JSON unmarshaling or message creation.
+//
+// Callback error handling:
+//   - If the callback returns an error value of type CallbackExecErr (or wraps one),
+//     this signals a true callback execution error (panic, cancellation, etc.), and execution will terminate.
+//   - Any other non-nil error is treated as a tool result error: the error message will be sent as a textual tool result message to the generator, not treated as fatal.
 //
 // Example usage:
 //
@@ -52,11 +75,11 @@ type Validator interface {
 //	}
 //
 //	func getWeather(ctx context.Context, params WeatherParams) (string, error) {
-//	    unit := "celsius"
-//	    if params.Unit == "fahrenheit" {
-//	        unit = "fahrenheit"
+//	    if params.Location == "" {
+//	        return "", fmt.Errorf("location is required") // Erroneous tool result
 //	    }
-//	    // Fetch weather data
+//	    // Simulate a callback execution error
+//	    // return "", CallbackExecErr{Err: fmt.Errorf("panic occurred")}
 //	    return fmt.Sprintf("Weather in %s: 72°F", params.Location), nil
 //	}
 //
@@ -72,10 +95,13 @@ type ToolCallBackFunc[T any] func(ctx context.Context, t T) (string, error)
 // Call implements the ToolCallback interface, handling JSON unmarshaling
 // and message creation automatically.
 //
-// It unmarshalals the JSON parameters into the type T,
-// optionally validates them if T implements the Validator interface,
-// calls the wrapped function with the parsed parameters,
-// and constructs a properly formatted ToolResult message from the result.
+// It unmarshals the JSON parameters into the type T, optionally validates them if T implements the Validator interface,
+// calls the wrapped function with the parsed parameters, and constructs a properly formatted ToolResult message from
+// the result.
+//
+// Error handling:
+//   - If the callback returns a non-nil error of type CallbackExecErr (or wrapping one), this signals a real callback execution failure (e.g., panic, context cancellation), and the underlying error is returned. This will typically terminate execution in ToolGenerator.Generate.
+//   - If the callback returns any other non-nil error, it is treated as an erroneous tool result, and a text ToolResult message containing the error message is returned instead of terminating execution.
 func (f ToolCallBackFunc[T]) Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 	var t T
 	if err := json.Unmarshal(parametersJSON, &t); err != nil {
@@ -85,14 +111,28 @@ func (f ToolCallBackFunc[T]) Call(ctx context.Context, parametersJSON json.RawMe
 	// Check if T implements Validator and validate if it does
 	if validator, ok := any(&t).(Validator); ok {
 		if err := validator.Validate(); err != nil {
-			return Message{}, fmt.Errorf("parameter validation failed: %w", err)
+			// Otherwise: Treat as tool error, return as tool result message so execution can continue.
+			msg := TextToolResultMessage(
+				toolCallID,
+				fmt.Errorf("parameter validation failed: %s", err).Error(),
+			)
+			msg.ToolResultError = true
+			return msg, nil
 		}
 	}
 
 	// Call the wrapped function
 	content, err := f(ctx, t)
 	if err != nil {
-		return Message{}, err
+		var execErr CallbackExecErr
+		if ok := errors.As(err, &execErr); ok {
+			// Return the *underlying* error (unwrap), will terminate generation
+			return Message{}, execErr.Unwrap()
+		}
+		// Otherwise: Treat as tool error, return as tool result message so execution can continue.
+		msg := TextToolResultMessage(toolCallID, err.Error())
+		msg.ToolResultError = true
+		return msg, err
 	}
 
 	// Create and return a text tool result message
