@@ -206,16 +206,32 @@ type Tool struct {
 //
 //	type StockAPI struct{}
 //
-//	func (s *StockAPI) Call(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
+//	func (s *StockAPI) Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 //	    // Context can be used for timeouts and cancellation
-//	    ticker := input["ticker"].(string)
-//
-//	    // Example of callback error - immediate failure
 //	    if ctx.Err() != nil {
 //	        return Message{}, fmt.Errorf("context cancelled: %w", ctx.Err())
 //	    }
 //
-//	    price, err := s.fetchPrice(ctx, ticker)
+//	    // Parse parameters from JSON
+//	    var params struct {
+//	        Ticker string `json:"ticker"`
+//	    }
+//	    if err := json.Unmarshal(parametersJSON, &params); err != nil {
+//	        return Message{
+//	            Role: ToolResult,
+//	            Blocks: []Block{
+//	                {
+//	                    ID:           toolCallID,
+//	                    BlockType:    Content,
+//	                    ModalityType: Text,
+//	                    MimeType:     "text/plain",
+//	                    Content:      Str(fmt.Sprintf("Error parsing parameters: %v", err)),
+//	                },
+//	            },
+//	        }, nil
+//	    }
+//
+//	    price, err := s.fetchPrice(ctx, params.Ticker)
 //	    if err != nil {
 //	        // Example of expected error - fed back to Generator as a message
 //	        return Message{
@@ -226,7 +242,7 @@ type Tool struct {
 //	                    BlockType:    Content,     // Must specify a block type
 //	                    ModalityType: Text,
 //	                    MimeType:     "text/plain", // Required for all blocks
-//	                    Content:      Str(fmt.Sprintf("Error: failed to get price for %s: %v", ticker, err)),
+//	                    Content:      Str(fmt.Sprintf("Error: failed to get price for %s: %v", params.Ticker, err)),
 //	                },
 //	            },
 //	        }, nil
@@ -250,10 +266,16 @@ type Tool struct {
 //	// Example of a tool returning an image
 //	type ImageGeneratorTool struct{}
 //
-//	func (t *ImageGeneratorTool) Call(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
-//	    prompt := input["prompt"].(string)
+//	func (t *ImageGeneratorTool) Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
+//	    // Parse parameters
+//	    var params struct {
+//	        Prompt string `json:"prompt"`
+//	    }
+//	    if err := json.Unmarshal(parametersJSON, &params); err != nil {
+//	        return Message{}, fmt.Errorf("failed to parse parameters: %w", err)
+//	    }
 //
-//	    imageData, err := t.generateImage(ctx, prompt)
+//	    imageData, err := t.generateImage(ctx, params.Prompt)
 //	    if err != nil {
 //	        return Message{}, err
 //	    }
@@ -277,7 +299,7 @@ type Tool struct {
 type ToolCallback interface {
 	// Call executes the tool with the given parameters and returns a tool result message.
 	// The context should be used for cancellation and timeouts.
-	// The input map contains the tool's parameters as defined by its InputSchema.
+	// The parametersJSON contains the tool's parameters as raw JSON as defined by its InputSchema.
 	// The toolCallID is the ID of the tool call block that initiated this tool execution.
 	//
 	// The returned message must have the ToolResult role and at least one block.
@@ -290,7 +312,7 @@ type ToolCallback interface {
 	//
 	// The second return value should only be non-nil if the callback itself fails to execute
 	// (e.g., network errors, panics, context cancellation).
-	Call(ctx context.Context, input map[string]any, toolCallID string) (Message, error)
+	Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error)
 }
 
 type ToolRegister interface {
@@ -517,16 +539,24 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen Gen
 
 		// Process tool calls
 		for _, block := range toolCallBlocks {
-			// Parse tool call from the block
-			toolName, toolInput, err := parseToolCall(block.Content.String())
-			if err != nil {
-				return currentDialog, fmt.Errorf("invalid tool call format: %w", err)
+			// Parse tool call JSON with a single unmarshaling operation
+			var toolCallData struct {
+				Name       string          `json:"name"`
+				Parameters json.RawMessage `json:"parameters"`
+			}
+
+			if err := json.Unmarshal([]byte(block.Content.String()), &toolCallData); err != nil {
+				return currentDialog, fmt.Errorf("invalid tool call JSON: %w", err)
+			}
+
+			if toolCallData.Name == "" {
+				return currentDialog, fmt.Errorf("missing tool name")
 			}
 
 			// Check if the tool exists
-			callback, exists := t.toolCallbacks[toolName]
+			callback, exists := t.toolCallbacks[toolCallData.Name]
 			if !exists {
-				return currentDialog, fmt.Errorf("tool '%s' not found", toolName)
+				return currentDialog, fmt.Errorf("tool '%s' not found", toolCallData.Name)
 			}
 
 			// If the callback is nil, this indicates the tool is meant to terminate execution
@@ -535,8 +565,14 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen Gen
 				return currentDialog, nil
 			}
 
-			// Execute the callback with the tool call ID
-			resultMessage, callErr := callback.Call(ctx, toolInput, block.ID)
+			// Set default empty JSON object if parameters is null or not provided
+			parametersJSON := toolCallData.Parameters
+			if len(parametersJSON) == 0 {
+				parametersJSON = json.RawMessage("{}")
+			}
+
+			// Execute the callback with the raw parameters JSON
+			resultMessage, callErr := callback.Call(ctx, parametersJSON, block.ID)
 
 			// Handle callback execution errors
 			if callErr != nil {
@@ -560,23 +596,6 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen Gen
 type ToolUseInput struct {
 	Name       string         `json:"name"`
 	Parameters map[string]any `json:"parameters"`
-}
-
-// parseToolCall extracts the tool name and parameters from a tool call content string.
-// Expected format is a JSON object with "name" and "parameters" fields.
-// Returns the tool name, input parameters as a map, and an error if parsing fails.
-func parseToolCall(content string) (string, map[string]any, error) {
-	var toolCall ToolUseInput
-
-	if err := json.Unmarshal([]byte(content), &toolCall); err != nil {
-		return "", nil, fmt.Errorf("invalid tool call JSON: %w", err)
-	}
-
-	if toolCall.Name == "" {
-		return "", nil, fmt.Errorf("missing tool name")
-	}
-
-	return toolCall.Name, toolCall.Parameters, nil
 }
 
 // validateToolResultMessage validates a tool result message without modifying it.

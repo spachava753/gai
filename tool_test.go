@@ -2,6 +2,7 @@ package gai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -56,12 +57,12 @@ func (m *mockToolCapableGenerator) Generate(ctx context.Context, dialog Dialog, 
 
 // mockToolCallback implements ToolCallback for testing
 type mockToolCallback struct {
-	callFunc func(ctx context.Context, input map[string]any, toolCallID string) (Message, error)
+	callFunc func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error)
 }
 
-func (m *mockToolCallback) Call(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
+func (m *mockToolCallback) Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 	if m.callFunc != nil {
-		return m.callFunc(ctx, input, toolCallID)
+		return m.callFunc(ctx, parametersJSON, toolCallID)
 	}
 	// Return a default tool result message
 	return Message{
@@ -343,7 +344,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 					Name:        "get_time",
 					Description: "Get the current time",
 				}, &mockToolCallback{
-					callFunc: func(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
+					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 						return Message{
 							Role: ToolResult,
 							Blocks: []Block{
@@ -457,7 +458,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 						},
 					},
 				}, &mockToolCallback{
-					callFunc: func(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
+					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 						return Message{}, errors.New("API connection failed")
 					},
 				})
@@ -510,10 +511,16 @@ func TestToolGenerator_Generate(t *testing.T) {
 						},
 					},
 				}, &mockToolCallback{
-					callFunc: func(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
-						location := input["location"].(string)
+					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
+						var params struct {
+							Location string `json:"location"`
+						}
+						if err := json.Unmarshal(parametersJSON, &params); err != nil {
+							return Message{}, fmt.Errorf("failed to parse parameters: %w", err)
+						}
+
 						var result string
-						if location == "New York" {
+						if params.Location == "New York" {
 							result = "72°F and sunny"
 						} else {
 							result = "68°F and cloudy"
@@ -643,7 +650,7 @@ func TestToolGenerator_Generate(t *testing.T) {
 					Name:        "get_location",
 					Description: "Get the user's current location",
 				}, &mockToolCallback{
-					callFunc: func(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
+					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 						return Message{
 							Role: ToolResult,
 							Blocks: []Block{
@@ -670,10 +677,16 @@ func TestToolGenerator_Generate(t *testing.T) {
 						},
 					},
 				}, &mockToolCallback{
-					callFunc: func(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
-						location := input["location"].(string)
+					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
+						var params struct {
+							Location string `json:"location"`
+						}
+						if err := json.Unmarshal(parametersJSON, &params); err != nil {
+							return Message{}, fmt.Errorf("failed to parse parameters: %w", err)
+						}
+
 						var result string
-						if location == "New York" {
+						if params.Location == "New York" {
 							result = "72°F and sunny"
 						} else {
 							result = "Unknown location"

@@ -2,6 +2,7 @@ package gai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/openai/openai-go"
 )
@@ -10,9 +11,12 @@ type TickerTool struct {
 	ticketPrices map[string]float64
 }
 
-func (t TickerTool) Call(ctx context.Context, input map[string]any, toolCallID string) (Message, error) {
-	ticker, ok := input["ticker"].(string)
-	if !ok {
+func (t TickerTool) Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
+	// Parse parameters
+	var params struct {
+		Ticker string `json:"ticker"`
+	}
+	if err := json.Unmarshal(parametersJSON, &params); err != nil {
 		return Message{
 			Role: ToolResult,
 			Blocks: []Block{
@@ -21,13 +25,28 @@ func (t TickerTool) Call(ctx context.Context, input map[string]any, toolCallID s
 					BlockType:    Content,
 					ModalityType: Text,
 					MimeType:     "text/plain",
-					Content:      Str(fmt.Sprintf("Error: invalid input, expected ticker to be a string")),
+					Content:      Str(fmt.Sprintf("Error: invalid input format: %v", err)),
 				},
 			},
 		}, nil
 	}
 
-	price, ok := t.ticketPrices[ticker]
+	if params.Ticker == "" {
+		return Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           toolCallID,
+					BlockType:    Content,
+					ModalityType: Text,
+					MimeType:     "text/plain",
+					Content:      Str(fmt.Sprintf("Error: ticker is required")),
+				},
+			},
+		}, nil
+	}
+
+	price, ok := t.ticketPrices[params.Ticker]
 	if !ok {
 		return Message{
 			Role: ToolResult,
@@ -37,7 +56,7 @@ func (t TickerTool) Call(ctx context.Context, input map[string]any, toolCallID s
 					BlockType:    Content,
 					ModalityType: Text,
 					MimeType:     "text/plain",
-					Content:      Str(fmt.Sprintf("Error: ticker %s does not exist", ticker)),
+					Content:      Str(fmt.Sprintf("Error: ticker %s does not exist", params.Ticker)),
 				},
 			},
 		}, nil
