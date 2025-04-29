@@ -132,7 +132,7 @@ func (f ToolCallBackFunc[T]) Call(ctx context.Context, parametersJSON json.RawMe
 		// Otherwise: Treat as tool error, return as tool result message so execution can continue.
 		msg := TextToolResultMessage(toolCallID, err.Error())
 		msg.ToolResultError = true
-		return msg, err
+		return msg, nil
 	}
 
 	// Create and return a text tool result message
