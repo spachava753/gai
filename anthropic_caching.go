@@ -127,9 +127,15 @@ func NewAnthropicServiceWrapper(wrapped AnthropicCompletionService, funcs ...Ant
 //	    "You are a helpful assistant.",
 //	)
 //
-// Note: This has no effect if the request doesn't include system instructions.
+// Note: This has no effect if the request doesn't include system instructions or if extended thinking
+// is enabled.
 func EnableSystemCaching(_ context.Context, params *a.MessageNewParams) error {
 	if len(params.System) == 0 {
+		return nil
+	}
+
+	// If extended thinking is enabled, don't cache the system instruction
+	if params.Thinking.OfThinkingConfigEnabled != nil && params.Thinking.OfThinkingConfigEnabled.BudgetTokens > 0 {
 		return nil
 	}
 
@@ -160,10 +166,17 @@ func EnableSystemCaching(_ context.Context, params *a.MessageNewParams) error {
 //	    "You are a helpful assistant.",
 //	)
 //
-// Note: This has no effect if the request doesn't include any messages.
+// Note: This has no effect if the request doesn't include any messages or if extended thinking
+// is enabled.
+//
 // It is particularly useful for applications with interactive, multi-turn conversations.
 func EnableMultiTurnCaching(_ context.Context, params *a.MessageNewParams) error {
 	if len(params.Messages) == 0 {
+		return nil
+	}
+
+	// If extended thinking is enabled, don't cache the messages
+	if params.Thinking.OfThinkingConfigEnabled != nil && params.Thinking.OfThinkingConfigEnabled.BudgetTokens > 0 {
 		return nil
 	}
 

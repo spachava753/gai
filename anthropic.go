@@ -503,14 +503,9 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	}
 
 	// Add usage metrics if available
-	if usage := resp.Usage; usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		if promptTokens := usage.InputTokens; promptTokens > 0 {
-			result.UsageMetrics[UsageMetricInputTokens] = int(promptTokens)
-		}
-		if completionTokens := usage.OutputTokens; completionTokens > 0 {
-			result.UsageMetrics[UsageMetricGenerationTokens] = int(completionTokens)
-		}
-	}
+	inputTokens := resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens
+	result.UsageMetrics[UsageMetricInputTokens] = int(inputTokens)
+	result.UsageMetrics[UsageMetricGenerationTokens] = int(resp.Usage.OutputTokens)
 
 	// Convert the message content
 	var blocks []Block
