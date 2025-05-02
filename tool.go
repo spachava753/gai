@@ -494,6 +494,13 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen Gen
 
 	// Loop to handle sequential tool calls
 	for {
+		// Check for context cancellation before generating a response
+		select {
+		case <-ctx.Done():
+			return currentDialog, ctx.Err()
+		default:
+		}
+
 		// Call the underlying generator with the current dialog
 		resp, err := t.G.Generate(ctx, currentDialog, options)
 		if err != nil {
