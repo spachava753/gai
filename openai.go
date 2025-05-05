@@ -50,9 +50,25 @@ func convertToolToOpenAI(tool Tool) oai.ChatCompletionToolParam {
 
 // convertPropertyToMap converts a Property to a map[string]interface{} suitable for OpenAI's format
 func convertPropertyToMap(prop Property) map[string]interface{} {
-	result := map[string]interface{}{
-		"type":        prop.Type.String(),
-		"description": prop.Description,
+	result := map[string]interface{}{}
+
+	// Only add type if AnyOf is not present (as per JSON Schema, they shouldn't coexist)
+	if len(prop.AnyOf) == 0 {
+		result["type"] = prop.Type.String()
+	}
+
+	// Always add description if present
+	if prop.Description != "" {
+		result["description"] = prop.Description
+	}
+
+	// Handle AnyOf property
+	if len(prop.AnyOf) > 0 {
+		anyOf := make([]interface{}, len(prop.AnyOf))
+		for i, p := range prop.AnyOf {
+			anyOf[i] = convertPropertyToMap(p)
+		}
+		result["anyOf"] = anyOf
 	}
 
 	// Handle string enums
@@ -644,6 +660,7 @@ type OpenAICompletionService interface {
 }
 
 // NewOpenAiGenerator creates a new OpenAI generator with the specified model.
+// This generator fully supports the anyOf JSON Schema feature.
 func NewOpenAiGenerator(client OpenAICompletionService, model, systemInstructions string) OpenAiGenerator {
 	return OpenAiGenerator{
 		client:             client,

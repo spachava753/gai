@@ -63,6 +63,18 @@ type Property struct {
 	// Type specifies the JSON Schema type of the property
 	Type PropertyType
 
+	// AnyOf allows a property to be any of the defined type properties in the slice.
+	// When AnyOf is used, Type is ignored (as per JSON Schema spec).
+	//
+	// Note on AnyOf support across generators:
+	// - OpenAI: Fully supports anyOf for all combinations of types
+	// - Anthropic: Fully supports anyOf for all combinations of types
+	// - Gemini: Limited support - only supports anyOf with exactly one non-null type + null (like [number, null]),
+	//   which is implemented as a nullable field. Will produce errors for multiple non-null types or null-only anyOf.
+	//
+	// The most portable way to use anyOf is for nullable fields: a property that can be either null or a specific type.
+	AnyOf []Property
+
 	// Enum specifies a list of valid values for the property.
 	// If non-nil and non-empty, the property value must be one of these values.
 	// Most commonly used with String type properties.
@@ -324,12 +336,22 @@ type ToolRegister interface {
 	// built-in tool's definition. The callback behavior remains the same - you can
 	// optionally provide a callback for automatic execution.
 	//
+	// JSON Schema compatibility note:
+	// Different generators have different levels of support for the anyOf JSON Schema feature:
+	// - OpenAI and Anthropic: Full support for anyOf properties
+	// - Gemini: Limited support for anyOf - only supports [Type, null] pattern for nullable fields.
+	//   Will error on multiple non-null types in anyOf or null-only anyOf.
+	//
+	// When using the anyOf property, the most portable approach is to restrict its usage to
+	// nullable fields following the pattern: anyOf: [{type: "string"}, {type: "null"}]
+	//
 	// Returns an error if:
 	//  - Tool name is empty
 	//  - Tool name conflicts with an already registered tool
 	//  - Tool name conflicts with a built-in tool that's already registered
 	//  - Tool name matches special values ToolChoiceAuto or ToolChoiceToolsRequired
 	//  - Tool schema is invalid (e.g., Array type without Items field)
+	//  - Tool schema uses unsupported JSON Schema features for the specific generator
 	Register(tool Tool) error
 }
 

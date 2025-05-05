@@ -52,9 +52,25 @@ func convertToolToAnthropic(tool Tool) a.ToolParam {
 
 // convertPropertyToAnthropicMap converts a Property to a map[string]interface{} suitable for Anthropic's format
 func convertPropertyToAnthropicMap(prop Property) map[string]interface{} {
-	result := map[string]interface{}{
-		"type":        prop.Type.String(),
-		"description": prop.Description,
+	result := map[string]interface{}{}
+
+	// Only add type if AnyOf is not present
+	if len(prop.AnyOf) == 0 {
+		result["type"] = prop.Type.String()
+	}
+
+	// Always add description if present
+	if prop.Description != "" {
+		result["description"] = prop.Description
+	}
+
+	// Handle AnyOf property
+	if len(prop.AnyOf) > 0 {
+		anyOf := make([]interface{}, len(prop.AnyOf))
+		for i, p := range prop.AnyOf {
+			anyOf[i] = convertPropertyToAnthropicMap(p)
+		}
+		result["anyOf"] = anyOf
 	}
 
 	// Add enum if present
@@ -600,6 +616,7 @@ type AnthropicCompletionService interface {
 
 // NewAnthropicGenerator creates a new Anthropic generator with the specified model.
 // It returns a ToolCapableGenerator that preprocesses dialog for parallel tool use compatibility.
+// This generator fully supports the anyOf JSON Schema feature.
 func NewAnthropicGenerator(client AnthropicCompletionService, model, systemInstructions string) ToolCapableGenerator {
 	inner := &AnthropicGenerator{
 		client:             client,

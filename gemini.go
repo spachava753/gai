@@ -98,16 +98,74 @@ func convertPropertyToGeminiSchema(props map[string]Property, required []string)
 }
 
 func convertSinglePropertyToGeminiSchema(prop Property) (*genai.Schema, error) {
+	// Handle AnyOf property
+	if len(prop.AnyOf) > 0 {
+		// Count non-null types and track if we have a null type
+		var nonNullProps []Property
+		hasNull := false
+
+		for i := range prop.AnyOf {
+			if prop.AnyOf[i].Type == Null {
+				hasNull = true
+			} else {
+				nonNullProps = append(nonNullProps, prop.AnyOf[i])
+			}
+		}
+
+		// Error if we have multiple non-null types - Gemini can't properly represent this
+		if len(nonNullProps) > 1 {
+			return nil, fmt.Errorf("gemini does not support anyOf with multiple non-null types")
+		}
+
+		// If we have exactly one non-null type + null, use that non-null type with nullable=true
+		if len(nonNullProps) == 1 && hasNull {
+			schema, err := convertSinglePropertyToGeminiSchema(nonNullProps[0])
+			if err != nil {
+				return nil, err
+			}
+
+			// Set nullable
+			schema.Nullable = true
+			return schema, nil
+		}
+
+		// If we just have one type (not null + something), just use that type
+		if len(nonNullProps) == 1 {
+			return convertSinglePropertyToGeminiSchema(nonNullProps[0])
+		}
+
+		// Handle the case of just null type
+		if hasNull && len(nonNullProps) == 0 {
+			return nil, fmt.Errorf("gemini does not support a property that is only null type")
+		}
+
+		// Should not reach here given the above conditions
+		return nil, fmt.Errorf("unsupported anyOf pattern")
+	}
+
+	// Regular property handling (not anyOf)
 	switch prop.Type {
 	case String:
-		s := &genai.Schema{Type: genai.TypeString, Description: prop.Description, Enum: prop.Enum}
-		return s, nil
+		return &genai.Schema{
+			Type:        genai.TypeString,
+			Description: prop.Description,
+			Enum:        prop.Enum,
+		}, nil
 	case Integer:
-		return &genai.Schema{Type: genai.TypeInteger, Description: prop.Description}, nil
+		return &genai.Schema{
+			Type:        genai.TypeInteger,
+			Description: prop.Description,
+		}, nil
 	case Number:
-		return &genai.Schema{Type: genai.TypeNumber, Description: prop.Description}, nil
+		return &genai.Schema{
+			Type:        genai.TypeNumber,
+			Description: prop.Description,
+		}, nil
 	case Boolean:
-		return &genai.Schema{Type: genai.TypeBoolean, Description: prop.Description}, nil
+		return &genai.Schema{
+			Type:        genai.TypeBoolean,
+			Description: prop.Description,
+		}, nil
 	case Array:
 		var itemsSchema *genai.Schema
 		if prop.Items != nil {
@@ -137,8 +195,6 @@ func convertSinglePropertyToGeminiSchema(prop Property) (*genai.Schema, error) {
 			Properties:  props,
 			Required:    prop.Required,
 		}, nil
-	case Null:
-		return nil, nil
 	default:
 		return nil, fmt.Errorf("unsupported property type: %v", prop.Type)
 	}
@@ -157,6 +213,14 @@ type GeminiGenerator struct {
 // Returns a ToolCapableGenerator that preprocesses dialog for parallel tool use compatibility.
 // Example model names: "gemini-1.5-pro", "gemini-1.5-flash"
 // The API key should be a valid Google Gemini API Key.
+//
+// Note on JSON Schema support limitations:
+//   - The anyOf property has limited support in Gemini. It only supports the pattern [Type, null] to
+//     indicate nullable fields, which is implemented using Schema.Nullable=true.
+//   - If you use anyOf with multiple non-null types or with only the null type, this generator will
+//     return errors, as the Gemini SDK doesn't support these patterns.
+//   - For maximum compatibility across all generators, restrict usage of anyOf to the nullable pattern:
+//     e.g., "anyOf": [{"type": "string"}, {"type": "null"}]
 func NewGeminiGenerator(client *genai.Client, modelName, systemInstructions string) (ToolCapableGenerator, error) {
 	inner := &GeminiGenerator{
 		client:             client,
