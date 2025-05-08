@@ -496,8 +496,24 @@ func dialogToGeminiHistoryWithTools(dialog Dialog, toolCallIDToFuncName map[stri
 	// The last message is the input for this call. Handle based on its role:
 	if lastMsg.Role == User {
 		for _, block := range lastMsg.Blocks {
-			if block.BlockType == Content && block.ModalityType == Text {
+			if block.BlockType != Content {
+				return nil, nil, fmt.Errorf("user message references non-content block: %v", block.BlockType)
+			}
+
+			switch block.ModalityType {
+			case Text:
 				userInput = append(userInput, genai.Text(block.Content.String()))
+			case Image:
+				fileContent, decodeErr := base64.StdEncoding.DecodeString(block.Content.String())
+				if decodeErr != nil {
+					return nil, nil, fmt.Errorf("user message references invalid image: %w", decodeErr)
+				}
+				userInput = append(userInput, genai.Blob{
+					MIMEType: block.MimeType,
+					Data:     fileContent,
+				})
+			default:
+				return nil, nil, fmt.Errorf("user message references unsupported modality type: %v", block.ModalityType)
 			}
 		}
 	} else if lastMsg.Role == ToolResult {
