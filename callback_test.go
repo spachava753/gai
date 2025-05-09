@@ -72,9 +72,8 @@ func TestToolCallBackFunc_Call(t *testing.T) {
 			callback:       ToolCallBackFunc[ValidatedParams](validatedCallback),
 			parametersJSON: `{"name": ""}`,
 			toolCallID:     "tool789",
-			want:           "",
-			wantErr:        true,
-			errContains:    "name is required",
+			want:           "parameter validation failed: name is required",
+			wantErr:        false,
 		},
 		{
 			name:           "unmarshal error",
@@ -90,9 +89,8 @@ func TestToolCallBackFunc_Call(t *testing.T) {
 			callback:       ToolCallBackFunc[SimpleParams](errorCallback),
 			parametersJSON: `{"message": "Hello"}`,
 			toolCallID:     "tool102",
-			want:           "",
-			wantErr:        true,
-			errContains:    "deliberate error",
+			want:           "deliberate error",
+			wantErr:        false,
 		},
 	}
 
