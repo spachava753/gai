@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/google/generative-ai-go/genai"
+	"google.golang.org/genai"
 )
 
 // MarshalJSONToolUseInput marshals a ToolUseInput, never panics.
@@ -54,9 +54,8 @@ func (g *GeminiGenerator) Register(tool Tool) error {
 	return nil
 }
 
-// convertToolToGemini converts gai.Tool to genai.Tool
+// convertToolToGemini converts gai.Tool to *[genai.FunctionDeclaration]
 func convertToolToGemini(tool Tool) (*genai.FunctionDeclaration, error) {
-	// Only object input schema supported for now.
 	if tool.InputSchema.Type != Object && tool.InputSchema.Type != Null {
 		return nil, fmt.Errorf("gemini only supports object/null as root input schema")
 	}
@@ -65,20 +64,17 @@ func convertToolToGemini(tool Tool) (*genai.FunctionDeclaration, error) {
 		Description: tool.Description,
 	}
 	if tool.InputSchema.Type == Object {
-		// Recursively map gai schema to Gemini parameter schema
 		jschema, err := convertPropertyToGeminiSchema(tool.InputSchema.Properties, tool.InputSchema.Required)
 		if err != nil {
 			return nil, err
 		}
 		decl.Parameters = jschema
 	}
-
 	return decl, nil
 }
 
-// Helper to convert map of properties to *genai.Schema
+// convertPropertyToGeminiSchema is a helper to convert map of properties to *[genai.Schema]
 func convertPropertyToGeminiSchema(props map[string]Property, required []string) (*genai.Schema, error) {
-	// If no properties, this can just mean an empty object
 	if props == nil {
 		return &genai.Schema{Type: genai.TypeObject}, nil
 	}
@@ -103,7 +99,6 @@ func convertSinglePropertyToGeminiSchema(prop Property) (*genai.Schema, error) {
 		// Count non-null types and track if we have a null type
 		var nonNullProps []Property
 		hasNull := false
-
 		for i := range prop.AnyOf {
 			if prop.AnyOf[i].Type == Null {
 				hasNull = true
@@ -125,7 +120,7 @@ func convertSinglePropertyToGeminiSchema(prop Property) (*genai.Schema, error) {
 			}
 
 			// Set nullable
-			schema.Nullable = true
+			schema.Nullable = genai.Ptr(true)
 			return schema, nil
 		}
 
@@ -181,18 +176,18 @@ func convertSinglePropertyToGeminiSchema(prop Property) (*genai.Schema, error) {
 			Items:       itemsSchema,
 		}, nil
 	case Object:
-		props := map[string]*genai.Schema{}
+		propsSchema := make(map[string]*genai.Schema)
 		for name, subprop := range prop.Properties {
 			s, err := convertSinglePropertyToGeminiSchema(subprop)
 			if err != nil {
 				return nil, err
 			}
-			props[name] = s
+			propsSchema[name] = s
 		}
 		return &genai.Schema{
 			Type:        genai.TypeObject,
 			Description: prop.Description,
-			Properties:  props,
+			Properties:  propsSchema,
 			Required:    prop.Required,
 		}, nil
 	default:
@@ -243,11 +238,11 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	toolCallIDToFunc := make(map[string]string)
 	toolCallCount := 0
 
-	model := g.client.GenerativeModel(g.modelName)
+	genContentConfig := &genai.GenerateContentConfig{}
 	// Set system prompt if provided
 	if g.systemInstructions != "" {
-		model.SystemInstruction = &genai.Content{
-			Parts: []genai.Part{genai.Text(g.systemInstructions)},
+		genContentConfig.SystemInstruction = &genai.Content{
+			Parts: []*genai.Part{genai.NewPartFromText(g.systemInstructions)},
 		}
 	}
 	// If tools are registered, attach them
@@ -256,7 +251,7 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		for _, t := range g.tools {
 			toolList = append(toolList, t)
 		}
-		model.Tools = []*genai.Tool{
+		genContentConfig.Tools = []*genai.Tool{
 			{
 				FunctionDeclarations: toolList,
 			},
@@ -265,63 +260,50 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 	// generation parameters
 	if options != nil {
-		switch {
-		case options.ToolChoice == ToolChoiceAuto:
-			model.ToolConfig = &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode: genai.FunctionCallingAuto,
-				},
+		if options.ToolChoice != "" {
+			tc := &genai.ToolConfig{}
+			mode := genai.FunctionCallingConfigModeAuto
+			var allowedFuncNames []string
+			switch {
+			case options.ToolChoice == ToolChoiceToolsRequired:
+				mode = genai.FunctionCallingConfigModeAny
+			case options.ToolChoice != ToolChoiceAuto:
+				mode = genai.FunctionCallingConfigModeAny
+				allowedFuncNames = []string{options.ToolChoice}
 			}
-		case options.ToolChoice == ToolChoiceToolsRequired:
-			model.ToolConfig = &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode: genai.FunctionCallingAny,
-				},
+			tc.FunctionCallingConfig = &genai.FunctionCallingConfig{
+				Mode:                 mode,
+				AllowedFunctionNames: allowedFuncNames,
 			}
-		case options.ToolChoice != "":
-			model.ToolConfig = &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode:                 genai.FunctionCallingAny,
-					AllowedFunctionNames: []string{options.ToolChoice},
-				},
-			}
+			genContentConfig.ToolConfig = tc
 		}
 
-		model.Temperature = genai.Ptr(float32(options.Temperature))
-
+		if options.Temperature > 0 {
+			genContentConfig.Temperature = genai.Ptr(float32(options.Temperature))
+		}
 		if options.MaxGenerationTokens > 0 {
-			model.MaxOutputTokens = genai.Ptr(int32(options.MaxGenerationTokens))
+			genContentConfig.MaxOutputTokens = int32(options.MaxGenerationTokens)
 		}
-
 		if options.N > 1 {
-			model.CandidateCount = genai.Ptr(int32(options.N))
+			genContentConfig.CandidateCount = int32(options.N)
 		}
-
 		if options.StopSequences != nil {
-			model.StopSequences = options.StopSequences
+			genContentConfig.StopSequences = options.StopSequences
 		}
-
 		if options.TopP > 0 {
-			model.TopP = genai.Ptr(float32(options.TopP))
+			genContentConfig.TopP = genai.Ptr(float32(options.TopP))
 		}
-
 		if options.TopK > 0 {
-			model.TopK = genai.Ptr(int32(options.TopK))
+			genContentConfig.TopK = genai.Ptr(float32(options.TopK))
 		}
 	}
 
-	// Split dialog into history and current user input, with tool result references resolved
-	history, userInput, err := dialogToGeminiHistoryWithTools(dialog, toolCallIDToFunc)
+	allContents, err := prepareGeminiChatHistory(dialog, toolCallIDToFunc)
 	if err != nil {
 		return Response{}, err
 	}
 
-	chat := model.StartChat()
-	if len(history) > 0 {
-		chat.History = history
-	}
-
-	resp, err := chat.SendMessage(ctx, userInput...)
+	resp, err := g.client.Models.GenerateContent(ctx, g.modelName, allContents, genContentConfig)
 	if err != nil {
 		return Response{}, fmt.Errorf("gemini: generation failed: %w", err)
 	}
@@ -350,21 +332,20 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		}
 		var blocks []Block
 		for _, part := range cand.Content.Parts {
-			if txt, ok := part.(genai.Text); ok {
+			if part.Text != "" {
 				blocks = append(blocks, Block{
 					BlockType:    Content,
 					ModalityType: Text,
 					MimeType:     "text/plain",
-					Content:      Str(txt),
+					Content:      Str(part.Text),
 				})
-			}
-			// Map function call/tool use to ToolCall blocks
-			if fc, ok := part.(genai.FunctionCall); ok {
+			} else if part.FunctionCall != nil {
+				fc := part.FunctionCall
 				hasToolCalls = true
 				toolCallCount++
 				id := fmt.Sprintf("toolcall-%d", toolCallCount)
 				toolCallIDToFunc[id] = fc.Name
-				data, _ := MarshalJSONToolUseInput(ToolUseInput{
+				jsonData, _ := MarshalJSONToolUseInput(ToolUseInput{
 					Name:       fc.Name,
 					Parameters: fc.Args,
 				})
@@ -373,7 +354,7 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 					BlockType:    ToolCall,
 					ModalityType: Text,
 					MimeType:     "application/json",
-					Content:      Str(data),
+					Content:      Str(jsonData),
 					ExtraFields:  map[string]interface{}{"function_name": fc.Name},
 				})
 			}
@@ -385,16 +366,18 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		result.Candidates = append(result.Candidates, msg)
 	}
 
-	// Set finish reason if available
-	switch resp.Candidates[0].FinishReason {
-	case genai.FinishReasonStop:
-		result.FinishReason = EndTurn
-	case genai.FinishReasonMaxTokens:
-		result.FinishReason = MaxGenerationLimit
-		return result, MaxGenerationLimitErr
+	if len(resp.Candidates) > 0 && resp.Candidates[0] != nil {
+		switch resp.Candidates[0].FinishReason {
+		case genai.FinishReasonStop:
+			result.FinishReason = EndTurn
+		case genai.FinishReasonMaxTokens:
+			result.FinishReason = MaxGenerationLimit
+		default:
+			result.FinishReason = EndTurn
+		}
 	}
 
-	if hasToolCalls {
+	if hasToolCalls && result.FinishReason == EndTurn {
 		result.FinishReason = ToolUse
 	}
 
@@ -402,143 +385,99 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 }
 
 // msgToGeminiContent is a helper to map a Message to a Gemini Content, with support for tool calls/results
-func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) *genai.Content {
-	var parts []genai.Part
-	var role string
+func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*genai.Content, error) {
+	var parts []*genai.Part
+	var role genai.Role
+
 	switch msg.Role {
 	case User:
-		role = "user"
+		role = genai.RoleUser
 		for _, block := range msg.Blocks {
 			if block.BlockType != Content {
-				continue
+				return nil, fmt.Errorf("user message block type %v is not Content", block.BlockType)
 			}
 			switch block.ModalityType {
 			case Text:
-				parts = append(parts, genai.Text(block.Content.String()))
+				parts = append(parts, genai.NewPartFromText(block.Content.String()))
 			case Image:
 				fileContent, decodeErr := base64.StdEncoding.DecodeString(block.Content.String())
 				if decodeErr != nil {
-					panic("unexpected error decoding image content: " + decodeErr.Error())
+					return nil, fmt.Errorf("decoding image content failed: %w", decodeErr)
 				}
-				parts = append(parts, genai.Blob{
-					MIMEType: block.MimeType,
-					Data:     fileContent,
-				})
+				parts = append(parts, genai.NewPartFromBytes(fileContent, block.MimeType))
+			default:
+				return nil, fmt.Errorf("unsupported modality type in user message: %v", block.ModalityType)
 			}
 		}
 	case Assistant:
-		role = "model"
+		role = genai.RoleModel
 		for _, block := range msg.Blocks {
 			if block.BlockType == Content && block.ModalityType == Text {
-				parts = append(parts, genai.Text(block.Content.String()))
+				parts = append(parts, genai.NewPartFromText(block.Content.String()))
 			}
 			if block.BlockType == ToolCall && block.ModalityType == Text {
 				// Unmarshal to get function name, params
 				var toolUse ToolUseInput
-				_ = json.Unmarshal([]byte(block.Content.String()), &toolUse)
+				if err := json.Unmarshal([]byte(block.Content.String()), &toolUse); err != nil {
+					return nil, fmt.Errorf("unmarshalling tool call content failed: %w", err)
+				}
 				id := block.ID
 				if toolUse.Name == "" {
-					toolUse.Name, _ = block.ExtraFields["function_name"].(string)
+					name, ok := block.ExtraFields["function_name"].(string)
+					if !ok {
+						return nil, fmt.Errorf("missing function_name in tool call block extra fields for ID %s", id)
+					}
+					toolUse.Name = name
 				}
 				toolCallIDToFuncName[id] = toolUse.Name
-				parts = append(parts, genai.FunctionCall{
-					Name: toolUse.Name, Args: toolUse.Parameters,
-				})
+				parts = append(parts, genai.NewPartFromFunctionCall(toolUse.Name, toolUse.Parameters))
 			}
 		}
 	case ToolResult:
-		role = "user"
+		role = genai.RoleUser
 		for _, block := range msg.Blocks {
 			if block.ModalityType == Text {
 				id := block.ID
 				fn, ok := toolCallIDToFuncName[id]
 				if !ok || fn == "" {
-					err := fmt.Errorf("tool result references unknown tool call id: %q (history)", id)
-					if err != nil {
-						panic("unexpected error: " + err.Error())
-					}
-					return nil
+					return nil, fmt.Errorf("tool result references unknown tool call id: %q", id)
 				}
-				var maybeObj map[string]any
-				e := json.Unmarshal([]byte(block.Content.String()), &maybeObj)
-				respObj := make(map[string]any)
-				if e == nil {
-					respObj = maybeObj
-				} else {
-					respObj["result"] = block.Content.String()
+				var respObj map[string]any
+				if err := json.Unmarshal([]byte(block.Content.String()), &respObj); err != nil {
+					respObj = make(map[string]any)
+					respObj["output"] = block.Content.String()
 				}
-				parts = append(parts, genai.FunctionResponse{
-					Name: fn, Response: respObj,
-				})
+				parts = append(parts, genai.NewPartFromFunctionResponse(fn, respObj))
 			}
 		}
+	default:
+		return nil, fmt.Errorf("unsupported message role: %v", msg.Role)
 	}
-	return &genai.Content{Parts: parts, Role: role}
+
+	if len(parts) == 0 {
+		if role == genai.RoleUser {
+			return nil, fmt.Errorf("user message resulted in no parts")
+		}
+	}
+	return genai.NewContentFromParts(parts, role), nil
 }
 
-// dialogToGeminiHistoryWithTools splits dialog into chat history and user input, with tool result mapping support
-// This will populate toolCallIDToFunc with tool call id -> function name when populating ToolCall blocks in history
-func dialogToGeminiHistoryWithTools(dialog Dialog, toolCallIDToFuncName map[string]string) (history []*genai.Content, userInput []genai.Part, err error) {
-	// Early validation: last message must be User or ToolResult
+func prepareGeminiChatHistory(dialog Dialog, toolCallIDToFuncName map[string]string) ([]*genai.Content, error) {
 	if len(dialog) == 0 {
-		return nil, nil, nil
+		return nil, fmt.Errorf("empty dialog")
 	}
-	lastMsg := dialog[len(dialog)-1]
-	if lastMsg.Role != User && lastMsg.Role != ToolResult {
-		return nil, nil, fmt.Errorf("invalid dialog: last message must be user or tool result, got %v", lastMsg.Role)
-	}
-
-	// All previous messages go to history EXCEPT the last, which we just validated
-	for i := 0; i < len(dialog)-1; i++ {
-		history = append(history, msgToGeminiContent(dialog[i], toolCallIDToFuncName))
-	}
-
-	// The last message is the input for this call. Handle based on its role:
-	if lastMsg.Role == User {
-		for _, block := range lastMsg.Blocks {
-			if block.BlockType != Content {
-				return nil, nil, fmt.Errorf("user message references non-content block: %v", block.BlockType)
-			}
-
-			switch block.ModalityType {
-			case Text:
-				userInput = append(userInput, genai.Text(block.Content.String()))
-			case Image:
-				fileContent, decodeErr := base64.StdEncoding.DecodeString(block.Content.String())
-				if decodeErr != nil {
-					return nil, nil, fmt.Errorf("user message references invalid image: %w", decodeErr)
-				}
-				userInput = append(userInput, genai.Blob{
-					MIMEType: block.MimeType,
-					Data:     fileContent,
-				})
-			default:
-				return nil, nil, fmt.Errorf("user message references unsupported modality type: %v", block.ModalityType)
-			}
+	var history []*genai.Content
+	for i, msg := range dialog {
+		content, err := msgToGeminiContent(msg, toolCallIDToFuncName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert message at index %d (role: %s) to gemini content: %w", i, msg.Role, err)
 		}
-	} else if lastMsg.Role == ToolResult {
-		for _, block := range lastMsg.Blocks {
-			if block.ModalityType == Text {
-				id := block.ID
-				fn, ok := toolCallIDToFuncName[id]
-				if !ok || fn == "" {
-					return nil, nil, fmt.Errorf("tool result references unknown tool call id: %q (input)", id)
-				}
-				var maybeObj map[string]any
-				err := json.Unmarshal([]byte(block.Content.String()), &maybeObj)
-				respObj := make(map[string]any)
-				if err == nil {
-					respObj = maybeObj
-				} else {
-					respObj["result"] = block.Content.String()
-				}
-				userInput = append(userInput, genai.FunctionResponse{
-					Name: fn, Response: respObj,
-				})
-			}
+		if content == nil {
+			return nil, fmt.Errorf("message at index %d (role: %s) converted to nil content", i, msg.Role)
 		}
+		history = append(history, content)
 	}
-	return history, userInput, nil
+	return history, nil
 }
 
 var _ Generator = (*GeminiGenerator)(nil)

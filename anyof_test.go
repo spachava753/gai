@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	a "github.com/anthropics/anthropic-sdk-go"
-	"github.com/google/generative-ai-go/genai"
 	oai "github.com/openai/openai-go"
+	"google.golang.org/genai"
 )
 
 // Test that OpenAI generator correctly handles anyOf
@@ -101,7 +101,7 @@ func TestGeminiAnyOf(t *testing.T) {
 	if result.Type != genai.TypeNumber {
 		t.Errorf("Expected type to be Number, got: %v", result.Type)
 	}
-	if !result.Nullable {
+	if !*result.Nullable {
 		t.Errorf("Expected Nullable to be true for null+number anyOf property")
 	}
 

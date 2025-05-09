@@ -66,7 +66,14 @@ func ExampleOpenAiGenerator_Generate_image() {
 
 func ExampleOpenAiGenerator_Generate() {
 	// Create an OpenAI client
-	client := openai.NewClient()
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
+		return
+	}
+	client := openai.NewClient(
+		option.WithAPIKey(apiKey),
+	)
 
 	// Instantiate a OpenAI Generator
 	gen := NewOpenAiGenerator(&client.Chat.Completions, openai.ChatModelGPT4oMini, "You are a helpful assistant")
@@ -103,47 +110,8 @@ func ExampleOpenAiGenerator_Generate() {
 	}
 	fmt.Println(len(resp.Candidates))
 
-	// Create an OpenAI client for open router
-	client = openai.NewClient(
-		option.WithBaseURL("https://openrouter.ai/api/v1/"),
-		option.WithAPIKey(os.Getenv("OPEN_ROUTER_API_KEY")),
-	)
-
-	// Instantiate a OpenAI Generator
-	gen = NewOpenAiGenerator(
-		&client.Chat.Completions,
-		"google/gemini-2.5-pro-preview-03-25",
-		"You are a helpful assistant",
-	)
-	dialog = Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Hi!"),
-				},
-			},
-		},
-	}
-
-	// Customize generation parameters
-	opts = GenOpts{
-		MaxGenerationTokens: 1024,
-	}
-
-	// Generate a response
-	resp, err = gen.Generate(context.Background(), dialog, &opts)
-	if err != nil {
-		panic(err.Error())
-	}
-	// The exact response text may vary, so we'll just print a placeholder
-	fmt.Println("Response received")
-
 	// Output: Response received
 	// 2
-	// Response received
 }
 
 func ExampleOpenAiGenerator_Generate_openRouter() {

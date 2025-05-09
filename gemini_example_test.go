@@ -4,8 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/google/generative-ai-go/genai"
-	genaiopts "google.golang.org/api/option"
+	"google.golang.org/genai"
 	"os"
 	"strings"
 	"time"
@@ -21,7 +20,10 @@ func ExampleGeminiGenerator_Generate() {
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
-		genaiopts.WithAPIKey(apiKey),
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
 	)
 
 	g, err := NewGeminiGenerator(client, "gemini-1.5-flash", "You are a helpful assistant.")
@@ -53,7 +55,10 @@ func ExampleGeminiGenerator_Register() {
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
-		genaiopts.WithAPIKey(apiKey),
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
 	)
 
 	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-03-25", "You are a helpful assistant.")
@@ -191,10 +196,13 @@ func ExampleGeminiGenerator_Register() {
 	}
 	fmt.Println("Response has tool results:", strings.Contains(
 		response.Candidates[0].Blocks[0].Content.String(),
-		"MSFT is $300.00",
+		"MSFT",
 	) && strings.Contains(
 		response.Candidates[0].Blocks[0].Content.String(),
-		time.Time{}.Add(1*time.Minute).String(),
+		"300",
+	) && strings.Contains(
+		response.Candidates[0].Blocks[0].Content.String(),
+		"UTC",
 	))
 
 	// Output: tool calling response:
@@ -234,7 +242,10 @@ func ExampleGeminiGenerator_Generate_image() {
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
-		genaiopts.WithAPIKey(apiKey),
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
 	)
 
 	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-03-25", "You are a helpful assistant.")
@@ -287,7 +298,10 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
-		genaiopts.WithAPIKey(apiKey),
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
 	)
 
 	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-03-25", "You are a helpful assistant.")

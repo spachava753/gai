@@ -25,6 +25,20 @@ const (
 	ToolResult
 )
 
+// String returns the string representation of the role
+func (r Role) String() string {
+	switch r {
+	case User:
+		return "user"
+	case Assistant:
+		return "assistant"
+	case ToolResult:
+		return "tool result"
+	default:
+		return fmt.Sprintf("unknown role %d", r)
+	}
+}
+
 // Modality represents the type of modality that a Block holds
 // The default for Modality is a Text type
 type Modality uint
