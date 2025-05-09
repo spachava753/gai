@@ -362,8 +362,8 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		if resp.UsageMetadata.PromptTokenCount > 0 {
 			result.UsageMetrics[UsageMetricInputTokens] = int(resp.UsageMetadata.PromptTokenCount)
 		}
-		if resp.UsageMetadata.CandidatesTokenCount > 0 {
-			result.UsageMetrics[UsageMetricGenerationTokens] = int(resp.UsageMetadata.CandidatesTokenCount)
+		if resp.UsageMetadata.TotalTokenCount > 0 {
+			result.UsageMetrics[UsageMetricGenerationTokens] = int(resp.UsageMetadata.TotalTokenCount - resp.UsageMetadata.PromptTokenCount)
 		}
 	}
 
