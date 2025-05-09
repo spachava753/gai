@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"google.golang.org/genai"
 )
@@ -305,6 +306,50 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 	resp, err := g.client.Models.GenerateContent(ctx, g.modelName, allContents, genContentConfig)
 	if err != nil {
+		var apierr *genai.APIError
+		if errors.As(err, &apierr) {
+			if errors.As(err, &apierr) {
+				// Map HTTP status codes to our error types
+				switch apierr.Code {
+				case 401:
+					return Response{}, AuthenticationErr(apierr.Error())
+				case 403:
+					return Response{}, ApiErr{
+						StatusCode: apierr.Code,
+						Type:       "permission_error",
+						Message:    apierr.Error(),
+					}
+				case 404:
+					return Response{}, ApiErr{
+						StatusCode: apierr.Code,
+						Type:       "not_found_error",
+						Message:    apierr.Error(),
+					}
+				case 429:
+					return Response{}, RateLimitErr(apierr.Error())
+				case 500:
+					return Response{}, ApiErr{
+						StatusCode: apierr.Code,
+						Type:       "api_error",
+						Message:    apierr.Error(),
+					}
+				case 503:
+					return Response{}, ApiErr{
+						StatusCode: apierr.Code,
+						Type:       "service_unavailable",
+						Message:    apierr.Error(),
+					}
+				default:
+					// Default to invalid_request_error for 400 and other status codes
+					return Response{}, ApiErr{
+						StatusCode: apierr.Code,
+						Type:       "invalid_request_error",
+						Message:    apierr.Error(),
+					}
+				}
+			}
+			return Response{}, fmt.Errorf("gemini: generation failed: %w", apierr)
+		}
 		return Response{}, fmt.Errorf("gemini: generation failed: %w", err)
 	}
 
