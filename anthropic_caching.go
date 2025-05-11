@@ -35,7 +35,7 @@ type AnthropicServiceParamModifierFunc func(ctx context.Context, params *a.Messa
 // This allows for intercepting and modifying requests before they are sent to the Anthropic API,
 // enabling features like caching, request transformation, and dynamic context management.
 //
-// The wrapper implements the AnthropicCompletionService interface, making it a drop-in
+// The wrapper implements the AnthropicSvc interface, making it a drop-in
 // replacement for the standard Anthropic client in the context of this library.
 //
 // Common use cases include:
@@ -48,10 +48,10 @@ type AnthropicServiceWrapper struct {
 	funcs []AnthropicServiceParamModifierFunc
 
 	// wrapped is the underlying Anthropic client service being wrapped
-	wrapped AnthropicCompletionService
+	wrapped AnthropicSvc
 }
 
-// New implements the AnthropicCompletionService interface by applying all registered
+// New implements the AnthropicSvc interface by applying all registered
 // parameter modifier functions to the request parameters before passing them to the
 // wrapped service.
 //
@@ -72,6 +72,13 @@ func (a AnthropicServiceWrapper) New(ctx context.Context, params a.MessageNewPar
 		}
 	}
 	return a.wrapped.New(ctx, params, opts...)
+}
+
+// CountTokens forwards token counting requests to the wrapped service.
+// This method simply passes the request through without applying any modifiers.
+func (a AnthropicServiceWrapper) CountTokens(ctx context.Context, params a.MessageCountTokensParams, opts ...option.RequestOption) (res *a.MessageTokensCount, err error) {
+	// Forward the request to the wrapped service
+	return a.wrapped.CountTokens(ctx, params, opts...)
 }
 
 // NewAnthropicServiceWrapper creates a new wrapper around an Anthropic API client
@@ -98,7 +105,7 @@ func (a AnthropicServiceWrapper) New(ctx context.Context, params a.MessageNewPar
 //	    "claude-3-opus-20240229",
 //	    "You are a helpful assistant.",
 //	)
-func NewAnthropicServiceWrapper(wrapped AnthropicCompletionService, funcs ...AnthropicServiceParamModifierFunc) *AnthropicServiceWrapper {
+func NewAnthropicServiceWrapper(wrapped AnthropicSvc, funcs ...AnthropicServiceParamModifierFunc) *AnthropicServiceWrapper {
 	return &AnthropicServiceWrapper{
 		wrapped: wrapped,
 		funcs:   funcs,

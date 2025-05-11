@@ -350,3 +350,62 @@ Assistant: MSFT
 	// {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
 	// MSFT
 }
+
+func ExampleAnthropicGenerator_Count() {
+	// Create an Anthropic client
+	client := a.NewClient()
+
+	// Create a generator with system instructions
+	generator := NewAnthropicGenerator(
+		&client.Messages,
+		a.ModelClaude3_5SonnetLatest,
+		"You are a helpful assistant.",
+	)
+
+	// Create a dialog with a user message
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("What is the capital of France?"),
+				},
+			},
+		},
+	}
+
+	// Count tokens in the dialog
+	tokenCount, err := generator.Count(context.Background(), dialog)
+	if err != nil {
+		fmt.Printf("Error counting tokens: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Dialog contains approximately %d tokens\n", tokenCount)
+
+	// Add a response to the dialog
+	dialog = append(dialog, Message{
+		Role: Assistant,
+		Blocks: []Block{
+			{
+				BlockType:    Content,
+				ModalityType: Text,
+				Content:      Str("The capital of France is Paris. It's a beautiful city known for its culture, art, and cuisine."),
+			},
+		},
+	})
+
+	// Count tokens in the updated dialog
+	tokenCount, err = generator.Count(context.Background(), dialog)
+	if err != nil {
+		fmt.Printf("Error counting tokens: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Dialog with response contains approximately %d tokens\n", tokenCount)
+
+	// Output: Dialog contains approximately 20 tokens
+	// Dialog with response contains approximately 42 tokens
+}

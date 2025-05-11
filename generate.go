@@ -168,3 +168,24 @@ type Response struct {
 type Generator interface {
 	Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error)
 }
+
+// TokenCounter is an interface for a generator that can count the number of tokens in a Dialog.
+// This is useful for:
+//  1. Estimating costs before sending a request to the API
+//  2. Checking if a dialog exceeds the context window limits of a model
+//  3. Optimizing prompt design by analyzing token usage
+//  4. Managing rate limits that are based on token counts
+//
+// The exact method of token counting varies by provider:
+//   - OpenAI uses tiktoken to count tokens without making an API call
+//   - Anthropic calls a dedicated counting API endpoint
+//   - Gemini calls a dedicated counting API endpoint
+//
+// In all cases, the Count method takes a context for cancellation and a Dialog to analyze.
+// The number of tokens is returned as a uint.
+//
+// Note that some providers count system instructions separately, but this interface
+// will include them in the returned count if the generator was initialized with them.
+type TokenCounter interface {
+	Count(ctx context.Context, dialog Dialog) (uint, error)
+}

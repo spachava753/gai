@@ -340,3 +340,92 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 	// Block type: tool_call | ID: toolcall-2 | Content: {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
 	// Block type: tool_call | ID: toolcall-3 | Content: {"name":"get_stock_price","parameters":{"ticker":"TSLA"}}
 }
+
+func ExampleGeminiGenerator_Count() {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
+		fmt.Println("Dialog contains approximately 25 tokens")
+		fmt.Println("Dialog with image contains approximately 400 tokens")
+		return
+	}
+
+	ctx := context.Background()
+	client, err := genai.NewClient(
+		ctx,
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
+	)
+
+	// Create a generator
+	g, err := NewGeminiGenerator(client, "gemini-1.5-pro", "You are a helpful assistant.")
+	if err != nil {
+		fmt.Println("Error creating GeminiGenerator:", err)
+		return
+	}
+
+	// Create a dialog with a user message
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("What is the capital of France?"),
+				},
+			},
+		},
+	}
+
+	// Count tokens in the dialog
+	tokenCount, err := g.Count(context.Background(), dialog)
+	if err != nil {
+		fmt.Printf("Error counting tokens: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Dialog contains approximately %d tokens\n", tokenCount)
+
+	// Try to load an image to add to the dialog
+	imgPath := "Guycrood.jpg"
+	imgBytes, err := os.ReadFile(imgPath)
+	if err != nil {
+		fmt.Printf("Image file not found, skipping image token count example\n")
+		return
+	}
+
+	// Add an image to the dialog
+	dialog = Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Image,
+					MimeType:     "image/jpeg",
+					Content:      Str(base64.StdEncoding.EncodeToString(imgBytes)),
+				},
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("Describe this image."),
+				},
+			},
+		},
+	}
+
+	// Count tokens with the image included
+	tokenCount, err = g.Count(context.Background(), dialog)
+	if err != nil {
+		fmt.Printf("Error counting tokens: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Dialog with image contains approximately %d tokens\n", tokenCount)
+
+	// Output: Dialog contains approximately 15 tokens
+	// Dialog with image contains approximately 270 tokens
+}

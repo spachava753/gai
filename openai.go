@@ -1,11 +1,19 @@
 package gai
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/openai/openai-go/option"
+	"github.com/pkoukk/tiktoken-go" // Added for token counting
+	"image"
+	_ "image/gif"  // Register GIF format
+	_ "image/jpeg" // Register JPEG format
+	_ "image/png"  // Register PNG format
+	"math"
 	"slices"
 	"strings"
 
@@ -672,4 +680,313 @@ func NewOpenAiGenerator(client OpenAICompletionService, model, systemInstruction
 
 var _ Generator = (*OpenAiGenerator)(nil)
 var _ ToolRegister = (*OpenAiGenerator)(nil)
+var _ TokenCounter = (*OpenAiGenerator)(nil)
 var _ OpenAICompletionService = (*oai.ChatCompletionService)(nil)
+
+// calculateImageTokens calculates the number of tokens used by an image block
+// based on OpenAI's token calculation rules for different models.
+//
+// The function first attempts to extract dimensions directly from the image data by:
+//  1. Decoding the base64-encoded image content
+//  2. Using Go's image package to determine width and height
+//
+// If extraction from image data fails, it tries to get dimensions from ExtraFields.
+// If dimensions still cannot be determined, an error is returned.
+//
+// The detail level ("high" or "low") is determined from ExtraFields if specified,
+// with "high" being the default.
+//
+// Token calculation depends on the model:
+//   - For minimal models (GPT-4.1-mini, GPT-4.1-nano, o4-mini), it uses the 32px patch method
+//   - For standard models (GPT-4o, etc.), it uses the base+tile method with detail level consideration
+//
+// Returns:
+//   - The number of tokens as an integer
+//   - An error if dimensions cannot be determined or if calculation fails
+func (g *OpenAiGenerator) calculateImageTokens(block Block) (int, error) {
+	var width, height int
+	var detail string = "high" // Default to high detail
+
+	// Try to extract image dimensions directly from the image data
+	imgData, err := base64.StdEncoding.DecodeString(block.Content.String())
+	if err == nil {
+		// Successfully decoded base64, now try to extract dimensions
+		imgReader := bytes.NewReader(imgData)
+		config, _, err := image.DecodeConfig(imgReader)
+		if err == nil {
+			// Successfully extracted dimensions
+			width = config.Width
+			height = config.Height
+		}
+	}
+
+	// If we couldn't extract dimensions from the image, try the ExtraFields
+	if width == 0 || height == 0 {
+		if block.ExtraFields != nil {
+			if w, ok := block.ExtraFields["width"].(int); ok {
+				width = w
+			}
+			if h, ok := block.ExtraFields["height"].(int); ok {
+				height = h
+			}
+		}
+	}
+
+	// Return an error if we still couldn't determine dimensions
+	if width == 0 || height == 0 {
+		return 0, fmt.Errorf("could not determine image dimensions for token calculation")
+	}
+
+	// Get detail level from ExtraFields if specified
+	if block.ExtraFields != nil {
+		if d, ok := block.ExtraFields["detail"].(string); ok && (d == "low" || d == "high") {
+			detail = d
+		}
+	}
+
+	// Determine which calculation method to use based on model
+	if isMinimalModel(g.model) {
+		return calculateMinimalModelImageTokens(width, height, g.model)
+	} else {
+		return calculateStandardModelImageTokens(width, height, detail, g.model)
+	}
+}
+
+// isMinimalModel checks if the model uses the 32px patch calculation method.
+// It returns true for models that use patch-based calculation like gpt-4.1-mini,
+// gpt-4.1-nano, and o4-mini.
+//
+// These models use a different token calculation algorithm that divides images
+// into 32x32 pixel patches and applies model-specific multipliers.
+func isMinimalModel(model string) bool {
+	minimalModels := []string{"gpt-4.1-mini", "gpt-4.1-nano", "o4-mini"}
+	for _, m := range minimalModels {
+		if strings.Contains(model, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// calculateMinimalModelImageTokens calculates image tokens for minimal models
+// (GPT-4.1-mini, GPT-4.1-nano, o4-mini) based on OpenAI's token calculation rules.
+//
+// The calculation follows these steps:
+//  1. Calculate the number of 32x32 pixel patches needed to cover the image
+//  2. If the number exceeds 1536, scale the image to fit within that limit
+//  3. Apply a model-specific multiplier to the patch count
+//
+// Multipliers:
+//   - GPT-4.1-mini: 1.62
+//   - GPT-4.1-nano: 2.46
+//   - o4-mini:      1.72
+//
+// The result is the final token count for the image.
+func calculateMinimalModelImageTokens(width, height int, model string) (int, error) {
+	// Calculate patches based on 32px x 32px
+	patchesWidth := (width + 32 - 1) / 32   // Ceiling division
+	patchesHeight := (height + 32 - 1) / 32 // Ceiling division
+
+	totalPatches := patchesWidth * patchesHeight
+
+	// If exceeds 1536, scale down
+	if totalPatches > 1536 {
+		// We need to scale down the image while preserving aspect ratio
+		// Calculate shrink factor
+		shrinkFactor := math.Sqrt(float64(1536*32*32) / float64(width*height))
+
+		// Apply shrink factor
+		scaledWidth := int(float64(width) * shrinkFactor)
+		scaledHeight := int(float64(height) * shrinkFactor)
+
+		if scaledWidth%32 != 0 {
+			widthPatches := float64(scaledWidth) / 32.0
+			shrinkFactor = math.Floor(widthPatches) / widthPatches
+
+			// Apply shrink factor with dimensions that fit in a whole patch size (for width)
+			scaledWidth = int(float64(scaledWidth) * shrinkFactor)
+			scaledHeight = int(float64(scaledHeight) * shrinkFactor)
+		}
+
+		// Recalculate patches
+		patchesWidth = (scaledWidth + 32 - 1) / 32
+		patchesHeight = (scaledHeight + 32 - 1) / 32
+
+		totalPatches = patchesWidth * patchesHeight
+	}
+
+	// Apply multiplier based on model
+	switch {
+	case strings.Contains(model, "gpt-4.1-mini"):
+		return int(float64(totalPatches) * 1.62), nil
+	case strings.Contains(model, "gpt-4.1-nano"):
+		return int(float64(totalPatches) * 2.46), nil
+	case strings.Contains(model, "o4-mini"):
+		return int(float64(totalPatches) * 1.72), nil
+	default:
+		// Default to no multiplier if model is in minimal category but not recognized
+		return totalPatches, nil
+	}
+}
+
+// calculateStandardModelImageTokens calculates image tokens for standard models
+// (GPT-4o, GPT-4.1, etc.) based on OpenAI's token calculation rules.
+//
+// For "low" detail images, it returns a fixed base token count dependent on the model.
+//
+// For "high" detail images, the calculation follows these steps:
+//  1. Scale the image to fit within a 2048x2048 square if necessary
+//  2. Scale so the shortest side is 768px
+//  3. Count the number of 512px tiles needed to cover the image
+//  4. Calculate tokens as: base_tokens + (tile_tokens * number_of_tiles)
+//
+// Base and tile token counts vary by model and are retrieved using getTokensForModel().
+//
+// Returns the calculated token count for the image.
+func calculateStandardModelImageTokens(width, height int, detail string, model string) (int, error) {
+	// For low detail, return base tokens
+	if detail == "low" {
+		baseTokens, _ := getTokensForModel(model)
+		return baseTokens, nil
+	}
+
+	// For high detail, we need to calculate based on tiles
+	// First, get base and tile tokens for the model
+	baseTokens, tileTokens := getTokensForModel(model)
+
+	// Scale to fit in 2048px x 2048px square if needed
+	scaledWidth, scaledHeight := width, height
+	if width > 2048 || height > 2048 {
+		// Scale down preserving aspect ratio
+		ratio := float64(2048) / math.Max(float64(width), float64(height))
+		scaledWidth = int(float64(width) * ratio)
+		scaledHeight = int(float64(height) * ratio)
+	}
+
+	// Scale so shortest side is 768px
+	ratio := float64(768) / math.Min(float64(scaledWidth), float64(scaledHeight))
+	scaledWidth = int(float64(scaledWidth) * ratio)
+	scaledHeight = int(float64(scaledHeight) * ratio)
+
+	// Count 512px tiles
+	tilesWidth := (scaledWidth + 512 - 1) / 512   // Ceiling division
+	tilesHeight := (scaledHeight + 512 - 1) / 512 // Ceiling division
+
+	totalTiles := tilesWidth * tilesHeight
+
+	// Calculate total tokens
+	return baseTokens + (tileTokens * totalTiles), nil
+}
+
+// getTokensForModel returns the base tokens and tile tokens for a given model.
+// These values are used in token calculations for standard models (non-minimal models)
+// according to OpenAI's documentation.
+//
+// Model-specific token values:
+//   - GPT-4o, GPT-4.1, GPT-4.5:        base=85,  tile=170
+//   - GPT-4o-mini:                      base=2833, tile=5667
+//   - o1, o1-pro, o3:                   base=75,  tile=150
+//   - computer-use-preview:             base=65,  tile=129
+//   - Default (unrecognized models):    base=85,  tile=170 (Same as GPT-4o)
+//
+// Returns the base tokens and tile tokens as integers.
+func getTokensForModel(model string) (baseTokens, tileTokens int) {
+	switch {
+	case strings.Contains(model, "4o") ||
+		strings.Contains(model, "4.1") ||
+		strings.Contains(model, "4.5"):
+		return 85, 170
+	case strings.Contains(model, "4o-mini"):
+		return 2833, 5667
+	case strings.Contains(model, "o1") ||
+		strings.Contains(model, "o1-pro") ||
+		strings.Contains(model, "o3"):
+		return 75, 150
+	case strings.Contains(model, "computer-use-preview"):
+		return 65, 129
+	default:
+		// Default to GPT-4o values
+		return 85, 170
+	}
+}
+
+// Count implements the TokenCounter interface for OpenAiGenerator.
+// It uses the tiktoken-go library to count tokens based on the model without making an API call.
+//
+// The method accounts for:
+//   - System instructions (if set during generator initialization)
+//   - All messages in the dialog with their respective blocks
+//   - Images in the dialog (with accurate token calculation based on dimensions)
+//   - Tool definitions registered with the generator
+//
+// For images, the token count depends on the model and follows OpenAI's token calculation rules:
+//   - For "minimal" models (gpt-4.1-mini, gpt-4.1-nano, o4-mini), tokens are calculated based on 32px patches
+//   - For other models (GPT-4o, GPT-4.1, etc.), tokens depend on image dimensions and detail level
+//
+// Image dimensions are extracted directly from the image data when possible, or from ExtraFields.
+// If dimensions cannot be determined, an error is returned.
+//
+// The context parameter allows for cancellation of long-running counting operations.
+//
+// Returns:
+//   - The total token count as uint
+//   - An error if token counting fails (e.g., unsupported modality, image dimension extraction failure)
+func (g *OpenAiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error) {
+	// Check for context cancellation
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
+
+	if len(dialog) == 0 {
+		return 0, EmptyDialogErr
+	}
+
+	tke, err := tiktoken.EncodingForModel(g.model)
+	if err != nil {
+		tke, err = tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE) // Fallback
+		if err != nil {
+			return 0, fmt.Errorf("failed to get tiktoken encoding: %w", err)
+		}
+	}
+
+	var totalTokens int
+
+	if g.systemInstructions != "" {
+		totalTokens += len(tke.Encode(g.systemInstructions, nil, nil))
+	}
+
+	// See https://platform.openai.com/docs/guides/images-vision?api-mode=chat#calculating-costs
+	for _, msg := range dialog {
+		for _, block := range msg.Blocks {
+			switch block.ModalityType {
+			case Text:
+				contentToTokenize := block.Content.String()
+				totalTokens += len(tke.Encode(contentToTokenize, nil, nil))
+			case Image:
+				// Extract dimensions from the image content
+				imageTokens, err := g.calculateImageTokens(block)
+				if err != nil {
+					return 0, fmt.Errorf("failed to calculate image tokens: %w", err)
+				}
+				totalTokens += imageTokens
+			default:
+				return 0, UnsupportedOutputModalityErr("unsupported modality")
+			}
+		}
+	}
+
+	for _, tool := range g.tools {
+		var toolDefStr string
+		toolDefStr += tool.Function.Name + "\n"
+		toolDefStr += tool.Function.Description.String() + "\n"
+		paramsJSON, err := json.Marshal(tool.Function.Parameters)
+		if err == nil {
+			toolDefStr += string(paramsJSON) + "\n"
+		}
+		totalTokens += len(tke.Encode(toolDefStr, nil, nil))
+	}
+
+	return uint(totalTokens), nil
+}

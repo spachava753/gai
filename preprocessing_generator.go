@@ -2,6 +2,7 @@ package gai
 
 import (
 	"context"
+	"fmt"
 )
 
 // preprocessToolResults consolidates consecutive tool result messages that respond to tool calls
@@ -114,7 +115,36 @@ type PreprocessingGenerator struct {
 	Inner ToolCapableGenerator
 }
 
+// Count implements the TokenCounter interface.
+// It preprocesses the dialog and delegates to the inner generator's Count method.
+//
+// This method performs two key functions:
+//  1. It verifies that the inner generator implements TokenCounter
+//  2. It preprocesses the dialog to normalize tool results in the format expected by the provider
+//
+// The preprocessing step is crucial for accurate token counting with providers like
+// Anthropic and Gemini that expect consolidated tool results, ensuring the token count
+// reflects what will actually be sent during generation.
+//
+// If the inner generator doesn't implement TokenCounter, an error is returned.
+//
+// Parameters:
+//   - ctx: A context for cancellation
+//   - dialog: The dialog to count tokens for
+//
+// Returns:
+//   - The token count as calculated by the inner generator
+//   - An error if preprocessing fails or if the inner generator doesn't support token counting
+func (p *PreprocessingGenerator) Count(ctx context.Context, dialog Dialog) (uint, error) {
+	i, ok := p.Inner.(TokenCounter)
+	if !ok {
+		return 0, fmt.Errorf("inner generator does not implement TokenCounter")
+	}
+	return i.Count(ctx, preprocessToolResults(dialog))
+}
+
 var _ ToolCapableGenerator = (*PreprocessingGenerator)(nil)
+var _ TokenCounter = (*PreprocessingGenerator)(nil)
 
 func (p *PreprocessingGenerator) Register(tool Tool) error {
 	return p.Inner.Register(tool)

@@ -12,7 +12,7 @@ import (
 
 // AnthropicGenerator implements the gai.Generator interface using OpenAI's API
 type AnthropicGenerator struct {
-	client             AnthropicCompletionService
+	client             AnthropicSvc
 	model              string
 	tools              map[string]a.ToolParam
 	systemInstructions string
@@ -608,16 +608,27 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	return result, nil
 }
 
-// (removed, see PreprocessingGenerator wrapper for normalization)
-
-type AnthropicCompletionService interface {
+// AnthropicSvc defines the interface for interacting with the Anthropic API.
+// It requires the methods needed for both generation and token counting.
+//
+// This interface is implemented by the Anthropic SDK's MessageService,
+// allowing for direct use or wrapping with additional functionality
+// (such as caching via AnthropicServiceWrapper).
+type AnthropicSvc interface {
+	// New generates a new message using the Anthropic API
 	New(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error)
+
+	// CountTokens counts tokens for a message without generating a response
+	CountTokens(ctx context.Context, body a.MessageCountTokensParams, opts ...option.RequestOption) (res *a.MessageTokensCount, err error)
 }
 
 // NewAnthropicGenerator creates a new Anthropic generator with the specified model.
 // It returns a ToolCapableGenerator that preprocesses dialog for parallel tool use compatibility.
 // This generator fully supports the anyOf JSON Schema feature.
-func NewAnthropicGenerator(client AnthropicCompletionService, model, systemInstructions string) ToolCapableGenerator {
+func NewAnthropicGenerator(client AnthropicSvc, model, systemInstructions string) interface {
+	ToolCapableGenerator
+	TokenCounter
+} {
 	inner := &AnthropicGenerator{
 		client:             client,
 		systemInstructions: systemInstructions,
@@ -629,3 +640,118 @@ func NewAnthropicGenerator(client AnthropicCompletionService, model, systemInstr
 
 var _ Generator = (*AnthropicGenerator)(nil)
 var _ ToolRegister = (*AnthropicGenerator)(nil)
+var _ TokenCounter = (*AnthropicGenerator)(nil)
+
+// Count implements the TokenCounter interface for AnthropicGenerator.
+// It converts the dialog to Anthropic's format and uses Anthropic's dedicated CountTokens API.
+//
+// Unlike the OpenAI implementation which uses a local tokenizer, this method makes an API call
+// to the Anthropic service. This provides the most accurate token count as it uses exactly
+// the same tokenization logic as the actual generation.
+//
+// The method accounts for:
+//   - System instructions (if set during generator initialization)
+//   - All messages in the dialog with their respective blocks
+//   - Multi-modal content like images
+//   - Tool definitions registered with the generator
+//
+// The context parameter allows for cancellation of the API call.
+//
+// Returns:
+//   - The total token count as uint, representing input tokens only
+//   - An error if the API call fails or if dialog conversion fails
+//
+// Note: Anthropic's CountTokens API returns only input token count. For an estimate of
+// output tokens, you would need to perform a separate calculation.
+func (g *AnthropicGenerator) Count(ctx context.Context, dialog Dialog) (uint, error) {
+	if g.client == nil {
+		return 0, fmt.Errorf("anthropic: client not initialized")
+	}
+
+	if len(dialog) == 0 {
+		return 0, EmptyDialogErr
+	}
+
+	var messages []a.MessageParam
+	for _, msg := range dialog {
+		anthropicMsg, err := toAnthropicMessage(msg)
+		if err != nil {
+			return 0, fmt.Errorf("failed to convert message for token counting: %w", err)
+		}
+		messages = append(messages, anthropicMsg)
+	}
+
+	params := a.MessageCountTokensParams{
+		Messages: messages,
+		Model:    g.model,
+	}
+	// Add system instructions if present
+	if g.systemInstructions != "" {
+		params.System.OfMessageCountTokenssSystemArray = []a.TextBlockParam{
+			{
+				Text: g.systemInstructions,
+			},
+		}
+	}
+
+	for _, tool := range g.tools {
+		params.Tools = append(params.Tools, a.MessageCountTokensToolUnionParam{
+			OfTool: &tool,
+		})
+	}
+
+	resp, err := g.client.CountTokens(ctx, params)
+	if err != nil {
+		// Convert Anthropic SDK error to our error types based on status code
+		var apierr *a.Error
+		if errors.As(err, &apierr) {
+			// Map HTTP status codes to our error types
+			switch apierr.StatusCode {
+			case 401:
+				return 0, AuthenticationErr(apierr.Error())
+			case 403:
+				return 0, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "permission_error",
+					Message:    apierr.Error(),
+				}
+			case 404:
+				return 0, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "not_found_error",
+					Message:    apierr.Error(),
+				}
+			case 413:
+				return 0, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "request_too_large",
+					Message:    apierr.Error(),
+				}
+			case 429:
+				return 0, RateLimitErr(apierr.Error())
+			case 500:
+				return 0, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "api_error",
+					Message:    apierr.Error(),
+				}
+			case 529:
+				return 0, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "overloaded_error",
+					Message:    apierr.Error(),
+				}
+			default:
+				// Default to invalid_request_error for 400 and other status codes
+				return 0, ApiErr{
+					StatusCode: apierr.StatusCode,
+					Type:       "invalid_request_error",
+					Message:    apierr.Error(),
+				}
+			}
+		}
+		return 0, fmt.Errorf("failed to count tokens: %w", err)
+	}
+
+	return uint(resp.InputTokens), nil
+}

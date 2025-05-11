@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"google.golang.org/genai"
+	"maps"
+	"slices"
 )
 
 // MarshalJSONToolUseInput marshals a ToolUseInput, never panics.
@@ -207,8 +209,12 @@ type GeminiGenerator struct {
 
 // NewGeminiGenerator creates a new Gemini generator with the specified API key, model name, and system instructions.
 // Returns a ToolCapableGenerator that preprocesses dialog for parallel tool use compatibility.
-// Example model names: "gemini-1.5-pro", "gemini-1.5-flash"
-// The API key should be a valid Google Gemini API Key.
+// The returned generator also implements the TokenCounter interface for token counting.
+//
+// Parameters:
+//   - client: A properly initialized genai.Client instance with API key configured
+//   - modelName: The Gemini model to use (e.g., "gemini-1.5-pro", "gemini-1.5-flash")
+//   - systemInstructions: Optional system instructions that set the model's behavior
 //
 // Note on JSON Schema support limitations:
 //   - The anyOf property has limited support in Gemini. It only supports the pattern [Type, null] to
@@ -217,12 +223,18 @@ type GeminiGenerator struct {
 //     return errors, as the Gemini SDK doesn't support these patterns.
 //   - For maximum compatibility across all generators, restrict usage of anyOf to the nullable pattern:
 //     e.g., "anyOf": [{"type": "string"}, {"type": "null"}]
-func NewGeminiGenerator(client *genai.Client, modelName, systemInstructions string) (ToolCapableGenerator, error) {
+//
+// Returns a ToolCapableGenerator that also implements TokenCounter, or an error if initialization fails.
+func NewGeminiGenerator(client *genai.Client, modelName, systemInstructions string) (interface {
+	ToolCapableGenerator
+	TokenCounter
+}, error) {
 	inner := &GeminiGenerator{
 		client:             client,
 		modelName:          modelName,
 		systemInstructions: systemInstructions,
 	}
+
 	return &PreprocessingGenerator{Inner: inner}, nil
 }
 
@@ -525,4 +537,123 @@ func prepareGeminiChatHistory(dialog Dialog, toolCallIDToFuncName map[string]str
 	return history, nil
 }
 
+// Count implements the TokenCounter interface for GeminiGenerator.
+// It converts the dialog to Gemini's format and uses Google's official CountTokens API.
+//
+// Like the Anthropic implementation, this method makes an API call to obtain accurate
+// token counts directly from Google's tokenizer. This ensures the count matches exactly
+// what would be used in actual generation.
+//
+// The method accounts for:
+//   - System instructions (if set during generator initialization)
+//   - All messages in the dialog with their respective blocks
+//   - Multi-modal content including text and images
+//   - Tool definitions registered with the generator
+//
+// Special considerations:
+//   - For multi-turn conversations, all dialog turns are included in the count
+//   - The system instructions are prepended to the dialog for accurate counting
+//   - Image tokens are counted based on Google's own token calculation
+//
+// The context parameter allows for cancellation of the API call.
+//
+// Returns:
+//   - The total token count as uint, representing the combined input tokens
+//   - An error if the API call fails or if dialog conversion fails
+//
+// Note: Gemini's CountTokens API returns the total tokens for the entire dialog,
+// including system instructions, unlike some other providers that break this down
+// into more detailed metrics.
+func (g *GeminiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error) {
+	if g.client == nil {
+		return 0, fmt.Errorf("gemini: client not initialized")
+	}
+	if len(dialog) == 0 {
+		return 0, EmptyDialogErr
+	}
+
+	// We'll need a map to track tool call IDs to function names, even though we are not executing tools.
+	// This is because the prepareGeminiChatHistory function requires it.
+	toolCallIDToFunc := make(map[string]string)
+
+	allContents, err := prepareGeminiChatHistory(dialog, toolCallIDToFunc)
+	if err != nil {
+		return 0, fmt.Errorf("failed to prepare gemini chat history for token counting: %w", err)
+	}
+
+	var countTokenConfig genai.CountTokensConfig
+
+	// Add system prompt if provided, as it would be part of the context for the model
+	if g.systemInstructions != "" {
+		// When using the below config, get error "Error counting tokens: gemini: token counting failed: systemInstruction parameter is not supported in Gemini API"
+		//countTokenConfig.SystemInstruction = &genai.Content{
+		//	Parts: []*genai.Part{genai.NewPartFromText(g.systemInstructions)},
+		//}
+		allContents = append([]*genai.Content{
+			{
+				Parts: []*genai.Part{genai.NewPartFromText(g.systemInstructions)},
+				Role:  "model",
+			},
+		}, allContents...)
+	}
+
+	// If tools are registered, attach them
+	if len(g.tools) > 0 {
+		countTokenConfig.Tools = []*genai.Tool{
+			{
+				FunctionDeclarations: slices.Collect(maps.Values(g.tools)),
+			},
+		}
+	}
+
+	resp, err := g.client.Models.CountTokens(ctx, g.modelName, allContents, &countTokenConfig)
+	if err != nil {
+		var apierr *genai.APIError
+		if errors.As(err, &apierr) {
+			// Map HTTP status codes to our error types
+			switch apierr.Code {
+			case 401:
+				return 0, AuthenticationErr(apierr.Error())
+			case 403:
+				return 0, ApiErr{
+					StatusCode: apierr.Code,
+					Type:       "permission_error",
+					Message:    apierr.Error(),
+				}
+			case 404:
+				return 0, ApiErr{
+					StatusCode: apierr.Code,
+					Type:       "not_found_error",
+					Message:    apierr.Error(),
+				}
+			case 429:
+				return 0, RateLimitErr(apierr.Error())
+			case 500:
+				return 0, ApiErr{
+					StatusCode: apierr.Code,
+					Type:       "api_error",
+					Message:    apierr.Error(),
+				}
+			case 503:
+				return 0, ApiErr{
+					StatusCode: apierr.Code,
+					Type:       "service_unavailable",
+					Message:    apierr.Error(),
+				}
+			default:
+				// Default to invalid_request_error for 400 and other status codes
+				return 0, ApiErr{
+					StatusCode: apierr.Code,
+					Type:       "invalid_request_error",
+					Message:    apierr.Error(),
+				}
+			}
+		}
+		return 0, fmt.Errorf("gemini: token counting failed: %w", err)
+	}
+
+	return uint(resp.TotalTokens), nil
+}
+
 var _ Generator = (*GeminiGenerator)(nil)
+var _ TokenCounter = (*GeminiGenerator)(nil)
