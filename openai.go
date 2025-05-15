@@ -20,6 +20,58 @@ import (
 	oai "github.com/openai/openai-go"
 )
 
+func init() {
+	// The tiktoken library does not have the update-to-date mappings of model names to encodings,
+	// so we manually add them here.
+	tiktoken.MODEL_TO_ENCODING["o3"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["o4-mini"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4.1"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4.1-mini"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4.1-nano"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4.1-2025-04-14"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4.1-mini-2025-04-14"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4.1-nano--2025-04-14"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO3Mini] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO3Mini2025_01_31] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1_2024_12_17] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1Preview] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1Preview2024_09_12] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1Mini] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1Mini2024_09_12] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4o] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4o2024_11_20] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4o2024_08_06] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4o2024_05_13] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oAudioPreview] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oAudioPreview2024_10_01] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oAudioPreview2024_12_17] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oMiniAudioPreview] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oMiniAudioPreview2024_12_17] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelChatgpt4oLatest] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oMini] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oMini2024_07_18] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4Turbo] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4Turbo2024_04_09] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_0125Preview] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4TurboPreview] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_1106Preview] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4VisionPreview] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_0314] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_0613] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_32k] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_32k0314] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_32k0613] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo16k] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo0301] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo0613] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo1106] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo0125] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo16k0613] = tiktoken.MODEL_CL100K_BASE
+}
+
 // OpenAiGenerator implements the gai.Generator interface using OpenAI's API
 type OpenAiGenerator struct {
 	client             OpenAICompletionService
