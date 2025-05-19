@@ -4,8 +4,10 @@ go 1.23.2
 
 require (
 	github.com/anthropics/anthropic-sdk-go v0.2.0-beta.3
+	github.com/cenkalti/backoff/v5 v5.0.2
 	github.com/google/go-cmp v0.7.0
 	github.com/openai/openai-go v0.1.0-beta.10
+	github.com/pkoukk/tiktoken-go v0.1.7
 	google.golang.org/genai v1.4.0
 )
 
@@ -19,7 +21,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/pkoukk/tiktoken-go v0.1.7 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
