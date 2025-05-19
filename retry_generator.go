@@ -145,3 +145,16 @@ func (rg *RetryGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 
 // Compile-time check to ensure RetryGenerator implements TokenCounter.
 var _ TokenCounter = (*RetryGenerator)(nil)
+
+// Register attempts to register a tool with the underlying generator, if it supports ToolCapableGenerator.
+// Retries are not applied to this method.
+func (rg *RetryGenerator) Register(tool Tool) error {
+	if tcg, ok := rg.generator.(ToolCapableGenerator); ok {
+		return tcg.Register(tool)
+	}
+	return fmt.Errorf("underlying generator of type %T does not implement ToolCapableGenerator", rg.generator)
+}
+
+// Compile-time check to ensure RetryGenerator implements ToolCapableGenerator.
+// This will only compile if RetryGenerator has the methods of ToolCapableGenerator.
+var _ ToolCapableGenerator = (*RetryGenerator)(nil)

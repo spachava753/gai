@@ -12,10 +12,11 @@ import (
 	"github.com/spachava753/gai"
 )
 
-// mockGenerator is a mock implementation of the gai.Generator and gai.TokenCounter interfaces for testing.
+// mockGenerator is a mock implementation of the gai.Generator, gai.TokenCounter, and gai.ToolCapableGenerator interfaces for testing.
 type mockGenerator struct {
 	GenerateFunc      func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error)
 	CountFunc         func(ctx context.Context, dialog gai.Dialog) (uint, error)
+	RegisterFunc      func(tool gai.Tool) error
 	generateCallCount int
 }
 
@@ -32,6 +33,15 @@ func (m *mockGenerator) Count(ctx context.Context, dialog gai.Dialog) (uint, err
 		return m.CountFunc(ctx, dialog)
 	}
 	return 0, errors.New("CountFunc not implemented")
+}
+
+// Register implements the gai.ToolRegister interface for the mock.
+func (m *mockGenerator) Register(tool gai.Tool) error {
+	if m.RegisterFunc != nil {
+		return m.RegisterFunc(tool)
+	}
+	// This default error helps catch tests where Register is called unexpectedly.
+	return errors.New("mockGenerator.RegisterFunc was not set")
 }
 
 func (m *mockGenerator) ResetCallCount() {
@@ -348,5 +358,78 @@ func TestRetryGenerator_Generate_PermanentError_ContextCanceledByGenerator(t *te
 	}
 	if m.generateCallCount != 1 {
 		t.Errorf("Expected Generate to be called 1 time, got %d", m.generateCallCount)
+	}
+}
+
+// Ensure mockGenerator can satisfy ToolCapableGenerator if its methods are implemented.
+var _ gai.ToolCapableGenerator = (*mockGenerator)(nil)
+
+func TestRetryGenerator_Register_UnderlyingImplementsToolCapableGenerator(t *testing.T) {
+	registeredTool := gai.Tool{Name: "test_tool"}
+	var receivedTool gai.Tool
+	var registerCalled bool
+
+	m := &mockGenerator{
+		RegisterFunc: func(tool gai.Tool) error {
+			registerCalled = true
+			receivedTool = tool
+			if tool.Name == "error_tool" {
+				return errors.New("registration failed")
+			}
+			return nil
+		},
+	}
+
+	rg := gai.NewRetryGenerator(m, nil)
+
+	// Test successful registration
+	err := rg.Register(registeredTool)
+	if err != nil {
+		t.Fatalf("Register() error = %v, wantErr false", err)
+	}
+	if !registerCalled {
+		t.Error("Expected underlying Register to be called")
+	}
+	if receivedTool.Name != registeredTool.Name {
+		t.Errorf("Register() tool.Name = %s, want %s", receivedTool.Name, registeredTool.Name)
+	}
+
+	// Test error from underlying registration
+	registerCalled = false // reset for next call
+	errTool := gai.Tool{Name: "error_tool"}
+	err = rg.Register(errTool)
+	if err == nil {
+		t.Fatal("Register() error = nil, want an error")
+	}
+	if !registerCalled {
+		t.Error("Expected underlying Register to be called even on error")
+	}
+	if err.Error() != "registration failed" {
+		t.Errorf("Register() error = %q, want %q", err.Error(), "registration failed")
+	}
+}
+
+func TestRetryGenerator_Register_UnderlyingDoesNotImplementToolCapableGenerator(t *testing.T) {
+	// Simple generator that only implements gai.Generator, not ToolCapableGenerator
+	type simpleGenerator struct{ gai.Generator }
+	underlyingGen := &simpleGenerator{
+		Generator: &mockGenerator{ // provide a base generate func if needed, or nil
+			GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+				return gai.Response{}, nil
+			},
+		},
+	}
+
+	rg := gai.NewRetryGenerator(underlyingGen, nil)
+	toolToRegister := gai.Tool{Name: "test_tool"}
+
+	err := rg.Register(toolToRegister)
+	if err == nil {
+		t.Fatal("Register() error = nil, want an error for non-ToolCapableGenerator")
+	}
+
+	wantErrStr := fmt.Sprintf("underlying generator of type %T does not implement ToolCapableGenerator", underlyingGen)
+	if err.Error() != wantErrStr {
+		t.Errorf("Register() error = %q, want %q", err.Error(), wantErrStr)
 	}
 }
