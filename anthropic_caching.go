@@ -142,7 +142,7 @@ func EnableSystemCaching(_ context.Context, params *a.MessageNewParams) error {
 	}
 
 	// If extended thinking is enabled, don't cache the system instruction
-	if params.Thinking.OfThinkingConfigEnabled != nil && params.Thinking.OfThinkingConfigEnabled.BudgetTokens > 0 {
+	if params.Thinking.OfEnabled != nil && params.Thinking.OfEnabled.BudgetTokens > 0 {
 		return nil
 	}
 
@@ -183,26 +183,29 @@ func EnableMultiTurnCaching(_ context.Context, params *a.MessageNewParams) error
 	}
 
 	// If extended thinking is enabled, don't cache the messages
-	if params.Thinking.OfThinkingConfigEnabled != nil && params.Thinking.OfThinkingConfigEnabled.BudgetTokens > 0 {
+	if params.Thinking.OfEnabled != nil && params.Thinking.OfEnabled.BudgetTokens > 0 {
 		return nil
 	}
 
 	lastMsg := params.Messages[len(params.Messages)-1]
 	lastContentBlock := lastMsg.Content[len(lastMsg.Content)-1]
 
-	if vt := lastContentBlock.OfRequestTextBlock; vt != nil {
+	if vt := lastContentBlock.OfText; vt != nil {
 		vt.CacheControl = a.CacheControlEphemeralParam{Type: "ephemeral"}
 	}
-	if vt := lastContentBlock.OfRequestImageBlock; vt != nil {
+	if vt := lastContentBlock.OfImage; vt != nil {
 		vt.CacheControl = a.CacheControlEphemeralParam{Type: "ephemeral"}
 	}
-	if vt := lastContentBlock.OfRequestToolUseBlock; vt != nil {
+	if vt := lastContentBlock.OfToolUse; vt != nil {
 		vt.CacheControl = a.CacheControlEphemeralParam{Type: "ephemeral"}
 	}
-	if vt := lastContentBlock.OfRequestToolResultBlock; vt != nil {
+	if vt := lastContentBlock.OfToolResult; vt != nil {
 		vt.CacheControl = a.CacheControlEphemeralParam{Type: "ephemeral"}
 	}
-	if vt := lastContentBlock.OfRequestDocumentBlock; vt != nil {
+	if vt := lastContentBlock.OfDocument; vt != nil {
+		vt.CacheControl = a.CacheControlEphemeralParam{Type: "ephemeral"}
+	}
+	if vt := lastContentBlock.OfServerToolUse; vt != nil {
 		vt.CacheControl = a.CacheControlEphemeralParam{Type: "ephemeral"}
 	}
 	return nil

@@ -17,7 +17,7 @@ func ExampleAnthropicGenerator_Generate() {
 	svc := NewAnthropicServiceWrapper(&client.Messages, EnableSystemCaching)
 
 	// Instantiate an Anthropic Generator
-	gen := NewAnthropicGenerator(svc, a.ModelClaude3_5HaikuLatest, "You are a helpful assistant")
+	gen := NewAnthropicGenerator(svc, string(a.ModelClaude3_5HaikuLatest), "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -60,7 +60,7 @@ func ExampleAnthropicGenerator_Generate_thinking() {
 	client := a.NewClient()
 
 	// Instantiate an Anthropic Generator
-	gen := NewAnthropicGenerator(&client.Messages, a.ModelClaude3_7SonnetLatest, "You are a helpful assistant")
+	gen := NewAnthropicGenerator(&client.Messages, string(a.ModelClaude3_7SonnetLatest), "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -125,7 +125,7 @@ func ExampleAnthropicGenerator_Generate_image() {
 
 	gen := NewAnthropicGenerator(
 		&client.Messages,
-		a.ModelClaude3_7SonnetLatest,
+		string(a.ModelClaude3_7SonnetLatest),
 		"You are a helpful assistant.",
 	)
 	dialog := Dialog{
@@ -171,7 +171,7 @@ func ExampleAnthropicGenerator_Register() {
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
 		svc,
-		a.ModelClaude_3_5_Sonnet_20240620,
+		string(a.ModelClaude_3_5_Sonnet_20240620),
 		`You are a helpful assistant that returns the price of a stock and nothing else.
 
 Only output the price, like
@@ -272,7 +272,7 @@ func ExampleAnthropicGenerator_Register_parallelToolUse() {
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
 		&client.Messages,
-		a.ModelClaude3_5SonnetLatest,
+		string(a.ModelClaude3_5SonnetLatest),
 		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
 Only mention one of the stock tickers and nothing else.
 
@@ -358,7 +358,7 @@ func ExampleAnthropicGenerator_Count() {
 	// Create a generator with system instructions
 	generator := NewAnthropicGenerator(
 		&client.Messages,
-		a.ModelClaude3_5SonnetLatest,
+		string(a.ModelClaude3_5SonnetLatest),
 		"You are a helpful assistant.",
 	)
 

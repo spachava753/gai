@@ -78,7 +78,7 @@ func (f *FallbackGenerator) Generate(ctx context.Context, dialog Dialog, options
 	// Try each generator in sequence
 	for _, generator := range f.generators {
 		response, err := generator.Generate(ctx, dialog, options)
-		
+
 		// If no error, return the successful response
 		if err == nil {
 			return response, nil
@@ -92,7 +92,7 @@ func (f *FallbackGenerator) Generate(ctx context.Context, dialog Dialog, options
 			// If this is not a fallback-worthy error, return it immediately
 			return Response{}, err
 		}
-		
+
 		// Otherwise, continue to the next generator
 	}
 

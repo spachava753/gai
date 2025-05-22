@@ -258,7 +258,7 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 			}
 
 			got, err := fallbackGen.Generate(context.Background(), tt.dialog, tt.options)
-			
+
 			// Check error cases
 			if (err != nil) != tt.wantErr {
 				t.Errorf("FallbackGenerator.Generate() error = %v, wantErr %v", err, tt.wantErr)
@@ -296,26 +296,26 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 
 func TestNewHTTPStatusFallbackConfig(t *testing.T) {
 	config := NewHTTPStatusFallbackConfig(400, 429)
-	
+
 	// Should fallback on rate limit errors
 	if !config.ShouldFallback(RateLimitErr("rate limit exceeded")) {
 		t.Error("Expected to fallback on rate limit errors")
 	}
-	
+
 	// Should fallback on specified status codes
 	if !config.ShouldFallback(ApiErr{StatusCode: 400}) {
 		t.Error("Expected to fallback on status code 400")
 	}
-	
+
 	if !config.ShouldFallback(ApiErr{StatusCode: 429}) {
 		t.Error("Expected to fallback on status code 429")
 	}
-	
+
 	// Should not fallback on other status codes
 	if config.ShouldFallback(ApiErr{StatusCode: 404}) {
 		t.Error("Expected not to fallback on status code 404")
 	}
-	
+
 	if config.ShouldFallback(ApiErr{StatusCode: 500}) {
 		t.Error("Expected not to fallback on status code 500 when not specified")
 	}
@@ -323,17 +323,17 @@ func TestNewHTTPStatusFallbackConfig(t *testing.T) {
 
 func TestNewRateLimitOnlyFallbackConfig(t *testing.T) {
 	config := NewRateLimitOnlyFallbackConfig()
-	
+
 	// Should fallback on rate limit errors
 	if !config.ShouldFallback(RateLimitErr("rate limit exceeded")) {
 		t.Error("Expected to fallback on rate limit errors")
 	}
-	
+
 	// Should not fallback on other errors
 	if config.ShouldFallback(errors.New("some other error")) {
 		t.Error("Expected not to fallback on non-rate-limit errors")
 	}
-	
+
 	// Should not fallback on API errors, even with 429 status code
 	if config.ShouldFallback(ApiErr{StatusCode: 429}) {
 		t.Error("Expected not to fallback on API errors with 429 status code")
@@ -358,7 +358,7 @@ func ExampleFallbackGenerator() {
 			},
 		},
 	}
-	
+
 	anthropicGen := &mockGenerator{
 		response: Response{
 			Candidates: []Message{
@@ -375,7 +375,7 @@ func ExampleFallbackGenerator() {
 			},
 		},
 	}
-	
+
 	// Create a fallback generator that will try OpenAI first, then fallback to Anthropic
 	// This example makes it fallback on 400 errors too, not just 500s
 	fallbackGen, _ := NewFallbackGenerator(
@@ -384,7 +384,7 @@ func ExampleFallbackGenerator() {
 			ShouldFallback: NewHTTPStatusFallbackConfig(400, 429, 500, 502, 503, 504).ShouldFallback,
 		},
 	)
-	
+
 	// Now we can use the fallback generator just like any other generator
 	dialog := Dialog{
 		{
@@ -398,13 +398,13 @@ func ExampleFallbackGenerator() {
 			},
 		},
 	}
-	
+
 	resp, err := fallbackGen.Generate(context.Background(), dialog, nil)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
 	}
-	
+
 	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Blocks) > 0 {
 		fmt.Println(resp.Candidates[0].Blocks[0].Content)
 	}

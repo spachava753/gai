@@ -17,7 +17,7 @@ func Example_mixGenerators() {
 	// Create generators for each provider
 	anthropicGen := NewAnthropicGenerator(
 		&anthropicClient.Messages,
-		a.ModelClaude_3_5_Sonnet_20240620,
+		string(a.ModelClaude_3_5_Sonnet_20240620),
 		"You are Claude, a helpful AI assistant from Anthropic. Always mention you are Claude in your responses.",
 	)
 

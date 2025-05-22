@@ -1,6 +1,7 @@
 package gai
 
 import (
+	"reflect"
 	"testing"
 
 	a "github.com/anthropics/anthropic-sdk-go"
@@ -276,12 +277,8 @@ func TestConvertToolToAnthropic(t *testing.T) {
 			got := convertToolToAnthropic(tt.tool)
 
 			// Use deep comparison for complex structures
-			if diff := cmp.Diff(tt.want, got, sortFieldsFn, cmpopts.IgnoreUnexported(
-				a.ToolParam{},
-				a.ToolInputSchemaParam{},
-				a.CacheControlEphemeralParam{},
-			)); diff != "" {
-				t.Errorf("convertToolToAnthropic() mismatch (-want +got):\n%s", diff)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("convertToolToAnthropic() mismatch; want:\n%s\ngot:\n%s\n", tt.want, got)
 			}
 		})
 	}

@@ -2,7 +2,7 @@ package gai
 
 import (
 	"testing"
-	
+
 	oai "github.com/openai/openai-go"
 )
 
@@ -305,35 +305,35 @@ func TestToOpenAIMessage(t *testing.T) {
 				t.Errorf("toOpenAIMessage() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			if !tt.wantErr {
 				// Custom comparison that ignores unexported fields
 				// This approach checks only the message types and key properties,
 				// without attempting to compare the unexported fields of the complex
-				// OpenAI SDK types such as the internal implementations of Opt[T] 
+				// OpenAI SDK types such as the internal implementations of Opt[T]
 				// and other generic structures.
 				//
 				// We're specifically checking that the message role (User, Assistant, Tool)
 				// matches, and for specific message types, we verify relevant fields like
 				// tool call IDs and tool function names.
-				
+
 				// Check if the role/message type matches
 				if (got.OfUser != nil) != (tt.want.OfUser != nil) ||
-				   (got.OfAssistant != nil) != (tt.want.OfAssistant != nil) ||
-				   (got.OfTool != nil) != (tt.want.OfTool != nil) ||
-				   (got.OfSystem != nil) != (tt.want.OfSystem != nil) {
+					(got.OfAssistant != nil) != (tt.want.OfAssistant != nil) ||
+					(got.OfTool != nil) != (tt.want.OfTool != nil) ||
+					(got.OfSystem != nil) != (tt.want.OfSystem != nil) {
 					t.Errorf("toOpenAIMessage() returned wrong message type")
 					return
 				}
-				
+
 				// For tool call messages, verify tool call ID matches
 				if got.OfTool != nil && tt.want.OfTool != nil {
 					if got.OfTool.ToolCallID != tt.want.OfTool.ToolCallID {
-						t.Errorf("Tool call ID mismatch: got %v, want %v", 
+						t.Errorf("Tool call ID mismatch: got %v, want %v",
 							got.OfTool.ToolCallID, tt.want.OfTool.ToolCallID)
 					}
 				}
-				
+
 				// For assistant messages with tool calls, verify tool call info
 				if got.OfAssistant != nil && tt.want.OfAssistant != nil {
 					// Check if both have tool calls
@@ -341,11 +341,11 @@ func TestToOpenAIMessage(t *testing.T) {
 						t.Errorf("Tool calls presence mismatch")
 						return
 					}
-					
+
 					// If they have tool calls, verify basic properties
 					if len(got.OfAssistant.ToolCalls) > 0 && len(tt.want.OfAssistant.ToolCalls) > 0 {
 						if got.OfAssistant.ToolCalls[0].ID != tt.want.OfAssistant.ToolCalls[0].ID ||
-						   got.OfAssistant.ToolCalls[0].Function.Name != tt.want.OfAssistant.ToolCalls[0].Function.Name {
+							got.OfAssistant.ToolCalls[0].Function.Name != tt.want.OfAssistant.ToolCalls[0].Function.Name {
 							t.Errorf("Tool call details mismatch")
 						}
 					}

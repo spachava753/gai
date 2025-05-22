@@ -633,6 +633,6 @@ func ExampleOpenAiGenerator_Count() {
 
 	fmt.Printf("Dialog with response contains %d tokens\n", tokenCount)
 
-	// Output: Dialog contains 15 tokens
-	// Dialog with response contains 55 tokens
+	// Output: Dialog contains 13 tokens
+	// Dialog with response contains 48 tokens
 }

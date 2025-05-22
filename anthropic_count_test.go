@@ -26,7 +26,7 @@ func (m *mockAnthropicSvc) CountTokens(ctx context.Context, params a.MessageCoun
 	m.lastToolsCount = len(params.Tools)
 
 	// Check if system is present
-	m.lastSystemPresent = len(params.System.OfMessageCountTokenssSystemArray) > 0
+	m.lastSystemPresent = len(params.System.OfTextBlockArray) > 0
 
 	// Return mock result
 	return &a.MessageTokensCount{
