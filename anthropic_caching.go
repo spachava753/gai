@@ -4,6 +4,7 @@ import (
 	"context"
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 )
 
 // AnthropicServiceParamModifierFunc is a function type that modifies Anthropic API parameters
@@ -51,7 +52,7 @@ type AnthropicServiceWrapper struct {
 	wrapped AnthropicSvc
 }
 
-// New implements the AnthropicSvc interface by applying all registered
+// NewStreaming implements the AnthropicSvc interface by applying all registered
 // parameter modifier functions to the request parameters before passing them to the
 // wrapped service.
 //
@@ -60,25 +61,23 @@ type AnthropicServiceWrapper struct {
 //
 // After all modifiers have been successfully applied, the modified parameters are
 // passed to the wrapped service's New method.
-func (a AnthropicServiceWrapper) New(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error) {
-	for _, f := range a.funcs {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+func (svc AnthropicServiceWrapper) NewStreaming(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (stream *ssestream.Stream[a.MessageStreamEventUnion]) {
+	for _, f := range svc.funcs {
+		if ctx.Err() != nil {
+			return ssestream.NewStream[a.MessageStreamEventUnion](nil, ctx.Err())
 		}
 		if err := f(ctx, &params); err != nil {
-			return nil, err
+			return ssestream.NewStream[a.MessageStreamEventUnion](nil, err)
 		}
 	}
-	return a.wrapped.New(ctx, params, opts...)
+	return svc.wrapped.NewStreaming(ctx, params, opts...)
 }
 
 // CountTokens forwards token counting requests to the wrapped service.
 // This method simply passes the request through without applying any modifiers.
-func (a AnthropicServiceWrapper) CountTokens(ctx context.Context, params a.MessageCountTokensParams, opts ...option.RequestOption) (res *a.MessageTokensCount, err error) {
+func (svc AnthropicServiceWrapper) CountTokens(ctx context.Context, params a.MessageCountTokensParams, opts ...option.RequestOption) (res *a.MessageTokensCount, err error) {
 	// Forward the request to the wrapped service
-	return a.wrapped.CountTokens(ctx, params, opts...)
+	return svc.wrapped.CountTokens(ctx, params, opts...)
 }
 
 // NewAnthropicServiceWrapper creates a new wrapper around an Anthropic API client

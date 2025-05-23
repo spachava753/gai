@@ -2,6 +2,7 @@ package gai
 
 import (
 	"context"
+	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"testing"
 
 	a "github.com/anthropics/anthropic-sdk-go"
@@ -15,8 +16,8 @@ type mockAnthropicSvc struct {
 	lastSystemPresent bool
 }
 
-func (m *mockAnthropicSvc) New(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error) {
-	return nil, nil
+func (m *mockAnthropicSvc) NewStreaming(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (stream *ssestream.Stream[a.MessageStreamEventUnion]) {
+	return nil
 }
 
 func (m *mockAnthropicSvc) CountTokens(ctx context.Context, params a.MessageCountTokensParams, opts ...option.RequestOption) (res *a.MessageTokensCount, err error) {

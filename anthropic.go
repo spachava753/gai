@@ -7,6 +7,7 @@ import (
 	"fmt"
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"strconv"
 )
 
@@ -454,9 +455,20 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		params.Tools = tools
 	}
 
-	// Make the API call
-	resp, err := g.client.New(ctx, params)
-	if err != nil {
+	// Use message streaming, as the anthropic sdk *forces* us to use streaming for large models,
+	// even if we _want_ to just the standard http request. As such, we will simply use streaming
+	// for all models to keep things simple
+	stream := g.client.NewStreaming(ctx, params)
+	var resp a.Message
+	for stream.Next() {
+		event := stream.Current()
+		err := resp.Accumulate(event)
+		if err != nil {
+			return Response{}, err
+		}
+	}
+
+	if err := stream.Err(); err != nil {
 		// Convert Anthropic SDK error to our error types based on status code
 		var apierr *a.Error
 		if errors.As(err, &apierr) {
@@ -610,8 +622,8 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 // allowing for direct use or wrapping with additional functionality
 // (such as caching via AnthropicServiceWrapper).
 type AnthropicSvc interface {
-	// New generates a new message using the Anthropic API
-	New(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error)
+	// NewStreaming generates a new streaming message using the Anthropic API
+	NewStreaming(ctx context.Context, body a.MessageNewParams, opts ...option.RequestOption) (stream *ssestream.Stream[a.MessageStreamEventUnion])
 
 	// CountTokens counts tokens for a message without generating a response
 	CountTokens(ctx context.Context, body a.MessageCountTokensParams, opts ...option.RequestOption) (res *a.MessageTokensCount, err error)
