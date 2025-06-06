@@ -463,7 +463,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 			if len(options.StopSequences) == 1 {
 				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfString: oai.String(options.StopSequences[0])}
 			} else {
-				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfChatCompletionNewsStopArray: options.StopSequences}
+				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfStringArray: options.StopSequences}
 			}
 		}
 
