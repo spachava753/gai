@@ -288,6 +288,68 @@ func ExampleGeminiGenerator_Generate_image() {
 	// Output: true
 }
 
+func ExampleGeminiGenerator_Generate_audio() {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
+		return
+	}
+
+	audioBytes, err := os.ReadFile("sample.wav")
+	if err != nil {
+		fmt.Println("[Skipped: could not open sample.wav]")
+		return
+	}
+	// Encode as base64 for inline audio usage
+	audioBase64 := Str(base64.StdEncoding.EncodeToString(audioBytes))
+
+	ctx := context.Background()
+	client, err := genai.NewClient(
+		ctx,
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
+	)
+
+	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-06-05", "You are a helpful assistant.")
+	if err != nil {
+		fmt.Println("Error creating GeminiGenerator:", err)
+		return
+	}
+
+	// Using inline audio data
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Audio,
+					MimeType:     "audio/wav",
+					Content:      audioBase64,
+				},
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("What is the name of person in the greeting in this audio? Return a one work response of the name"),
+				},
+			},
+		},
+	}
+
+	response, err := g.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
+		fmt.Println(strings.ToLower(response.Candidates[0].Blocks[0].Content.String()))
+	}
+
+	// Output: friday
+}
+
 func ExampleGeminiGenerator_Register_parallelToolUse() {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {

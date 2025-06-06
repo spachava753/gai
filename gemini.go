@@ -9,6 +9,7 @@ import (
 	"google.golang.org/genai"
 	"maps"
 	"slices"
+	"strings"
 )
 
 // MarshalJSONToolUseInput marshals a ToolUseInput, never panics.
@@ -216,6 +217,11 @@ type GeminiGenerator struct {
 //   - modelName: The Gemini model to use (e.g., "gemini-1.5-pro", "gemini-1.5-flash")
 //   - systemInstructions: Optional system instructions that set the model's behavior
 //
+// Supported modalities:
+//   - Text: Both input and output
+//   - Image: Input only (base64 encoded)
+//   - Audio: Input only (base64 encoded)
+//
 // Note on JSON Schema support limitations:
 //   - The anyOf property has limited support in Gemini. It only supports the pattern [Type, null] to
 //     indicate nullable fields, which is implemented using Schema.Nullable=true.
@@ -393,6 +399,30 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 					MimeType:     "text/plain",
 					Content:      Str(part.Text),
 				})
+			} else if part.InlineData != nil {
+				// Handle inline data (could be image, audio, video)
+				mimeType := part.InlineData.MIMEType
+				data := base64.StdEncoding.EncodeToString(part.InlineData.Data)
+
+				// Determine modality based on MIME type
+				var modality Modality
+				if strings.HasPrefix(mimeType, "image/") {
+					modality = Image
+				} else if strings.HasPrefix(mimeType, "audio/") {
+					modality = Audio
+				} else if strings.HasPrefix(mimeType, "video/") {
+					modality = Video
+				} else {
+					// Default to text for unknown types
+					modality = Text
+				}
+
+				blocks = append(blocks, Block{
+					BlockType:    Content,
+					ModalityType: modality,
+					MimeType:     mimeType,
+					Content:      Str(data),
+				})
 			} else if part.FunctionCall != nil {
 				fc := part.FunctionCall
 				hasToolCalls = true
@@ -459,6 +489,12 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 					return nil, fmt.Errorf("decoding image content failed: %w", decodeErr)
 				}
 				parts = append(parts, genai.NewPartFromBytes(fileContent, block.MimeType))
+			case Audio:
+				fileContent, decodeErr := base64.StdEncoding.DecodeString(block.Content.String())
+				if decodeErr != nil {
+					return nil, fmt.Errorf("decoding audio content failed: %w", decodeErr)
+				}
+				parts = append(parts, genai.NewPartFromBytes(fileContent, block.MimeType))
 			default:
 				return nil, fmt.Errorf("unsupported modality type in user message: %v", block.ModalityType)
 			}
@@ -466,8 +502,19 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 	case Assistant:
 		role = genai.RoleModel
 		for _, block := range msg.Blocks {
-			if block.BlockType == Content && block.ModalityType == Text {
-				parts = append(parts, genai.NewPartFromText(block.Content.String()))
+			if block.BlockType == Content {
+				switch block.ModalityType {
+				case Text:
+					parts = append(parts, genai.NewPartFromText(block.Content.String()))
+				case Audio:
+					fileContent, decodeErr := base64.StdEncoding.DecodeString(block.Content.String())
+					if decodeErr != nil {
+						return nil, fmt.Errorf("decoding audio content failed: %w", decodeErr)
+					}
+					parts = append(parts, genai.NewPartFromBytes(fileContent, block.MimeType))
+				default:
+					// Skip unsupported modalities for assistant messages
+				}
 			}
 			if block.BlockType == ToolCall && block.ModalityType == Text {
 				// Unmarshal to get function name, params

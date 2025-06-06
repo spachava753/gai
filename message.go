@@ -164,6 +164,22 @@ func ImageBlock(data []byte, mimeType string) Block {
 	}
 }
 
+// AudioBlock creates an audio content block with the given base64-encoded data and MIME type.
+// This is a convenience function for creating audio blocks.
+//
+// Example:
+//
+//	block := AudioBlock(audioData, "audio/mp3")
+func AudioBlock(data []byte, mimeType string) Block {
+	base64Data := base64.StdEncoding.EncodeToString(data)
+	return Block{
+		BlockType:    Content,
+		ModalityType: Audio,
+		MimeType:     mimeType,
+		Content:      Str(base64Data),
+	}
+}
+
 // ToolCallBlock creates a tool call block with the given ID, tool name, and parameters.
 // The parameters are automatically marshaled to JSON.
 //
