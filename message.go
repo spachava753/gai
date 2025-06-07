@@ -180,6 +180,31 @@ func AudioBlock(data []byte, mimeType string) Block {
 	}
 }
 
+const BlockFieldFilenameKey = "filename"
+
+// PDFBlock creates a PDF content block with the given base64-encoded data and filename.
+// This is a convenience function for creating PDF blocks compatible with all providers.
+//
+// PDFs are treated as a special type of image modality by model providers. The PDF is converted to a series
+// of images at the provider API level. For OpenAI, supplying a filename is required for PDF file input.
+//
+// Example:
+//
+//	pdfData, _ := os.ReadFile("paper.pdf")
+//	block := PDFBlock(pdfData, "paper.pdf")
+func PDFBlock(data []byte, filename string) Block {
+	base64Data := base64.StdEncoding.EncodeToString(data)
+	return Block{
+		BlockType:    Content,
+		ModalityType: Image,
+		MimeType:     "application/pdf",
+		Content:      Str(base64Data),
+		ExtraFields: map[string]interface{}{
+			BlockFieldFilenameKey: filename,
+		},
+	}
+}
+
 // ToolCallBlock creates a tool call block with the given ID, tool name, and parameters.
 // The parameters are automatically marshaled to JSON.
 //

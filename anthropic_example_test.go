@@ -409,3 +409,51 @@ func ExampleAnthropicGenerator_Count() {
 	// Output: Dialog contains approximately 20 tokens
 	// Dialog with response contains approximately 42 tokens
 }
+
+func ExampleAnthropicGenerator_Generate_pdf() {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set ANTHROPIC_API_KEY env]")
+		return
+	}
+
+	// This example assumes that sample.pdf is present in the current directory.
+	pdfBytes, err := os.ReadFile("sample.pdf")
+	if err != nil {
+		fmt.Println("[Skipped: could not open sample.pdf]")
+		return
+	}
+
+	client := a.NewClient()
+
+	gen := NewAnthropicGenerator(
+		&client.Messages,
+		string(a.ModelClaudeSonnet4_0),
+		"You are a helpful assistant.",
+	)
+
+	// Create a dialog with PDF content
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				TextBlock("What is the title of this PDF? Just output the title and nothing else"),
+				PDFBlock(pdfBytes, "paper.pdf"),
+			},
+		},
+	}
+
+	// Generate a response
+	ctx := context.Background()
+	response, err := gen.Generate(ctx, dialog, &GenOpts{MaxGenerationTokens: 1024})
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	// The response would contain the model's analysis of the PDF
+	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
+		fmt.Println(response.Candidates[0].Blocks[0].Content)
+	}
+	// Output: Attention Is All You Need
+}

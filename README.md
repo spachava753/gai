@@ -31,7 +31,7 @@
 ## Features
 
 - Unified API across different LLM providers
-- Support for text, image, and audio modalities (provider dependent)
+- Support for text, image, audio, and PDF modalities (provider dependent)
 - Tool integration with JSON Schema-based parameters
 - Callback-based tool execution
 - Automatic fallback strategies for reliability
@@ -441,6 +441,67 @@ func main() {
 }
 ```
 
+### Working with PDFs
+
+`gai` supports PDF documents as a special case of the Image modality. PDFs are automatically converted to images at the model provider's API level:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+    "github.com/openai/openai-go"
+    "github.com/spachava753/gai"
+)
+
+func main() {
+    // Read a PDF file
+    pdfData, err := os.ReadFile("document.pdf")
+    if err != nil {
+        fmt.Printf("Error reading PDF: %v\n", err)
+        return
+    }
+    
+    // Create an OpenAI client and generator
+    client := openai.NewClient()
+    generator := gai.NewOpenAiGenerator(
+        &client.Chat.Completions,
+        openai.ChatModelGPT4o,
+        "You are a helpful document analyst.",
+    )
+    
+    // Create a dialog with PDF content
+    dialog := gai.Dialog{
+        {
+            Role: gai.User,
+            Blocks: []gai.Block{
+                gai.TextBlock("Please summarize this PDF document:"),
+                gai.PDFBlock(pdfData, "document.pdf"),
+            },
+        },
+    }
+    
+    // Generate a response
+    response, err := generator.Generate(context.Background(), dialog, nil)
+    if err != nil {
+        fmt.Printf("Error: %v\n", err)
+        return
+    }
+    
+    // Print the response
+    if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
+        fmt.Println(response.Candidates[0].Blocks[0].Content)
+    }
+}
+```
+
+PDF support notes:
+- OpenAI Token counting: PDF token counting is not supported and will return an error when using the TokenCounter interface
+- When creating a PDF block, you must provide both the PDF data and a filename, e.g. PDFBlock(data, "paper.pdf")
+- All providers: PDFs are converted to images server-side, so exact page dimensions are not known
+
 ## Provider Support
 
 ### OpenAI
@@ -448,7 +509,7 @@ func main() {
 The OpenAI implementation supports:
 
 - Text generation
-- Image inputs
+- Image inputs (including PDFs)
 - Audio inputs
 - Tool calling
 
@@ -462,7 +523,7 @@ import (
 
 client := openai.NewClient()
 generator := gai.NewOpenAiGenerator(
-    client.Chat.Completions,
+    &client.Chat.Completions,
     openai.ChatModelGPT4,
     "System instructions here.",
 )
@@ -473,7 +534,7 @@ generator := gai.NewOpenAiGenerator(
 The Anthropic implementation supports:
 
 - Text generation
-- Image inputs
+- Image inputs (including PDFs with special handling)
 - Tool calling
 
 Initialize with:
@@ -486,8 +547,35 @@ import (
 
 client := anthropic.NewClient()
 generator := gai.NewAnthropicGenerator(
-    client.Messages,
+    &client.Messages,
     "claude-3-opus-20240229",
+    "System instructions here.",
+)
+```
+
+### Gemini
+
+The Gemini implementation supports:
+
+- Text generation
+- Image inputs (including PDFs)
+- Audio inputs
+- Tool calling
+
+Initialize with:
+
+```go
+import (
+    "google.golang.org/genai"
+    "github.com/spachava753/gai"
+)
+
+client, err := genai.NewClient(ctx, &genai.ClientConfig{
+    APIKey: "your-api-key",
+})
+generator, err := gai.NewGeminiGenerator(
+    client,
+    "gemini-1.5-pro",
     "System instructions here.",
 )
 ```

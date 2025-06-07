@@ -200,13 +200,30 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 				if block.MimeType == "" {
 					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("image block missing mimetype")
 				}
+
 				dataUrl := fmt.Sprintf("data:%s;base64,%s",
 					block.MimeType,
 					block.Content.String())
 
-				parts = append(parts, oai.ImageContentPart(oai.ChatCompletionContentPartImageImageURLParam{
-					URL: dataUrl,
-				}))
+				switch block.MimeType {
+				case "application/pdf":
+					val, ok := block.ExtraFields[BlockFieldFilenameKey]
+					if !ok {
+						return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("filename field missing in extra fields")
+					}
+					filename, ok := val.(string)
+					if !ok {
+						return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("filename field is not a string")
+					}
+					parts = append(parts, oai.FileContentPart(oai.ChatCompletionContentPartFileFileParam{
+						FileData: oai.String(dataUrl),
+						Filename: oai.String(filename),
+					}))
+				default:
+					parts = append(parts, oai.ImageContentPart(oai.ChatCompletionContentPartImageImageURLParam{
+						URL: dataUrl,
+					}))
+				}
 			case Audio:
 				// Convert audio content to an audio input part
 				if block.MimeType == "" {
@@ -729,12 +746,15 @@ type OpenAICompletionService interface {
 //
 // Supported modalities:
 //   - Text: Both input and output
-//   - Image: Input only (base64 encoded)
+//   - Image: Input only (base64 encoded, including PDFs with MIME type "application/pdf")
 //   - Audio: Input only (base64 encoded, WAV and MP3 formats)
 //
 // For audio input, use models with audio support like:
 //   - openai.ChatModelGPT4oAudioPreview
 //   - openai.ChatModelGPT4oMiniAudioPreview
+//
+// PDF documents are supported as a special case of the Image modality. Use the PDFBlock
+// helper function to create PDF content blocks.
 //
 // This generator fully supports the anyOf JSON Schema feature.
 func NewOpenAiGenerator(client OpenAICompletionService, model, systemInstructions string) OpenAiGenerator {
@@ -761,6 +781,9 @@ var _ OpenAICompletionService = (*oai.ChatCompletionService)(nil)
 // If extraction from image data fails, it tries to get dimensions from ExtraFields.
 // If dimensions still cannot be determined, an error is returned.
 //
+// PDFs are not supported for token counting as they are converted to images server-side
+// and exact dimensions cannot be determined.
+//
 // The detail level ("high" or "low") is determined from ExtraFields if specified,
 // with "high" being the default.
 //
@@ -772,6 +795,11 @@ var _ OpenAICompletionService = (*oai.ChatCompletionService)(nil)
 //   - The number of tokens as an integer
 //   - An error if dimensions cannot be determined or if calculation fails
 func (g *OpenAiGenerator) calculateImageTokens(block Block) (int, error) {
+	// PDFs are not supported for token counting
+	if block.MimeType == "application/pdf" {
+		return 0, fmt.Errorf("PDF token counting is not supported")
+	}
+
 	var width, height int
 	var detail string = "high" // Default to high detail
 
@@ -994,11 +1022,14 @@ func getTokensForModel(model string) (baseTokens, tileTokens int) {
 // Image dimensions are extracted directly from the image data when possible, or from ExtraFields.
 // If dimensions cannot be determined, an error is returned.
 //
+// Note: PDF token counting is not supported and will return an error. This is because PDFs are
+// converted to images server-side and exact dimensions cannot be determined.
+//
 // The context parameter allows for cancellation of long-running counting operations.
 //
 // Returns:
 //   - The total token count as uint
-//   - An error if token counting fails (e.g., unsupported modality, image dimension extraction failure)
+//   - An error if token counting fails (e.g., unsupported modality, image dimension extraction failure, PDF input)
 func (g *OpenAiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error) {
 	// Check for context cancellation
 	select {

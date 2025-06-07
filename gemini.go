@@ -219,8 +219,12 @@ type GeminiGenerator struct {
 //
 // Supported modalities:
 //   - Text: Both input and output
-//   - Image: Input only (base64 encoded)
+//   - Image: Input only (base64 encoded, including PDFs with MIME type "application/pdf")
 //   - Audio: Input only (base64 encoded)
+//
+// PDF documents are supported as part of the Image modality. The PDF content is sent
+// with the appropriate MIME type and processed by Gemini's multimodal capabilities.
+// Use the PDFBlock helper function to create PDF content blocks.
 //
 // Note on JSON Schema support limitations:
 //   - The anyOf property has limited support in Gemini. It only supports the pattern [Type, null] to

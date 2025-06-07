@@ -694,3 +694,51 @@ func ExampleOpenAiGenerator_Count() {
 	// Output: Dialog contains 13 tokens
 	// Dialog with response contains 48 tokens
 }
+
+func ExampleOpenAiGenerator_Generate_pdf() {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
+		return
+	}
+
+	pdfBytes, err := os.ReadFile("sample.pdf")
+	if err != nil {
+		fmt.Println("[Skipped: could not open sample.wav]")
+		return
+	}
+
+	client := openai.NewClient(
+		option.WithAPIKey(apiKey),
+	)
+	gen := NewOpenAiGenerator(
+		&client.Chat.Completions,
+		openai.ChatModelGPT4_1,
+		"You are a helpful assistant.",
+	)
+
+	// Create a dialog with PDF content
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				TextBlock("What is the title of this PDF? Just output the title and nothing else"),
+				PDFBlock(pdfBytes, "sample.pdf"),
+			},
+		},
+	}
+
+	// Generate a response
+	ctx := context.Background()
+	response, err := gen.Generate(ctx, dialog, nil)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	// The response would contain the model's analysis of the PDF
+	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
+		fmt.Println(response.Candidates[0].Blocks[0].Content)
+	}
+	// Output: Attention Is All You Need
+}

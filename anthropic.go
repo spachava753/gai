@@ -139,7 +139,16 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 					return a.MessageParam{}, fmt.Errorf("image media missing mimetype")
 				}
 
-				parts = append(parts, a.NewImageBlockBase64(block.MimeType, block.Content.String()))
+				// Special handling for PDFs using NewDocumentBlock
+				if block.MimeType == "application/pdf" {
+					parts = append(parts, a.NewDocumentBlock(
+						a.Base64PDFSourceParam{
+							Data: block.Content.String(),
+						},
+					))
+				} else {
+					parts = append(parts, a.NewImageBlockBase64(block.MimeType, block.Content.String()))
+				}
 			default:
 				return a.MessageParam{}, UnsupportedInputModalityErr(block.ModalityType.String())
 			}
@@ -632,6 +641,21 @@ type AnthropicSvc interface {
 // NewAnthropicGenerator creates a new Anthropic generator with the specified model.
 // It returns a ToolCapableGenerator that preprocesses dialog for parallel tool use compatibility.
 // This generator fully supports the anyOf JSON Schema feature.
+//
+// Parameters:
+//   - client: An Anthropic service client
+//   - model: The Anthropic model to use (e.g., "claude-3-5-sonnet-20241022")
+//   - systemInstructions: Optional system instructions that set the model's behavior
+//
+// Supported modalities:
+//   - Text: Both input and output
+//   - Image: Input only (base64 encoded, including PDFs with MIME type "application/pdf")
+//
+// PDF documents are handled specially using Anthropic's NewDocumentBlock function,
+// which provides optimized PDF processing. Use the PDFBlock helper function to
+// create PDF content blocks.
+//
+// The returned generator also implements the TokenCounter interface for token counting.
 func NewAnthropicGenerator(client AnthropicSvc, model, systemInstructions string) interface {
 	ToolCapableGenerator
 	TokenCounter

@@ -61,7 +61,12 @@ func ExampleGeminiGenerator_Register() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-03-25", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(
+		client,
+		"gemini-2.5-flash-preview-05-20",
+		`You are a helpful assistant. You can call tools in parallel. 
+When a user asks for the server time, always call the server time tool, don't use previously returned results`,
+	)
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -366,7 +371,7 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-03-25", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash-preview-05-20", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -490,4 +495,58 @@ func ExampleGeminiGenerator_Count() {
 
 	// Output: Dialog contains approximately 15 tokens
 	// Dialog with image contains approximately 270 tokens
+}
+
+func ExampleGeminiGenerator_Generate_pdf() {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
+		return
+	}
+
+	ctx := context.Background()
+	client, err := genai.NewClient(
+		ctx,
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
+	)
+
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash-preview-05-20", "You are a helpful assistant.")
+	if err != nil {
+		fmt.Println("Error creating GeminiGenerator:", err)
+		return
+	}
+
+	// This example assumes that sample.pdf is present in the current directory.
+	pdfBytes, err := os.ReadFile("sample.pdf")
+	if err != nil {
+		fmt.Println("[Skipped: could not open sample.pdf]")
+		return
+	}
+
+	// Create a dialog with PDF content
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				TextBlock("What is the title of this PDF? Just output the title and nothing else"),
+				PDFBlock(pdfBytes, "paper.pdf"),
+			},
+		},
+	}
+
+	// Generate a response
+	response, err := g.Generate(ctx, dialog, &GenOpts{MaxGenerationTokens: 1024})
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	// The response would contain the model's analysis of the PDF
+	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
+		fmt.Println(response.Candidates[0].Blocks[0].Content)
+	}
+	// Output: Attention Is All You Need
 }
