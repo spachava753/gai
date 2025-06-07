@@ -17,6 +17,10 @@
 !README.md
 !LICENSE
 
+!sample.pdf
+!sample.wav
+!sample.jpg
+
 # !Makefile
 
 # ...even if they are in subdirectories

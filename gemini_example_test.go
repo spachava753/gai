@@ -228,11 +228,11 @@ func ExampleGeminiGenerator_Generate_image() {
 	}
 
 	// ---
-	// This example assumes that Guycrood.jpg is present in the current directory.
-	// Place a JPEG image named Guycrood.jpg in the same directory as this file (or adjust the path).
-	imgBytes, err := os.ReadFile("Guycrood.jpg")
+	// This example assumes that sample.jpg is present in the current directory.
+	// Place a JPEG image named sample.jpg in the same directory as this file (or adjust the path).
+	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
-		fmt.Println("[Skipped: could not open Guycrood.jpg]")
+		fmt.Println("[Skipped: could not open sample.jpg]")
 		return
 	}
 	// Encode as base64 for API usage
@@ -457,7 +457,7 @@ func ExampleGeminiGenerator_Count() {
 	fmt.Printf("Dialog contains approximately %d tokens\n", tokenCount)
 
 	// Try to load an image to add to the dialog
-	imgPath := "Guycrood.jpg"
+	imgPath := "sample.jpg"
 	imgBytes, err := os.ReadFile(imgPath)
 	if err != nil {
 		fmt.Printf("Image file not found, skipping image token count example\n")

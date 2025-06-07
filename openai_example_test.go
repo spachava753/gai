@@ -16,9 +16,9 @@ func ExampleOpenAiGenerator_Generate_image() {
 		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
 		return
 	}
-	imgBytes, err := os.ReadFile("Guycrood.jpg")
+	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
-		fmt.Println("[Skipped: could not open Guycrood.jpg]")
+		fmt.Println("[Skipped: could not open sample.jpg]")
 		return
 	}
 	imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))

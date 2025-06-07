@@ -113,10 +113,10 @@ func ExampleAnthropicGenerator_Generate_image() {
 		return
 	}
 
-	// This example assumes that Guycrood.jpg is present in the current directory.
-	imgBytes, err := os.ReadFile("Guycrood.jpg")
+	// This example assumes that sample.jpg is present in the current directory.
+	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
-		fmt.Println("[Skipped: could not open Guycrood.jpg]")
+		fmt.Println("[Skipped: could not open sample.jpg]")
 		return
 	}
 	imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))
