@@ -720,6 +720,22 @@ type OpenAICompletionService interface {
 }
 
 // NewOpenAiGenerator creates a new OpenAI generator with the specified model.
+// The returned generator implements the Generator, ToolRegister, and TokenCounter interfaces.
+//
+// Parameters:
+//   - client: An OpenAI completion service (typically &client.Chat.Completions)
+//   - model: The OpenAI model to use (e.g., "gpt-4o", "gpt-4o-audio-preview")
+//   - systemInstructions: Optional system instructions that set the model's behavior
+//
+// Supported modalities:
+//   - Text: Both input and output
+//   - Image: Input only (base64 encoded)
+//   - Audio: Input only (base64 encoded, WAV and MP3 formats)
+//
+// For audio input, use models with audio support like:
+//   - openai.ChatModelGPT4oAudioPreview
+//   - openai.ChatModelGPT4oMiniAudioPreview
+//
 // This generator fully supports the anyOf JSON Schema feature.
 func NewOpenAiGenerator(client OpenAICompletionService, model, systemInstructions string) OpenAiGenerator {
 	return OpenAiGenerator{

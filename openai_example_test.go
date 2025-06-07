@@ -64,6 +64,64 @@ func ExampleOpenAiGenerator_Generate_image() {
 	// Output: true
 }
 
+func ExampleOpenAiGenerator_Generate_audio() {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
+		return
+	}
+
+	audioBytes, err := os.ReadFile("sample.wav")
+	if err != nil {
+		fmt.Println("[Skipped: could not open sample.wav]")
+		return
+	}
+	// Encode as base64 for inline audio usage
+	audioBase64 := Str(base64.StdEncoding.EncodeToString(audioBytes))
+
+	client := openai.NewClient(
+		option.WithAPIKey(apiKey),
+	)
+	gen := NewOpenAiGenerator(
+		&client.Chat.Completions,
+		openai.ChatModelGPT4oAudioPreview,
+		"You are a helpful assistant.",
+	)
+
+	// Using inline audio data
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Audio,
+					MimeType:     "audio/wav",
+					Content:      audioBase64,
+				},
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("What is the name of person in the greeting in this audio? Return a one word response of the name"),
+				},
+			},
+		},
+	}
+
+	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{
+		MaxGenerationTokens: 128,
+	})
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Blocks) > 0 {
+		fmt.Println(strings.ToLower(resp.Candidates[0].Blocks[0].Content.String()))
+	}
+
+	// Output: friday
+}
+
 func ExampleOpenAiGenerator_Generate() {
 	// Create an OpenAI client
 	apiKey := os.Getenv("OPENAI_API_KEY")
