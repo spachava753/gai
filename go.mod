@@ -6,6 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.4.0
 	github.com/cenkalti/backoff/v5 v5.0.2
 	github.com/google/go-cmp v0.7.0
+	github.com/matoous/go-nanoid/v2 v2.1.0
 	github.com/openai/openai-go v1.3.0
 	github.com/pkoukk/tiktoken-go v0.1.7
 	google.golang.org/genai v1.10.0
