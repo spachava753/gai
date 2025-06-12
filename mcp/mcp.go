@@ -31,9 +31,6 @@ import (
 // from a single goroutine, then use the client's request methods and Notifications
 // channel from multiple goroutines safely.
 type Client struct {
-	// user-visible
-	Notifications <-chan RpcMessage // receives ALL server notifications
-
 	// private notification channel (write end)
 	notifications chan RpcMessage
 
@@ -82,7 +79,6 @@ func NewClient(transport Transport, options Options) *Client {
 	c := &Client{
 		transport:     transport,
 		notifications: notifications,
-		Notifications: notifications,
 		outbound:      outbound,
 		idGen:         NewIDGenerator(),
 		done:          make(chan struct{}),
@@ -580,25 +576,6 @@ func (c *Client) PingWithTimeout(timeout time.Duration) error {
 	return c.Ping(ctx)
 }
 
-// StartPeriodicPing starts periodic ping to keep connection alive
-// Thread-safe - can be called concurrently, starts a background goroutine.
-func (c *Client) StartPeriodicPing(ctx context.Context, interval time.Duration) {
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				// Ignore ping errors - connection issues will be handled elsewhere
-				_ = c.PingWithTimeout(5 * time.Second)
-			}
-		}
-	}()
-}
-
 // SetLoggingLevel sets the server logging level
 // Thread-safe - can be called concurrently after initialization.
 func (c *Client) SetLoggingLevel(ctx context.Context, level string) error {
@@ -619,6 +596,12 @@ func (c *Client) CancelRequest(requestID RequestID, reason string) error {
 	}
 
 	return c.Notify("notifications/cancelled", params)
+}
+
+// Notifications is a read only channel that returns all notifications sent from the mcp server
+// Thread-safe - can be called concurrently after initialization.
+func (c *Client) Notifications() <-chan RpcMessage {
+	return c.notifications
 }
 
 // GetIDGenerator returns the ID generator (for advanced use)
