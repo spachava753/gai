@@ -2,12 +2,9 @@ package mcp_test
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -15,6 +12,8 @@ import (
 
 	"github.com/spachava753/gai"
 	"github.com/spachava753/gai/mcp"
+
+	"golang.org/x/oauth2"
 )
 
 func TestClient_BasicFlow(t *testing.T) {
@@ -249,77 +248,12 @@ func TestClient_StreamableHTTP_Integration(t *testing.T) {
 	t.Logf("Successfully called tool '%s' with question '%s' on repo %s.", askQuestionTool.Name, args["question"], args["repoName"])
 }
 
-func TestClient_HTTPSSE_AuthCodeGrant_Integration(t *testing.T) {
-	// This test connects to an authenticated MCP server using OAuth Authorization Code Grant with PKCE.
-	// It demonstrates the full OAuth flow including:
-	//   1. Server metadata discovery
-	//   2. Optional dynamic client registration
-	//   3. Authorization Code Grant with PKCE
-	//   4. Token exchange
-	//   5. Authenticated MCP requests
-	//
-	// To run this test:
-	//   Option 1: Set MCP_TEST_ACCESS_TOKEN to skip OAuth and use existing token
-	//   Option 2: Set MCP_TEST_CLIENT_ID to use pre-registered client
-	//   Option 3: Leave empty to attempt dynamic client registration
-	//
-	// The test will:
-	//   1. Start a local HTTP server for OAuth callback
-	//   2. Generate authorization URL with PKCE
-	//   3. Wait for user to authorize in browser
-	//   4. Exchange authorization code for access token
-	//   5. Make authenticated MCP requests
-
+func TestClient_HTTPSSE_DynamicClientRegistration_Integration(t *testing.T) {
 	if os.Getenv("ENABLE_MANUAL_TESTS") != "true" {
 		t.Skip("Skipping test, requires manual input due to browser access")
 	}
 
-	// Check for existing credentials
-	clientID := os.Getenv("MCP_TEST_CLIENT_ID")
-	clientSecret := os.Getenv("MCP_TEST_CLIENT_SECRET")
-	accessToken := os.Getenv("MCP_TEST_ACCESS_TOKEN")
-
-	serverURL := "https://ai-gateway.mcp.cloudflare.com/sse"
-
-	// If we already have an access token, use it directly
-	if accessToken != "" {
-		t.Log("Using provided access token, skipping OAuth flow")
-
-		config := mcp.HTTPConfig{
-			URL: serverURL,
-			Headers: map[string]string{
-				"Authorization": "Bearer " + accessToken,
-			},
-		}
-
-		transport := mcp.NewHTTP(config)
-
-		ctx := context.Background()
-		clientInfo := mcp.ClientInfo{
-			Name:    "test-client-auth-code-grant",
-			Version: "1.0.0",
-		}
-		capabilities := mcp.ClientCapabilities{}
-
-		client, err := mcp.NewClient(ctx, transport, clientInfo, capabilities, mcp.DefaultOptions())
-		if err != nil {
-			t.Fatalf("Failed to create client: %v", err)
-		}
-		defer client.Close()
-
-		// List tools
-		tools, err := client.ListTools(ctx)
-		if err != nil {
-			t.Fatalf("Failed to list tools: %v", err)
-		}
-
-		if len(tools) == 0 {
-			t.Fatal("Expected tools list to be non-empty")
-		}
-
-		t.Logf("Successfully fetched %d tools", len(tools))
-		return
-	}
+	serverUrl := "https://ai-gateway.mcp.cloudflare.com/sse"
 
 	// Perform full OAuth Authorization Code Grant flow
 	t.Log("Starting OAuth Authorization Code Grant flow with PKCE")
@@ -328,36 +262,23 @@ func TestClient_HTTPSSE_AuthCodeGrant_Integration(t *testing.T) {
 	redirectPort := "18456"
 	redirectURI := "http://localhost:" + redirectPort + "/callback"
 
-	// Create auth manager for metadata discovery
-	authConfig := mcp.AuthConfig{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		RedirectURI:  redirectURI,
-	}
-
-	authManager := mcp.NewAuthManager(authConfig)
-
 	// Discover server metadata
 	t.Log("Discovering OAuth server metadata...")
-	metadata, err := authManager.DiscoverServerMetadata(ctx, serverURL)
+	metadataEndpoint, err := mcp.DefaultMetadataEndpoint(serverUrl)
+	if err != nil {
+		t.Fatalf("Failed to create metadata endpoint: %v", err)
+	}
+	metadata, err := mcp.DiscoverServerMetadata(ctx, metadataEndpoint, mcp.ProtocolVersion, http.DefaultClient)
 	if err != nil {
 		t.Logf("Metadata discovery failed: %v", err)
 		t.Log("Using default OAuth endpoints")
-
-		// Use default endpoints
-		baseURL, _ := getBaseURL(serverURL)
-		authConfig.AuthorizationEndpoint = baseURL + "/authorize"
-		authConfig.TokenEndpoint = baseURL + "/token"
-		authConfig.RegistrationEndpoint = baseURL + "/register"
-		authManager = mcp.NewAuthManager(authConfig)
+		//
+		metadata, err = mcp.FallbackServerMetadata(serverUrl)
+		if err != nil {
+			t.Fatalf("Failed to discover server metadata: %v", err)
+		}
 	} else {
 		t.Log("Successfully discovered server metadata")
-		authConfig.AuthorizationEndpoint = metadata.AuthorizationEndpoint
-		authConfig.TokenEndpoint = metadata.TokenEndpoint
-		authConfig.RegistrationEndpoint = metadata.RegistrationEndpoint
-		authManager = mcp.NewAuthManager(authConfig)
-
-		// Log discovered endpoints
 		t.Logf("  Authorization: %s", metadata.AuthorizationEndpoint)
 		t.Logf("  Token: %s", metadata.TokenEndpoint)
 		if metadata.RegistrationEndpoint != "" {
@@ -365,43 +286,41 @@ func TestClient_HTTPSSE_AuthCodeGrant_Integration(t *testing.T) {
 		}
 	}
 
-	// Dynamic client registration if no client ID
-	if clientID == "" {
-		if authConfig.RegistrationEndpoint == "" {
-			t.Skip("No client ID provided and dynamic registration not available")
-		}
-
-		t.Log("Attempting dynamic client registration...")
-		registration, err := authManager.RegisterClient(ctx, authConfig.RegistrationEndpoint, "mcp-test-client")
-		if err != nil {
-			t.Fatalf("Dynamic client registration failed: %v", err)
-		}
-
-		t.Logf("Successfully registered client: %s", registration.ClientID)
-		clientID = registration.ClientID
-		clientSecret = registration.ClientSecret
-
-		// Update auth manager with new credentials
-		authConfig.ClientID = clientID
-		authConfig.ClientSecret = clientSecret
-		authManager = mcp.NewAuthManager(authConfig)
-	}
-
-	// Generate PKCE parameters
-	codeVerifier, codeChallenge, err := mcp.GeneratePKCE()
+	t.Log("Attempting dynamic client registration...")
+	dynamicClient, err := mcp.DynamicRegistration(
+		ctx,
+		metadata.RegistrationEndpoint,
+		[]string{redirectURI},
+		"mcp-test-client",
+		http.DefaultClient,
+	)
 	if err != nil {
-		t.Fatalf("Failed to generate PKCE: %v", err)
+		t.Fatalf("Dynamic client registration failed: %v", err)
 	}
-	t.Log("Generated PKCE challenge")
 
-	// Generate state for CSRF protection
-	state := generateRandomState()
+	t.Logf("Successfully registered client: %s", dynamicClient.ClientID)
 
-	// Generate authorization URL
-	authURL, err := authManager.GetAuthorizationURL(state, codeChallenge)
-	if err != nil {
-		t.Fatalf("Failed to generate authorization URL: %v", err)
+	conf := &oauth2.Config{
+		ClientID:     dynamicClient.ClientID,
+		ClientSecret: dynamicClient.ClientSecret,
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  metadata.AuthorizationEndpoint,
+			TokenURL: metadata.TokenEndpoint,
+		},
+		RedirectURL: redirectURI,
 	}
+
+	// use PKCE to protect against CSRF attacks
+	// https://www.ietf.org/archive/id/draft-ietf-oauth-security-topics-22.html#name-countermeasures-6
+	verifier := oauth2.GenerateVerifier()
+
+	// Generate authorization URL\
+	state := "state"
+	authCodeURL := conf.AuthCodeURL(
+		state,
+		oauth2.AccessTypeOffline,
+		oauth2.S256ChallengeOption(verifier),
+	)
 
 	// Set up OAuth callback server
 	authCodeChan := make(chan string, 1)
@@ -478,14 +397,9 @@ func TestClient_HTTPSSE_AuthCodeGrant_Integration(t *testing.T) {
 	t.Log("=== OAuth Authorization Required ===")
 	t.Logf("Please visit the following URL to authorize:")
 	t.Logf("")
-	t.Logf("  %s", authURL)
+	t.Logf("  %s", authCodeURL)
 	t.Logf("")
 	t.Log("Waiting for authorization (timeout: 2 minutes)...")
-
-	// For automated testing, check if we should open browser
-	if os.Getenv("MCP_TEST_OPEN_BROWSER") == "true" {
-		t.Log("Note: Automatic browser opening not implemented")
-	}
 
 	// Wait for authorization with timeout
 	var authCode string
@@ -501,22 +415,20 @@ func TestClient_HTTPSSE_AuthCodeGrant_Integration(t *testing.T) {
 
 	// Exchange authorization code for access token
 	t.Log("Exchanging authorization code for access token...")
-	tokenResp, err := authManager.ExchangeCode(ctx, authCode, codeVerifier)
+	tok, err := conf.Exchange(ctx, authCode, oauth2.VerifierOption(verifier))
 	if err != nil {
 		t.Fatalf("Failed to exchange code for token: %v", err)
 	}
 
 	t.Log("Successfully obtained access token")
-	if tokenResp.ExpiresIn > 0 {
-		t.Logf("Token expires in %d seconds", tokenResp.ExpiresIn)
+	if tok.ExpiresIn > 0 {
+		t.Logf("Token expires in %d seconds", tok.ExpiresIn)
 	}
 
 	// Now use the access token with MCP
 	config := mcp.HTTPConfig{
-		URL: serverURL,
-		Headers: map[string]string{
-			"Authorization": "Bearer " + tokenResp.AccessToken,
-		},
+		URL:        serverUrl,
+		HTTPClient: conf.Client(context.WithValue(context.Background(), oauth2.HTTPClient, http.DefaultClient), tok),
 	}
 
 	transport := mcp.NewHTTP(config)
@@ -549,25 +461,4 @@ func TestClient_HTTPSSE_AuthCodeGrant_Integration(t *testing.T) {
 	for i, tool := range tools {
 		t.Logf("  %d. %s", i+1, tool.Name)
 	}
-
-	// Optionally display the access token for manual testing
-	if os.Getenv("MCP_TEST_SHOW_TOKEN") == "true" {
-		t.Logf("Access token for reuse: %s", tokenResp.AccessToken)
-	}
-}
-
-// Helper function to generate random state for CSRF protection
-func generateRandomState() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return base64.URLEncoding.EncodeToString(b)
-}
-
-// Helper function to get base URL from a full URL
-func getBaseURL(fullURL string) (string, error) {
-	u, err := url.Parse(fullURL)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s://%s", u.Scheme, u.Host), nil
 }

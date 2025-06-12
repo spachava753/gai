@@ -10,6 +10,7 @@ require (
 	github.com/openai/openai-go v1.3.0
 	github.com/pkoukk/tiktoken-go v0.1.7
 	github.com/stretchr/testify v1.10.0
+	golang.org/x/oauth2 v0.30.0
 	google.golang.org/genai v1.10.0
 )
 

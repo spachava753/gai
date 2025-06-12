@@ -1,4 +1,3 @@
-// This file contains the core types and constants for the Model Context Protocol.
 package mcp
 
 import (
