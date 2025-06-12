@@ -8,119 +8,215 @@ import (
 	"github.com/spachava753/gai"
 )
 
-// ToolAdapter adapts MCP tools to gai.Tool format
-type ToolAdapter struct {
-	client *Client
-	tool   Tool
-}
-
-// NewToolAdapter creates a new adapter for an MCP tool
-func NewToolAdapter(client *Client, tool Tool) *ToolAdapter {
-	return &ToolAdapter{
-		client: client,
-		tool:   tool,
+// convertMCPToolToGAITool converts an MCP tool definition to a GAI tool definition
+// This allows MCP tools to be registered with the tool generator
+func convertMCPToolToGAITool(mcpTool tool) (gai.Tool, error) {
+	// Create a basic GAI tool with name and description
+	gaiTool := gai.Tool{
+		Name:        mcpTool.Name,
+		Description: mcpTool.Description,
+		InputSchema: gai.InputSchema{
+			Type: gai.Object, // Default type
+		},
 	}
+
+	// Validate input schema type
+	if mcpTool.InputSchema.Type != "object" {
+		return gai.Tool{}, fmt.Errorf("unsupported schema type: %s (only 'object' is supported)", mcpTool.InputSchema.Type)
+	}
+
+	// Copy required fields directly
+	gaiTool.InputSchema.Required = mcpTool.InputSchema.Required
+
+	// Convert properties
+	if len(mcpTool.InputSchema.Properties) > 0 {
+		gaiTool.InputSchema.Properties = make(map[string]gai.Property)
+		for propName, propValue := range mcpTool.InputSchema.Properties {
+			propMap, ok := propValue.(map[string]interface{})
+			if !ok {
+				return gai.Tool{}, fmt.Errorf("property '%s' is not a valid object", propName)
+			}
+
+			prop, err := convertProperty(propMap)
+			if err != nil {
+				return gai.Tool{}, fmt.Errorf("failed to convert property '%s': %w", propName, err)
+			}
+
+			gaiTool.InputSchema.Properties[propName] = prop
+		}
+	}
+
+	return gaiTool, nil
 }
 
-// ToGaiTool converts the MCP tool to a gai.Tool
-func (a *ToolAdapter) ToGaiTool() gai.Tool {
-	// Convert MCP InputSchema to gai.InputSchema
-	var gaiSchema gai.InputSchema
-
-	if a.tool.InputSchema.Type == "object" {
-		gaiSchema.Type = gai.Object
-		gaiSchema.Properties = make(map[string]gai.Property)
-
-		// Convert properties
-		for name, prop := range a.tool.InputSchema.Properties {
-			gaiSchema.Properties[name] = a.convertProperty(prop)
+// convertProperty converts a single property from MCP format to GAI format
+func convertProperty(propMap map[string]interface{}) (gai.Property, error) {
+	// Check for anyOf first - this has priority over "type"
+	if anyOf, ok := propMap["anyOf"].([]interface{}); ok && len(anyOf) > 0 {
+		property := gai.Property{
+			Description: "", // Will be updated later if a description exists
 		}
 
-		gaiSchema.Required = a.tool.InputSchema.Required
+		// Handle anyOf field
+		properties := make([]gai.Property, len(anyOf))
+		for i, typeOption := range anyOf {
+			// Handle different formats of the anyOf options
+			switch typeDef := typeOption.(type) {
+			case map[string]interface{}:
+				// Standard object format, convert recursively
+				typeProp, err := convertProperty(typeDef)
+				if err != nil {
+					return gai.Property{}, fmt.Errorf("failed to convert anyOf option: %w", err)
+				}
+				properties[i] = typeProp
+
+			case map[string]string:
+				// Simple map with just a type field
+				if typeVal, ok := typeDef["type"]; ok {
+					properties[i] = gai.Property{Type: stringToGAIType(typeVal)}
+				} else {
+					return gai.Property{}, fmt.Errorf("anyOf option map does not contain type: %v", typeDef)
+				}
+
+			case string:
+				// Just a string type name
+				properties[i] = gai.Property{Type: stringToGAIType(typeDef)}
+
+			default:
+				return gai.Property{}, fmt.Errorf("anyOf option has unsupported format: %T %v", typeOption, typeOption)
+			}
+		}
+
+		property.AnyOf = properties
+
+		// Add description if present
+		if descStr, ok := propMap["description"].(string); ok {
+			property.Description = descStr
+		}
+
+		return property, nil
 	}
 
-	return gai.Tool{
-		Name:        a.tool.Name,
-		Description: a.tool.Description,
-		InputSchema: gaiSchema,
-	}
-}
-
-// convertProperty converts an MCP property to gai.Property
-func (a *ToolAdapter) convertProperty(prop interface{}) gai.Property {
-	propMap, ok := prop.(map[string]interface{})
+	// If no anyOf, proceed with normal type-based conversion
+	// Extract the type
+	typeStr, ok := propMap["type"].(string)
 	if !ok {
-		return gai.Property{Type: gai.String}
+		return gai.Property{}, fmt.Errorf("property type is missing or not a string")
 	}
 
-	var result gai.Property
+	// Create a new property
+	property := gai.Property{}
 
-	// Get type
-	if typeStr, ok := propMap["type"].(string); ok {
-		switch typeStr {
-		case "string":
-			result.Type = gai.String
-		case "number":
-			result.Type = gai.Number
-		case "integer":
-			result.Type = gai.Integer
-		case "boolean":
-			result.Type = gai.Boolean
-		case "array":
-			result.Type = gai.Array
-		case "object":
-			result.Type = gai.Object
+	// Convert the property type
+	property.Type = stringToGAIType(typeStr)
+	if property.Type == gai.Null && typeStr != "null" {
+		return gai.Property{}, fmt.Errorf("unsupported property type: %s", typeStr)
+	}
+
+	// Add description if present
+	if descStr, ok := propMap["description"].(string); ok {
+		property.Description = descStr
+	}
+
+	// Handle enumerations for string properties
+	if property.Type == gai.String && propMap["enum"] != nil {
+		switch enumValues := propMap["enum"].(type) {
+		case []string:
+			property.Enum = make([]string, len(enumValues))
+			for i, val := range enumValues {
+				property.Enum[i] = val
+			}
+		case []interface{}:
+			property.Enum = make([]string, len(enumValues))
+			for i, val := range enumValues {
+				strVal, isString := val.(string)
+				if !isString {
+					return gai.Property{}, fmt.Errorf("unexpected enum value type: %T %v", val, val)
+				}
+				property.Enum[i] = strVal
+			}
 		default:
-			result.Type = gai.String
+			return gai.Property{}, fmt.Errorf("enum value is not a []string")
 		}
 	}
 
-	// Get description
-	if desc, ok := propMap["description"].(string); ok {
-		result.Description = desc
-	}
+	// Handle nested objects
+	if property.Type == gai.Object {
+		propProperties, ok := propMap["properties"].(map[string]interface{})
+		if ok {
+			property.Properties = make(map[string]gai.Property)
+			for subPropName, subPropValue := range propProperties {
+				subPropMap, ok := subPropValue.(map[string]interface{})
+				if !ok {
+					return gai.Property{}, fmt.Errorf("sub-property '%s' is not a valid object", subPropName)
+				}
 
-	// Get enum values
-	if enum, ok := propMap["enum"].([]interface{}); ok {
-		result.Enum = make([]string, len(enum))
-		for i, v := range enum {
-			result.Enum[i] = fmt.Sprintf("%v", v)
-		}
-	}
+				subProp, err := convertProperty(subPropMap)
+				if err != nil {
+					return gai.Property{}, fmt.Errorf("failed to convert sub-property '%s': %w", subPropName, err)
+				}
 
-	// Handle nested properties for objects
-	if result.Type == gai.Object {
-		if props, ok := propMap["properties"].(map[string]interface{}); ok {
-			result.Properties = make(map[string]gai.Property)
-			for name, prop := range props {
-				result.Properties[name] = a.convertProperty(prop)
+				property.Properties[subPropName] = subProp
 			}
 		}
 
-		if required, ok := propMap["required"].([]interface{}); ok {
-			result.Required = make([]string, len(required))
-			for i, r := range required {
-				result.Required[i] = r.(string)
+		// Handle required fields for objects
+		if required, ok := propMap["required"]; ok {
+			// Try as []string first
+			if requiredStrings, ok := required.([]string); ok && len(requiredStrings) > 0 {
+				property.Required = requiredStrings
+			} else if requiredValues, ok := required.([]interface{}); ok && len(requiredValues) > 0 {
+				// If not []string, try as []interface{} and convert to []string
+				property.Required = make([]string, len(requiredValues))
+				for i, val := range requiredValues {
+					if strVal, ok := val.(string); ok {
+						property.Required[i] = strVal
+					} else {
+						return gai.Property{}, fmt.Errorf("required field is not a string")
+					}
+				}
 			}
 		}
 	}
 
-	// Handle array items
-	if result.Type == gai.Array {
-		if items, ok := propMap["items"].(map[string]interface{}); ok {
-			itemProp := a.convertProperty(items)
-			result.Items = &itemProp
+	// Handle arrays
+	if property.Type == gai.Array {
+		itemsMap, ok := propMap["items"].(map[string]interface{})
+		if !ok {
+			return gai.Property{}, fmt.Errorf("array items schema is missing or invalid")
 		}
+
+		itemsProp, err := convertProperty(itemsMap)
+		if err != nil {
+			return gai.Property{}, fmt.Errorf("failed to convert array items: %w", err)
+		}
+
+		property.Items = &itemsProp
 	}
 
-	return result
+	return property, nil
 }
 
-// CreateCallback creates a gai.ToolCallback for this tool
-func (a *ToolAdapter) CreateCallback() gai.ToolCallback {
-	return &toolCallback{
-		client:   a.client,
-		toolName: a.tool.Name,
+// stringToGAIType converts a string type representation to a gai.PropertyType
+func stringToGAIType(typeStr string) gai.PropertyType {
+	switch typeStr {
+	case "string":
+		return gai.String
+	case "number":
+		return gai.Number
+	case "integer":
+		return gai.Integer
+	case "boolean":
+		return gai.Boolean
+	case "object":
+		return gai.Object
+	case "array":
+		return gai.Array
+	case "null":
+		return gai.Null
+	default:
+		// Default to Null for unknown types
+		return gai.Null
 	}
 }
 
@@ -193,25 +289,22 @@ func (c *toolCallback) Call(ctx context.Context, parametersJSON json.RawMessage,
 	}, nil
 }
 
-// RegisterMCPToolsWithGenerator registers all MCP tools with a gai generator
+// RegisterMCPToolsWithGenerator registers all MCP tools returned by the server
+// with the provided gai.ToolGenerator. It converts each MCP tool description
+// (already returned in gai.Tool form) into a callback that proxies execution
+// through the MCP client.
 func RegisterMCPToolsWithGenerator(ctx context.Context, client *Client, toolGen *gai.ToolGenerator) error {
-	// List available tools
 	tools, err := client.ListTools(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list MCP tools: %w", err)
 	}
 
-	// Register each tool
-	for _, tool := range tools {
-		adapter := NewToolAdapter(client, tool)
-		gaiTool := adapter.ToGaiTool()
-		callback := adapter.CreateCallback()
-
-		if err := toolGen.Register(gaiTool, callback); err != nil {
-			return fmt.Errorf("failed to register tool %s: %w", tool.Name, err)
+	for _, t := range tools {
+		cb := &toolCallback{client: client, toolName: t.Name}
+		if err := toolGen.Register(t, cb); err != nil {
+			return fmt.Errorf("failed to register tool %s: %w", t.Name, err)
 		}
 	}
-
 	return nil
 }
 

@@ -129,8 +129,8 @@ type RootsListResult struct {
 	Roots []Root `json:"roots"`
 }
 
-// Tool represents a tool definition
-type Tool struct {
+// tool represents a tool definition
+type tool struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description,omitempty"`
 	InputSchema InputSchema `json:"inputSchema"`
@@ -143,9 +143,9 @@ type InputSchema struct {
 	Required   []string               `json:"required,omitempty"`
 }
 
-// ToolsListResult represents the result of a tools/list request
-type ToolsListResult struct {
-	Tools []Tool `json:"tools"`
+// toolsListResult represents the result of a tools/list request
+type toolsListResult struct {
+	Tools []tool `json:"tools"`
 }
 
 // Resource represents a resource

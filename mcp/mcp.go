@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/spachava753/gai"
 	"sync"
 	"time"
 )
@@ -355,7 +357,7 @@ func (c *Client) GetInstructions() string {
 // Tool-related methods
 
 // ListTools lists available tools
-func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
+func (c *Client) ListTools(ctx context.Context) ([]gai.Tool, error) {
 	if !c.IsInitialized() {
 		return nil, ErrNotInitialized
 	}
@@ -365,15 +367,25 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 		return nil, err
 	}
 
-	var listResult ToolsListResult
+	var listResult toolsListResult
 	if err := ParseResult(result, &listResult); err != nil {
 		return nil, err
 	}
 
-	return listResult.Tools, nil
+	// Convert internal tool definitions to gai.tool for public API
+	converted := make([]gai.Tool, len(listResult.Tools))
+	for i, t := range listResult.Tools {
+		converted[i], err = convertMCPToolToGAITool(t)
+		if err != nil {
+			return nil, fmt.Errorf("cannot convert tool %s to gai.Tool type", t.Name)
+		}
+	}
+
+	return converted, nil
 }
 
-// CallTool calls a tool
+// CallTool calls a tool by name. The arguments map must conform to the tool's input schema.
+// The return value is provider-defined and may be of any JSON-compatible type.
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (any, error) {
 	if !c.IsInitialized() {
 		return nil, ErrNotInitialized

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spachava753/gai"
 	"github.com/spachava753/gai/mcp"
 )
 
@@ -177,7 +178,7 @@ func TestClient_HTTPSSE_Integration(t *testing.T) {
 	t.Logf("Successfully fetched %d tools.", len(tools))
 
 	// Find the search tool
-	var searchTool *mcp.Tool
+	var searchTool *gai.Tool
 	for i, tool := range tools {
 		if tool.Name == "search_cloudflare_documentation" {
 			searchTool = &tools[i]
@@ -243,7 +244,7 @@ func TestClient_StreamableHTTP_Integration(t *testing.T) {
 	t.Logf("Successfully fetched %d tools.", len(tools))
 
 	// Find the search tool
-	var askQuestionTool *mcp.Tool
+	var askQuestionTool *gai.Tool
 	for i, tool := range tools {
 		if tool.Name == "ask_question" {
 			askQuestionTool = &tools[i]
