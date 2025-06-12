@@ -173,7 +173,7 @@ func (c *Client) dispatch(msgs []RpcMessage) {
 	for _, m := range msgs {
 		switch {
 		// -------- response ----------------------------------------
-		case m.ID != nil && (m.Result != nil || m.Error != nil):
+		case m.ID != "" && (m.Result != nil || m.Error != nil):
 			if ch, ok := c.pending.LoadAndDelete(m.ID); ok {
 				respCh := ch.(chan RpcMessage)
 				respCh <- m
@@ -181,14 +181,14 @@ func (c *Client) dispatch(msgs []RpcMessage) {
 			}
 
 		// -------- notification ------------------------------------
-		case m.ID == nil && m.Method != "":
+		case m.ID == "" && m.Method != "":
 			select { // non-blocking send; drop on full buffer
 			case c.notifications <- m:
 			default:
 			}
 
 		// -------- server request ----------------------------------
-		case m.ID != nil && m.Method != "":
+		case m.ID != "" && m.Method != "":
 			c.handleSrvRequest(m)
 		}
 	}

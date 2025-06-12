@@ -175,7 +175,7 @@ func (t *HTTP) SendBatch(messages []RpcMessage) error {
 	var hasResp bool
 	for _, msg := range messages {
 		// Check if it's a response (has ID and Result/Error but no Method)
-		if msg.ID != nil && (msg.Result != nil || msg.Error != nil) && msg.Method == "" {
+		if msg.ID != "" && (msg.Result != nil || msg.Error != nil) && msg.Method == "" {
 			hasResp = true
 		} else if msg.Method != "" { // Request or notification
 			if hasResp {
@@ -302,7 +302,7 @@ func (t *HTTP) sendPost(messages []RpcMessage) error {
 	// Check if this is the initialize response
 	if len(messages) == 1 {
 		msg := messages[0]
-		if msg.Method == "initialize" && msg.ID != nil {
+		if msg.Method == "initialize" && msg.ID != "" {
 			// Extract session ID from response headers
 			if sessionID := resp.Header.Get("Mcp-Session-Id"); sessionID != "" {
 				t.sessionID = sessionID

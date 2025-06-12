@@ -11,8 +11,8 @@ const ProtocolVersion = "2025-03-26"
 // JSONRPCVersion is the JSON-RPC version used
 const JSONRPCVersion = "2.0"
 
-// RequestID can be either a string or number
-type RequestID interface{}
+// RequestID can be either a string or number, but we are hardcoding it to be a string for now
+type RequestID = string
 
 // RpcMessage represents a JSON-RPC message, which can be a request, response or a notification
 type RpcMessage struct {
