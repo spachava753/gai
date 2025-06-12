@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,32 +31,22 @@ func TestClient_BasicFlow(t *testing.T) {
 	}
 
 	transport := mcp.NewStdio(config)
-	client := mcp.NewClient(transport, mcp.DefaultOptions())
 
 	ctx := context.Background()
-
-	// Test Connect
-	if err := client.Connect(ctx); err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-
-	if !client.IsConnected() {
-		t.Error("Client should be connected")
-	}
-
-	// Test Initialize
 	clientInfo := mcp.ClientInfo{
 		Name:    "test-client",
 		Version: "1.0.0",
 	}
 	capabilities := mcp.ClientCapabilities{}
 
-	if err := client.Initialize(ctx, clientInfo, capabilities); err != nil {
-		t.Fatalf("Failed to initialize: %v", err)
+	client, err := mcp.NewClient(ctx, transport, clientInfo, capabilities, mcp.DefaultOptions())
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
 	}
+	defer client.Close()
 
-	if !client.IsInitialized() {
-		t.Error("Client should be initialized")
+	if !client.IsConnected() {
+		t.Error("Client should be connected")
 	}
 
 	// Test server info
@@ -94,11 +85,6 @@ func TestClient_BasicFlow(t *testing.T) {
 	if err = client.Ping(ctx); err != nil {
 		t.Errorf("Ping failed: %v", err)
 	}
-
-	t.Log("closing connection")
-	if err = client.Close(); err != nil {
-		t.Errorf("Close failed: %v", err)
-	}
 }
 
 func TestClient_ErrorHandling(t *testing.T) {
@@ -109,25 +95,24 @@ func TestClient_ErrorHandling(t *testing.T) {
 	}
 
 	transport := mcp.NewStdio(config)
-	client := mcp.NewClient(transport, mcp.DefaultOptions())
 
 	ctx := context.Background()
+	clientInfo := mcp.ClientInfo{
+		Name:    "test-client",
+		Version: "1.0.0",
+	}
+	capabilities := mcp.ClientCapabilities{}
 
-	// Should fail to connect
-	err := client.Connect(ctx)
+	// Should fail to create client due to connection error
+	client, err := mcp.NewClient(ctx, transport, clientInfo, capabilities, mcp.DefaultOptions())
 	if err == nil {
+		defer client.Close()
 		t.Error("Expected connection error")
 	}
 
-	// Should not be connected
-	if client.IsConnected() {
-		t.Error("Client should not be connected")
-	}
-
-	// Operations should fail when not connected
-	err = client.Initialize(ctx, mcp.ClientInfo{}, mcp.ClientCapabilities{})
-	if err == nil {
-		t.Error("Expected error when initializing disconnected client")
+	// The error should be related to the command not being found
+	if err != nil && !strings.Contains(err.Error(), "failed to connect") {
+		t.Errorf("Expected connection error, got: %v", err)
 	}
 }
 
@@ -138,24 +123,19 @@ func TestClient_HTTPSSE_Integration(t *testing.T) {
 	}
 
 	transport := mcp.NewHTTP(config)
-	client := mcp.NewClient(transport, mcp.DefaultOptions())
 
 	ctx := context.Background()
-
-	// Connect
-	if err := client.Connect(ctx); err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer client.Close()
-
-	// Initialize
 	clientInfo := mcp.ClientInfo{
 		Name:    "test-client-sse",
 		Version: "1.0.0",
 	}
-	if err := client.Initialize(ctx, clientInfo, mcp.ClientCapabilities{}); err != nil {
-		t.Fatalf("Failed to initialize: %v", err)
+	capabilities := mcp.ClientCapabilities{}
+
+	client, err := mcp.NewClient(ctx, transport, clientInfo, capabilities, mcp.DefaultOptions())
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
 	}
+	defer client.Close()
 
 	// 1. Fetch prompts
 	prompts, err := client.ListPrompts(ctx)
@@ -214,24 +194,19 @@ func TestClient_StreamableHTTP_Integration(t *testing.T) {
 	}
 
 	transport := mcp.NewHTTP(config)
-	client := mcp.NewClient(transport, mcp.DefaultOptions())
 
 	ctx := context.Background()
-
-	// Connect
-	if err := client.Connect(ctx); err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer client.Close()
-
-	// Initialize
 	clientInfo := mcp.ClientInfo{
 		Name:    "test-client-sse",
 		Version: "1.0.0",
 	}
-	if err := client.Initialize(ctx, clientInfo, mcp.ClientCapabilities{}); err != nil {
-		t.Fatalf("Failed to initialize: %v", err)
+	capabilities := mcp.ClientCapabilities{}
+
+	client, err := mcp.NewClient(ctx, transport, clientInfo, capabilities, mcp.DefaultOptions())
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
 	}
+	defer client.Close()
 
 	// Fetch tools
 	tools, err := client.ListTools(ctx)
@@ -295,8 +270,8 @@ func TestClient_HTTPSSE_AuthCodeGrant_Integration(t *testing.T) {
 	//   4. Exchange authorization code for access token
 	//   5. Make authenticated MCP requests
 
-	if testing.Short() {
-		t.Skip("Skipping integration test")
+	if os.Getenv("ENABLE_MANUAL_TESTS") != "true" {
+		t.Skip("Skipping test, requires manual input due to browser access")
 	}
 
 	// Check for existing credentials
@@ -318,23 +293,19 @@ func TestClient_HTTPSSE_AuthCodeGrant_Integration(t *testing.T) {
 		}
 
 		transport := mcp.NewHTTP(config)
-		client := mcp.NewClient(transport, mcp.DefaultOptions())
 
 		ctx := context.Background()
-
-		if err := client.Connect(ctx); err != nil {
-			t.Fatalf("Failed to connect: %v", err)
-		}
-		defer client.Close()
-
 		clientInfo := mcp.ClientInfo{
 			Name:    "test-client-auth-code-grant",
 			Version: "1.0.0",
 		}
+		capabilities := mcp.ClientCapabilities{}
 
-		if err := client.Initialize(ctx, clientInfo, mcp.ClientCapabilities{}); err != nil {
-			t.Fatalf("Failed to initialize: %v", err)
+		client, err := mcp.NewClient(ctx, transport, clientInfo, capabilities, mcp.DefaultOptions())
+		if err != nil {
+			t.Fatalf("Failed to create client: %v", err)
 		}
+		defer client.Close()
 
 		// List tools
 		tools, err := client.ListTools(ctx)
@@ -549,22 +520,18 @@ func TestClient_HTTPSSE_AuthCodeGrant_Integration(t *testing.T) {
 	}
 
 	transport := mcp.NewHTTP(config)
-	client := mcp.NewClient(transport, mcp.DefaultOptions())
-
-	// Connect and initialize
-	if err := client.Connect(ctx); err != nil {
-		t.Fatalf("Failed to connect with OAuth token: %v", err)
-	}
-	defer client.Close()
 
 	clientInfo := mcp.ClientInfo{
 		Name:    "test-client-auth-code-grant",
 		Version: "1.0.0",
 	}
+	capabilities := mcp.ClientCapabilities{}
 
-	if err := client.Initialize(ctx, clientInfo, mcp.ClientCapabilities{}); err != nil {
-		t.Fatalf("Failed to initialize with OAuth token: %v", err)
+	client, err := mcp.NewClient(ctx, transport, clientInfo, capabilities, mcp.DefaultOptions())
+	if err != nil {
+		t.Fatalf("Failed to create client with OAuth token: %v", err)
 	}
+	defer client.Close()
 
 	// List tools to verify authentication works
 	tools, err := client.ListTools(ctx)

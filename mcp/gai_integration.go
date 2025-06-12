@@ -316,18 +316,16 @@ func ExampleMCPWithGai() {
 		Args:    []string{"-y", "@modelcontextprotocol/server-time"},
 	}
 	transport := NewStdio(config)
-	mcpClient := NewClient(transport, DefaultOptions())
 
-	// Connect and initialize MCP
 	ctx := context.Background()
-	if err := mcpClient.Connect(ctx); err != nil {
+	clientInfo := ClientInfo{Name: "example", Version: "1.0"}
+	capabilities := ClientCapabilities{}
+
+	mcpClient, err := NewClient(ctx, transport, clientInfo, capabilities, DefaultOptions())
+	if err != nil {
 		panic(err)
 	}
 	defer mcpClient.Close()
-
-	if err := mcpClient.Initialize(ctx, ClientInfo{Name: "example", Version: "1.0"}, ClientCapabilities{}); err != nil {
-		panic(err)
-	}
 
 	// Create gai generator (example with OpenAI)
 	// openaiClient := openai.NewClient()

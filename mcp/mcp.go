@@ -13,23 +13,35 @@ import (
 
 // Client represents a high-level MCP client with all features.
 //
-// Thread Safety: This client has mixed concurrency characteristics:
+// Thread Safety: This client is designed for concurrent use after initialization:
 //
-// **Concurrency-Safe Methods:**
+// **Concurrency-Safe Methods (safe to call from multiple goroutines):**
 //   - Close() - Safe to call concurrently and multiple times
-//   - Reading from Notifications channel - Safe from any goroutine
-//   - Request() and Notify() - Safe to call concurrently after initialization
+//   - Reading from Notifications() channel - Safe from any goroutine
+//   - Request() and Notify() - Safe to call concurrently
 //   - All request-response methods (ListTools, CallTool, etc.) - Safe to call concurrently
 //   - Ping methods - Safe to call concurrently
-//   - Getter methods (IsConnected, IsInitialized, GetServerInfo, etc.) - Safe to call concurrently
+//   - Getter methods (IsConnected, GetServerInfo, etc.) - Safe to call concurrently
 //
-// **NOT Concurrency-Safe Methods (single-threaded use only):**
-//   - Connect() - Must be called before any other operations
-//   - Initialize() - Must be called after Connect and before other operations
+// **Initialization:**
 //
-// The recommended pattern is to perform setup (Connect, Initialize, register handlers)
-// from a single goroutine, then use the client's request methods and Notifications
-// channel from multiple goroutines safely.
+//	The client automatically connects and initializes during construction via NewClient().
+//	No additional setup steps are required - the returned client is ready to use immediately.
+//
+// **Recommended usage pattern:**
+//
+//	```go
+//	client, err := mcp.NewClient(ctx, transport, clientInfo, capabilities, options)
+//	if err != nil {
+//	    // Handle initialization error
+//	    return err
+//	}
+//	defer client.Close()
+//
+//	// Client is now ready for concurrent use
+//	tools, err := client.ListTools(ctx)
+//	// ... use client methods safely from multiple goroutines
+//	```
 type Client struct {
 	// private notification channel (write end)
 	notifications chan RpcMessage
@@ -71,8 +83,24 @@ type Client struct {
 	initialized bool
 }
 
-// NewClient creates a new MCP client
-func NewClient(transport Transport, options Options) *Client {
+// NewClient creates a new MCP client and automatically connects and initializes it.
+// This constructor handles all the setup steps (connect, initialize) internally, so the
+// returned client is ready to use immediately.
+//
+// The client will automatically:
+// 1. Connect to the transport
+// 2. Perform the MCP initialization handshake
+// 3. Start background goroutines for message handling
+//
+// Parameters:
+//   - ctx: context for the connection and initialization operations
+//   - transport: the transport to use for communication (stdio, HTTP, etc.)
+//   - clientInfo: information about this client
+//   - capabilities: client capabilities to negotiate with the server
+//   - options: additional client options
+//
+// Returns a fully initialized and ready-to-use client, or an error if setup fails.
+func NewClient(ctx context.Context, transport Transport, clientInfo ClientInfo, capabilities ClientCapabilities, options Options) (*Client, error) {
 	notifications := make(chan RpcMessage, 256)
 	outbound := make(chan RpcMessage, 256)
 
@@ -88,10 +116,24 @@ func NewClient(transport Transport, options Options) *Client {
 		once:          new(sync.Once),
 	}
 
+	// Start background goroutines
 	c.wg.Add(2)
 	go c.sender()
 	go c.receiver()
-	return c
+
+	// Connect to the transport
+	if err := c.connect(ctx); err != nil {
+		c.Close() // Clean up goroutines
+		return nil, fmt.Errorf("failed to connect: %w", err)
+	}
+
+	// Initialize the MCP protocol
+	if err := c.initialize(ctx, clientInfo, capabilities); err != nil {
+		c.Close() // Clean up connection and goroutines
+		return nil, fmt.Errorf("failed to initialize: %w", err)
+	}
+
+	return c, nil
 }
 
 func (c *Client) sender() {
@@ -170,9 +212,8 @@ func (c *Client) handleSrvRequest(m RpcMessage) {
 	}
 }
 
-// Connect establishes the connection.
-// Not thread-safe - must not be called concurrently with other methods.
-func (c *Client) Connect(ctx context.Context) error {
+// connect establishes the connection.
+func (c *Client) connect(ctx context.Context) error {
 	if c.connected {
 		return ErrAlreadyConnected
 	}
@@ -186,9 +227,8 @@ func (c *Client) Connect(ctx context.Context) error {
 	return nil
 }
 
-// Initialize performs the initialization handshake.
-// Not thread-safe - must not be called concurrently with other methods.
-func (c *Client) Initialize(ctx context.Context, clientInfo ClientInfo, capabilities ClientCapabilities) error {
+// initialize performs the initialization handshake.
+func (c *Client) initialize(ctx context.Context, clientInfo ClientInfo, capabilities ClientCapabilities) error {
 	if c.initialized {
 		return ErrAlreadyInitialized
 	}
@@ -258,11 +298,6 @@ func (c *Client) Close() error {
 // IsConnected returns whether the client is connected
 func (c *Client) IsConnected() bool {
 	return c.connected
-}
-
-// IsInitialized returns whether the client is initialized
-func (c *Client) IsInitialized() bool {
-	return c.initialized
 }
 
 // Request sends a raw request (for advanced use)
@@ -354,7 +389,7 @@ func (c *Client) GetInstructions() string {
 
 // ListTools lists available tools
 func (c *Client) ListTools(ctx context.Context) ([]gai.Tool, error) {
-	if !c.IsInitialized() {
+	if !c.initialized {
 		return nil, ErrNotInitialized
 	}
 
@@ -383,7 +418,7 @@ func (c *Client) ListTools(ctx context.Context) ([]gai.Tool, error) {
 // CallTool calls a tool by name. The arguments map must conform to the tool's input schema.
 // The return value is provider-defined and may be of any JSON-compatible type.
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (any, error) {
-	if !c.IsInitialized() {
+	if !c.initialized {
 		return nil, ErrNotInitialized
 	}
 
@@ -409,7 +444,7 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 
 // ListResources lists available resources
 func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
-	if !c.IsInitialized() {
+	if !c.initialized {
 		return nil, ErrNotInitialized
 	}
 
@@ -428,7 +463,7 @@ func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
 
 // ReadResource reads a resource
 func (c *Client) ReadResource(ctx context.Context, uri string) ([]ResourceContent, error) {
-	if !c.IsInitialized() {
+	if !c.initialized {
 		return nil, ErrNotInitialized
 	}
 
@@ -451,7 +486,7 @@ func (c *Client) ReadResource(ctx context.Context, uri string) ([]ResourceConten
 
 // SubscribeToResource subscribes to resource changes
 func (c *Client) SubscribeToResource(ctx context.Context, uri string) error {
-	if !c.IsInitialized() {
+	if !c.initialized {
 		return ErrNotInitialized
 	}
 
@@ -480,7 +515,7 @@ func (c *Client) SubscribeToResource(ctx context.Context, uri string) error {
 
 // UnsubscribeFromResource unsubscribes from resource changes
 func (c *Client) UnsubscribeFromResource(ctx context.Context, uri string) error {
-	if !c.IsInitialized() {
+	if !c.initialized {
 		return ErrNotInitialized
 	}
 
@@ -497,7 +532,7 @@ func (c *Client) UnsubscribeFromResource(ctx context.Context, uri string) error 
 // ListPrompts lists available prompts
 // Thread-safe - can be called concurrently after initialization.
 func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
-	if !c.IsInitialized() {
+	if !c.initialized {
 		return nil, ErrNotInitialized
 	}
 
@@ -517,7 +552,7 @@ func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 // GetPrompt gets a prompt with arguments
 // Thread-safe - can be called concurrently after initialization.
 func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[string]string) (*PromptsGetResult, error) {
-	if !c.IsInitialized() {
+	if !c.initialized {
 		return nil, ErrNotInitialized
 	}
 
@@ -544,7 +579,7 @@ func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[strin
 // CreateMessage creates a message using LLM sampling
 // Thread-safe - can be called concurrently after initialization.
 func (c *Client) CreateMessage(ctx context.Context, params CreateMessageParams) (*CreateMessageResult, error) {
-	if !c.IsInitialized() {
+	if !c.initialized {
 		return nil, ErrNotInitialized
 	}
 
