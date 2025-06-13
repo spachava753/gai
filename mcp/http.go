@@ -49,10 +49,7 @@ type HTTP struct {
 	streamCounter atomic.Uint64
 
 	// State that needs synchronization
-	connectionState struct {
-		sync.RWMutex
-		connected bool
-	}
+	connectedState atomic.Bool
 
 	// SSE stream management using sync.Map for concurrent access
 	sseStreams sync.Map // map[string]*sseStream
@@ -109,16 +106,13 @@ func NewHTTP(config HTTPConfig) *HTTP {
 // Connect establishes the HTTP transport connection.
 // Not thread-safe - must not be called concurrently with other methods.
 func (t *HTTP) Connect(ctx context.Context) error {
-	t.connectionState.Lock()
-	defer t.connectionState.Unlock()
-
-	if t.connectionState.connected {
+	if t.connectedState.Load() {
 		return ErrAlreadyConnected
 	}
 
 	// For HTTP transport, we don't need to establish a persistent connection
 	// We'll connect on-demand for each request
-	t.connectionState.connected = true
+	t.connectedState.Store(true)
 
 	return nil
 }
@@ -126,13 +120,10 @@ func (t *HTTP) Connect(ctx context.Context) error {
 // Close closes the HTTP transport connection.
 // Not thread-safe - must not be called concurrently with other methods.
 func (t *HTTP) Close() error {
-	t.connectionState.Lock()
-	if !t.connectionState.connected {
-		t.connectionState.Unlock()
+	if !t.connectedState.Load() {
 		return nil
 	}
-	t.connectionState.connected = false
-	t.connectionState.Unlock()
+	t.connectedState.Store(false)
 
 	// Close all SSE streams
 	t.sseStreams.Range(func(key, value interface{}) bool {
@@ -159,11 +150,7 @@ func (t *HTTP) Close() error {
 
 // Send sends a JSON-RPC message via HTTP POST
 func (t *HTTP) Send(msg RpcMessage) error {
-	t.connectionState.RLock()
-	connected := t.connectionState.connected
-	t.connectionState.RUnlock()
-
-	if !connected {
+	if !t.connectedState.Load() {
 		return ErrNotConnected
 	}
 
@@ -431,11 +418,7 @@ func (t *HTTP) readSSEStream(streamID string, stream *sseStream) {
 // Receive receives JSON-RPC messages.
 // Thread-safe due to internal synchronization.
 func (t *HTTP) Receive() ([]RpcMessage, error) {
-	t.connectionState.RLock()
-	connected := t.connectionState.connected
-	t.connectionState.RUnlock()
-
-	if !connected {
+	if !t.connectedState.Load() {
 		return nil, ErrNotConnected
 	}
 
@@ -647,11 +630,4 @@ func (t *HTTP) getStoredMessages() []RpcMessage {
 	msgs := t.messageStore.messages[0]
 	t.messageStore.messages = t.messageStore.messages[1:]
 	return msgs
-}
-
-// IsConnected returns whether the transport is connected
-func (t *HTTP) Connected() bool {
-	t.connectionState.RLock()
-	defer t.connectionState.RUnlock()
-	return t.connectionState.connected
 }

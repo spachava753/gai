@@ -18,9 +18,6 @@ type Transport interface {
 
 	// Receive receives JSON-RPC messages
 	Receive() ([]RpcMessage, error)
-
-	// Connected returns whether the transport is connected
-	Connected() bool
 }
 
 // ProtocolVersion is the version of the MCP protocol supported by this implementation

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -41,8 +42,8 @@ type Stdio struct {
 	codec     *Codec
 
 	// State
-	connected bool
-	closed    bool
+	connectedState atomic.Bool
+	closed         bool
 
 	// For logging stderr
 	onStderr func(string)
@@ -62,7 +63,7 @@ func (t *Stdio) SetStderrHandler(handler func(string)) {
 
 // Connect establishes the stdio transport connection.
 func (t *Stdio) Connect(ctx context.Context) error {
-	if t.connected {
+	if t.connectedState.Load() {
 		return ErrAlreadyConnected
 	}
 
@@ -108,7 +109,7 @@ func (t *Stdio) Connect(ctx context.Context) error {
 	t.stderrBuf = bufio.NewReader(t.stderr)
 	go t.readStderr()
 
-	t.connected = true
+	t.connectedState.Store(true)
 	return nil
 }
 
@@ -138,7 +139,7 @@ func (t *Stdio) Close() error {
 		return nil
 	}
 	t.closed = true
-	t.connected = false
+	t.connectedState.Store(false)
 
 	var errs []error
 
@@ -216,7 +217,7 @@ func (t *Stdio) GetProcessInfo() (pid int, running bool) {
 // Send sends a JSON-RPC message.
 // Thread-safe due to codec internal synchronization.
 func (t *Stdio) Send(msg RpcMessage) error {
-	if !t.connected {
+	if !t.connectedState.Load() {
 		return ErrNotConnected
 	}
 
@@ -230,7 +231,7 @@ func (t *Stdio) Send(msg RpcMessage) error {
 // Receive receives JSON-RPC messages.
 // Thread-safe due to codec internal synchronization.
 func (t *Stdio) Receive() ([]RpcMessage, error) {
-	if !t.connected {
+	if !t.connectedState.Load() {
 		return nil, ErrNotConnected
 	}
 
@@ -239,9 +240,4 @@ func (t *Stdio) Receive() ([]RpcMessage, error) {
 	}
 
 	return t.codec.ReadMessage()
-}
-
-// IsConnected returns whether the transport is connected
-func (t *Stdio) Connected() bool {
-	return t.connected
 }
