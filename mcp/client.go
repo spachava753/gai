@@ -1,4 +1,20 @@
 // Package mcp provides a Go implementation of the Model Context Protocol client.
+//
+// # Protocol Support
+//
+// This implementation supports MCP protocol version 2025-03-26 with the following features:
+//   - stdio transport (recommended)
+//   - HTTP with Server-Sent Events transport
+//   - OAuth 2.1 authorization for HTTP transports
+//   - All core MCP features: tools, resources, prompts, sampling
+//   - Progress tracking and request cancellation
+//
+// # Limitations
+//
+// JSON-RPC Batch: This implementation does not support JSON-RPC batch requests/responses
+// as defined in the MCP protocol specification. The batch feature was intended to be removed
+// in future protocol versions and is not implemented here for simplicity and forward
+// compatibility. All messages are sent and received individually.
 package mcp
 
 import (

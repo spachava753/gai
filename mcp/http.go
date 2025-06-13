@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -160,53 +159,15 @@ func (t *HTTP) Send(msg RpcMessage) error {
 		return ErrNotConnected
 	}
 
-	return t.sendPost([]RpcMessage{msg})
+	return t.sendPost(msg)
 }
 
-// SendBatch sends a batch of JSON-RPC messages
-func (t *HTTP) SendBatch(messages []RpcMessage) error {
-	t.connectionState.RLock()
-	connected := t.connectionState.connected
-	t.connectionState.RUnlock()
-
-	if !connected {
-		return ErrNotConnected
-	}
-
-	var hasResp bool
-	for _, msg := range messages {
-		// Check if it's a response (has ID and Result/Error but no Method)
-		if msg.ID != "" && (msg.Result != nil || msg.Error != nil) && msg.Method == "" {
-			hasResp = true
-		} else if msg.Method != "" { // Request or notification
-			if hasResp {
-				return NewTransportError(
-					"http",
-					"send batch",
-					errors.New("cannot mix responses in a batch request with requests and notifications"),
-				)
-			}
-		}
-	}
-
-	return t.sendPost(messages)
-}
-
-// sendPost handles the actual POST sending with retry capability
-func (t *HTTP) sendPost(messages []RpcMessage) error {
-	var body []byte
-	var err error
-
-	if len(messages) == 1 {
-		// Single message
-		body, err = json.Marshal(messages[0])
-	} else {
-		// Batch
-		body, err = json.Marshal(messages)
-	}
-
+// sendPost handles the actual POST sending of a single message
+func (t *HTTP) sendPost(message RpcMessage) error {
+	// Marshal single message
+	body, err := json.Marshal(message)
 	if err != nil {
-		return fmt.Errorf("failed to marshal messages: %w", err)
+		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
 	// Determine which URL to use
@@ -263,26 +224,22 @@ func (t *HTTP) sendPost(messages []RpcMessage) error {
 	if resp.StatusCode >= 400 {
 		// Check if this is an initialize request and we got 404/405
 		// This indicates an old server that doesn't support the new protocol
-		if len(messages) == 1 {
-			msg := messages[0]
+		t.legacyState.RLock()
+		isLegacy := t.legacyState.legacySse
+		t.legacyState.RUnlock()
 
-			t.legacyState.RLock()
-			isLegacy := t.legacyState.legacySse
-			t.legacyState.RUnlock()
+		if message.Method == "initialize" &&
+			(resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) &&
+			!isLegacy {
+			resp.Body.Close()
 
-			if msg.Method == "initialize" &&
-				(resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) &&
-				!isLegacy {
-				resp.Body.Close()
-
-				// Try backwards compatibility mode
-				if err = t.initializeLegacySse(); err != nil {
-					return err
-				}
-
-				// Retry the request with old transport settings
-				return t.sendPost(messages)
+			// Try backwards compatibility mode
+			if err = t.initializeLegacySse(); err != nil {
+				return err
 			}
+
+			// Retry the request with old transport settings
+			return t.sendPost(message)
 		}
 
 		// Error response
@@ -301,13 +258,10 @@ func (t *HTTP) sendPost(messages []RpcMessage) error {
 	}
 
 	// Check if this is the initialize response
-	if len(messages) == 1 {
-		msg := messages[0]
-		if msg.Method == "initialize" && msg.ID != "" {
-			// Extract session ID from response headers
-			if sessionID := resp.Header.Get("Mcp-Session-Id"); sessionID != "" {
-				t.sessionID = sessionID
-			}
+	if message.Method == "initialize" && message.ID != "" {
+		// Extract session ID from response headers
+		if sessionID := resp.Header.Get("Mcp-Session-Id"); sessionID != "" {
+			t.sessionID = sessionID
 		}
 	}
 
@@ -326,36 +280,18 @@ func (t *HTTP) sendPost(messages []RpcMessage) error {
 			return NewTransportError("http", "decode response", err)
 		}
 
-		// Convert to messages and store for Receive
-		var msgs []RpcMessage
-
-		// Check if it's a batch response
-		if arr, ok := response.([]interface{}); ok {
-			for _, item := range arr {
-				data, err := json.Marshal(item)
-				if err != nil {
-					return err
-				}
-				var msg RpcMessage
-				if err := json.Unmarshal(data, &msg); err != nil {
-					return err
-				}
-				msgs = append(msgs, msg)
-			}
-		} else {
-			data, err := json.Marshal(response)
-			if err != nil {
-				return err
-			}
-			var msg RpcMessage
-			if err := json.Unmarshal(data, &msg); err != nil {
-				return err
-			}
-			msgs = []RpcMessage{msg}
+		// Convert to message and store for Receive
+		data, err := json.Marshal(response)
+		if err != nil {
+			return err
+		}
+		var msg RpcMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return err
 		}
 
-		// Store messages for immediate retrieval
-		t.storeMessages(msgs)
+		// Store message for immediate retrieval
+		t.storeMessages([]RpcMessage{msg})
 
 		return nil
 	}

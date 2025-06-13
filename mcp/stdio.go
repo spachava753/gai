@@ -227,20 +227,6 @@ func (t *Stdio) Send(msg RpcMessage) error {
 	return t.codec.WriteMessage(msg)
 }
 
-// SendBatch sends a batch of JSON-RPC messages.
-// Thread-safe due to codec internal synchronization.
-func (t *Stdio) SendBatch(messages []RpcMessage) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-
-	if t.codec == nil {
-		return fmt.Errorf("codec not initialized")
-	}
-
-	return t.codec.WriteBatch(messages)
-}
-
 // Receive receives JSON-RPC messages.
 // Thread-safe due to codec internal synchronization.
 func (t *Stdio) Receive() ([]RpcMessage, error) {

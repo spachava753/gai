@@ -528,6 +528,10 @@
 // external tools and data sources. The MCP client allows you to connect to MCP servers
 // via stdio, HTTP, or other transports and use their tools within the gai framework.
 //
+// Note: This MCP implementation does not support JSON-RPC batch requests/responses.
+// All messages are sent and received individually for simplicity and forward compatibility
+// with planned protocol changes.
+//
 // Example MCP usage:
 //
 //	import "github.com/spachava753/gai/mcp"

@@ -16,10 +16,7 @@ type Transport interface {
 	// Send sends a JSON-RPC message
 	Send(msg RpcMessage) error
 
-	// SendBatch sends a batch of JSON-RPC messages
-	SendBatch(messages []RpcMessage) error
-
-	// Receive receives JSON-RPC messages (may be a batch)
+	// Receive receives JSON-RPC messages
 	Receive() ([]RpcMessage, error)
 
 	// Connected returns whether the transport is connected
