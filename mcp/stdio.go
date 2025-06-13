@@ -14,7 +14,8 @@ import (
 
 // StdioConfig contains configuration for stdio transport
 type StdioConfig struct {
-	Config
+	// Timeout is the default timeout for operations
+	Timeout int `json:"timeout,omitempty"`
 
 	// Command to execute
 	Command string `json:"command"`

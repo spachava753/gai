@@ -1,4 +1,3 @@
-// This file provides JSON-RPC message handling and routing for the MCP client.
 package mcp
 
 import (

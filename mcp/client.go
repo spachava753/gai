@@ -5,11 +5,37 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
 	"github.com/spachava753/gai"
 	"sync"
 	"time"
 )
+
+// Options contains options for creating a client
+type Options struct {
+	// Handler for incoming messages
+	MessageHandler func(msg interface{})
+
+	// Handler for errors
+	ErrorHandler func(err error)
+
+	// Enable logging
+	EnableLogging bool
+
+	// Log handler
+	LogHandler func(level, message string)
+}
+
+// DefaultOptions returns default client options
+func DefaultOptions() Options {
+	return Options{
+		MessageHandler: func(msg interface{}) {
+			// Default: ignore unhandled messages
+		},
+		ErrorHandler: func(err error) {
+			// Default: ignore errors
+		},
+	}
+}
 
 // Client represents a high-level MCP client with all features.
 //
@@ -47,7 +73,10 @@ type Client struct {
 	notifications chan RpcMessage
 
 	// outbound pipe
-	outbound chan RpcMessage // buffered
+	outbound chan struct {
+		msg     RpcMessage
+		errChan chan error
+	}
 
 	// request tracking
 	pending *sync.Map // id -> chan RpcMessage
@@ -102,7 +131,10 @@ type Client struct {
 // Returns a fully initialized and ready-to-use client, or an error if setup fails.
 func NewClient(ctx context.Context, transport Transport, clientInfo ClientInfo, capabilities ClientCapabilities, options Options) (*Client, error) {
 	notifications := make(chan RpcMessage, 256)
-	outbound := make(chan RpcMessage, 256)
+	outbound := make(chan struct {
+		msg     RpcMessage
+		errChan chan error
+	}, 256)
 
 	c := &Client{
 		transport:     transport,
@@ -143,7 +175,17 @@ func (c *Client) sender() {
 		case <-c.done:
 			return
 		case msg := <-c.outbound:
-			_ = c.transport.Send(msg) // log / drop error as desired
+			err := c.transport.Send(msg.msg)
+			// try to send an error through the channel, if it is not nil
+			if err != nil && msg.errChan != nil {
+				select {
+				case msg.errChan <- err:
+				}
+			}
+			// close the channel if not nil, regardless of whether we used or not
+			if msg.errChan != nil {
+				close(msg.errChan)
+			}
 		}
 	}
 }
@@ -197,18 +239,32 @@ func (c *Client) dispatch(msgs []RpcMessage) {
 func (c *Client) handleSrvRequest(m RpcMessage) {
 	switch m.Method {
 	case "ping":
-		c.outbound <- RpcMessage{
-			JSONRPC: JSONRPCVersion, ID: m.ID, Result: map[string]any{}}
+		c.outbound <- struct {
+			msg     RpcMessage
+			errChan chan error
+		}{
+			msg: RpcMessage{
+				JSONRPC: JSONRPCVersion, ID: m.ID, Result: map[string]any{}},
+		}
 
 	case "sampling/createMessage":
-		c.outbound <- RpcMessage{
-			JSONRPC: JSONRPCVersion, ID: m.ID,
-			Error: &Error{Code: -32601, Message: "sampling not supported"}}
-
+		c.outbound <- struct {
+			msg     RpcMessage
+			errChan chan error
+		}{
+			msg: RpcMessage{
+				JSONRPC: JSONRPCVersion, ID: m.ID,
+				Error: &Error{Code: -32601, Message: "sampling not supported"}},
+		}
 	default:
-		c.outbound <- RpcMessage{
-			JSONRPC: JSONRPCVersion, ID: m.ID,
-			Error: &Error{Code: -32601, Message: "method not supported"}}
+		c.outbound <- struct {
+			msg     RpcMessage
+			errChan chan error
+		}{
+			msg: RpcMessage{
+				JSONRPC: JSONRPCVersion, ID: m.ID,
+				Error: &Error{Code: -32601, Message: "method not supported"}},
+		}
 	}
 }
 
@@ -281,18 +337,21 @@ func (c *Client) initialize(ctx context.Context, clientInfo ClientInfo, capabili
 // Close closes the client connection.
 // This method is safe to call concurrently and multiple times.
 func (c *Client) Close() error {
-	defer c.wg.Wait()
-	c.once.Do(func() { close(c.done) })
-	close(c.notifications)
+	var err error
+	c.once.Do(func() {
+		defer c.wg.Wait()
+		close(c.done)
+		close(c.notifications)
+		c.pending.Range(func(k, v interface{}) bool {
+			close(v.(chan RpcMessage))
+			c.pending.Delete(k)
+			return true
+		})
 
-	c.pending.Range(func(k, v interface{}) bool {
-		close(v.(chan RpcMessage))
-		c.pending.Delete(k)
-		return true
+		c.connected = false
+		err = c.transport.Close()
 	})
-
-	c.connected = false
-	return c.transport.Close()
+	return err
 }
 
 // IsConnected returns whether the client is connected
@@ -317,16 +376,26 @@ func (c *Client) Request(ctx context.Context, method string, params interface{})
 		return nil, fmt.Errorf("failed to convert params: %w", err)
 	}
 
-	c.outbound <- RpcMessage{
-		JSONRPC: JSONRPCVersion, ID: id,
-		Method: method, Params: paramsMap,
+	errChan := make(chan error, 1)
+	c.outbound <- struct {
+		msg     RpcMessage
+		errChan chan error
+	}{
+		msg: RpcMessage{
+			JSONRPC: JSONRPCVersion, ID: id,
+			Method: method, Params: paramsMap,
+		},
+		errChan: errChan,
 	}
 
-	// Apply timeout
-	if c.options.RequestTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, c.options.RequestTimeout)
-		defer cancel()
+	// we expect sender to receive our request, and always close the err channel,
+	// regardless of whether an error was sent or not
+	select {
+	case err = <-errChan:
+		if err != nil {
+			c.pending.Delete(id)
+			return nil, fmt.Errorf("failed to do request: %w", err)
+		}
 	}
 
 	select {
@@ -336,7 +405,6 @@ func (c *Client) Request(ctx context.Context, method string, params interface{})
 		_ = c.Notify("notifications/cancelled",
 			CancelledParams{RequestID: id, Reason: ctx.Err().Error()})
 		return nil, ctx.Err()
-
 	case msg := <-respCh:
 		if msg.Error != nil {
 			return nil, NewProtocolError(msg.Error.Code,
@@ -366,8 +434,15 @@ func (c *Client) Notify(method string, params interface{}) error {
 	}
 
 	// Send notification
-	c.outbound <- notif
-	return nil
+	errChan := make(chan error)
+	c.outbound <- struct {
+		msg     RpcMessage
+		errChan chan error
+	}{
+		msg:     notif,
+		errChan: errChan,
+	}
+	return <-errChan
 }
 
 // GetServerInfo returns server information

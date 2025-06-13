@@ -87,18 +87,7 @@ func NewProtocolError(code int, message string, data interface{}) error {
 }
 
 // AuthenticationError represents authentication failures
-type AuthenticationError struct {
-	Reason string
-}
-
-func (e *AuthenticationError) Error() string {
-	return fmt.Sprintf("authentication failed: %s", e.Reason)
-}
-
-// NewAuthenticationError creates a new authentication error
-func NewAuthenticationError(reason string) error {
-	return &AuthenticationError{Reason: reason}
-}
+var AuthenticationError error = errors.New("unauthorized connection")
 
 // RateLimitError represents rate limiting errors
 // TODO: refactor to store headers and response instead of a retry after value and message

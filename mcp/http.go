@@ -18,7 +18,8 @@ import (
 
 // HTTPConfig contains configuration for HTTP transport
 type HTTPConfig struct {
-	Config
+	// Timeout is the default timeout for operations
+	Timeout int `json:"timeout,omitempty"`
 
 	// URL is the MCP endpoint URL
 	URL string `json:"url"`
@@ -246,7 +247,7 @@ func (t *HTTP) sendPost(messages []RpcMessage) error {
 	if resp.StatusCode == http.StatusUnauthorized {
 		// Authentication error
 		resp.Body.Close()
-		return NewAuthenticationError("HTTP 401 Unauthorized")
+		return AuthenticationError
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {

@@ -253,12 +253,33 @@ func TestClient_HTTPSSE_DynamicClientRegistration_Integration(t *testing.T) {
 		t.Skip("Skipping test, requires manual input due to browser access")
 	}
 
+	ctx := context.Background()
+
+	//serverUrl := "https://api.githubcopilot.com/mcp/"
 	serverUrl := "https://ai-gateway.mcp.cloudflare.com/sse"
+
+	// We expect this to fail
+	config := mcp.HTTPConfig{
+		URL:        serverUrl,
+		HTTPClient: http.DefaultClient,
+	}
+
+	transport := mcp.NewHTTP(config)
+
+	clientInfo := mcp.ClientInfo{
+		Name:    "test-client-auth-code-grant",
+		Version: "1.0.0",
+	}
+	capabilities := mcp.ClientCapabilities{}
+
+	client, err := mcp.NewClient(ctx, transport, clientInfo, capabilities, mcp.DefaultOptions())
+	if err == nil || !errors.Is(err, mcp.AuthenticationError) {
+		t.Fatal("expected to fail with authentication error")
+	}
 
 	// Perform full OAuth Authorization Code Grant flow
 	t.Log("Starting OAuth Authorization Code Grant flow with PKCE")
 
-	ctx := context.Background()
 	redirectPort := "18456"
 	redirectURI := "http://localhost:" + redirectPort + "/callback"
 
@@ -409,8 +430,7 @@ func TestClient_HTTPSSE_DynamicClientRegistration_Integration(t *testing.T) {
 	case err := <-errorChan:
 		t.Fatalf("Authorization failed: %v", err)
 	case <-time.After(2 * time.Minute):
-		t.Skip("Authorization timeout - user did not complete OAuth flow. " +
-			"Set MCP_TEST_ACCESS_TOKEN to skip OAuth flow.")
+		t.Skip("Authorization timeout - user did not complete OAuth flow.")
 	}
 
 	// Exchange authorization code for access token
@@ -426,27 +446,25 @@ func TestClient_HTTPSSE_DynamicClientRegistration_Integration(t *testing.T) {
 	}
 
 	// Now use the access token with MCP
-	config := mcp.HTTPConfig{
+	config = mcp.HTTPConfig{
 		URL:        serverUrl,
 		HTTPClient: conf.Client(context.WithValue(context.Background(), oauth2.HTTPClient, http.DefaultClient), tok),
 	}
 
-	transport := mcp.NewHTTP(config)
+	transport = mcp.NewHTTP(config)
 
-	clientInfo := mcp.ClientInfo{
-		Name:    "test-client-auth-code-grant",
-		Version: "1.0.0",
-	}
-	capabilities := mcp.ClientCapabilities{}
-
-	client, err := mcp.NewClient(ctx, transport, clientInfo, capabilities, mcp.DefaultOptions())
+	newClientCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	client, err = mcp.NewClient(newClientCtx, transport, clientInfo, capabilities, mcp.DefaultOptions())
 	if err != nil {
 		t.Fatalf("Failed to create client with OAuth token: %v", err)
 	}
 	defer client.Close()
 
 	// List tools to verify authentication works
-	tools, err := client.ListTools(ctx)
+	listToolsCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	tools, err := client.ListTools(listToolsCtx)
 	if err != nil {
 		t.Fatalf("Failed to list tools: %v", err)
 	}

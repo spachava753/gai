@@ -1,8 +1,30 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 )
+
+// Transport defines the interface for MCP transport implementations
+type Transport interface {
+	// Connect establishes the transport connection
+	Connect(ctx context.Context) error
+
+	// Close closes the transport connection
+	Close() error
+
+	// Send sends a JSON-RPC message
+	Send(msg RpcMessage) error
+
+	// SendBatch sends a batch of JSON-RPC messages
+	SendBatch(messages []RpcMessage) error
+
+	// Receive receives JSON-RPC messages (may be a batch)
+	Receive() ([]RpcMessage, error)
+
+	// Connected returns whether the transport is connected
+	Connected() bool
+}
 
 // ProtocolVersion is the version of the MCP protocol supported by this implementation
 const ProtocolVersion = "2025-03-26"

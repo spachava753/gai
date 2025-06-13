@@ -1,4 +1,3 @@
-// This file provides OAuth authentication for MCP HTTP transport.
 package mcp
 
 import (
@@ -22,6 +21,14 @@ type ServerMetadata struct {
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
 	RevocationEndpoint                string   `json:"revocation_endpoint"`
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
+}
+
+type ResourceMetadata struct {
+	ResourceName           string   `json:"resource_name"`
+	Resource               string   `json:"resource"`
+	AuthorizationServers   []string `json:"authorization_servers"`
+	BearerMethodsSupported []string `json:"bearer_methods_supported"`
+	ScopesSupported        []string `json:"scopes_supported"`
 }
 
 // DynamicClient represents a dynamically registered OAuth client
@@ -59,7 +66,7 @@ func DiscoverServerMetadata(
 		httpClient = http.DefaultClient
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", discoveryUrl, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryUrl, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +127,7 @@ func DynamicRegistration(
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", registrationEndpoint, strings.NewReader(string(data)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, registrationEndpoint, strings.NewReader(string(data)))
 	if err != nil {
 		return nil, err
 	}
