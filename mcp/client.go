@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"github.com/spachava753/gai"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -51,6 +52,40 @@ func DefaultOptions() Options {
 			// Default: ignore errors
 		},
 	}
+}
+
+// pendingRequests manages pending request tracking in a thread-safe way
+type pendingRequests struct {
+	requests sync.Map // id -> chan RpcMessage
+}
+
+// add registers a new pending request
+func (p *pendingRequests) add(id RequestID, ch chan RpcMessage) {
+	p.requests.Store(id, ch)
+}
+
+// get retrieves and removes a pending request
+func (p *pendingRequests) get(id RequestID) (chan RpcMessage, bool) {
+	if v, ok := p.requests.LoadAndDelete(id); ok {
+		return v.(chan RpcMessage), true
+	}
+	return nil, false
+}
+
+// delete removes and closes a pending request channel
+func (p *pendingRequests) delete(id RequestID) {
+	if v, ok := p.requests.LoadAndDelete(id); ok {
+		close(v.(chan RpcMessage))
+	}
+}
+
+// closeAll closes all pending request channels and clears the map
+func (p *pendingRequests) closeAll() {
+	p.requests.Range(func(k, v interface{}) bool {
+		close(v.(chan RpcMessage))
+		p.requests.Delete(k)
+		return true
+	})
 }
 
 // Client represents a high-level MCP client with all features.
@@ -95,7 +130,7 @@ type Client struct {
 	}
 
 	// request tracking
-	pending *sync.Map // id -> chan RpcMessage
+	pending *pendingRequests
 
 	// misc
 	transport Transport
@@ -109,8 +144,8 @@ type Client struct {
 	// Options
 	options Options
 
-	// State - no mutex needed for most fields, single-threaded access assumed
-	connected bool
+	// Thread-safe connection state tracking
+	connectedState atomic.Bool
 
 	// Protocol version negotiated
 	protocolVersion string
@@ -160,7 +195,7 @@ func NewClient(ctx context.Context, transport Transport, clientInfo ClientInfo, 
 		done:          make(chan struct{}),
 		options:       options,
 		wg:            new(sync.WaitGroup),
-		pending:       new(sync.Map),
+		pending:       &pendingRequests{},
 		once:          new(sync.Once),
 	}
 
@@ -232,10 +267,9 @@ func (c *Client) dispatch(msgs []RpcMessage) {
 		switch {
 		// -------- response ----------------------------------------
 		case m.ID != "" && (m.Result != nil || m.Error != nil):
-			if ch, ok := c.pending.LoadAndDelete(m.ID); ok {
-				respCh := ch.(chan RpcMessage)
-				respCh <- m
-				close(respCh)
+			if ch, ok := c.pending.get(m.ID); ok {
+				ch <- m
+				close(ch)
 			}
 
 		// -------- notification ------------------------------------
@@ -286,7 +320,7 @@ func (c *Client) handleSrvRequest(m RpcMessage) {
 
 // connect establishes the connection.
 func (c *Client) connect(ctx context.Context) error {
-	if c.connected {
+	if c.connectedState.Load() {
 		return ErrAlreadyConnected
 	}
 
@@ -295,7 +329,7 @@ func (c *Client) connect(ctx context.Context) error {
 		return fmt.Errorf("transport connect failed: %w", err)
 	}
 
-	c.connected = true
+	c.connectedState.Store(true)
 	return nil
 }
 
@@ -305,7 +339,7 @@ func (c *Client) initialize(ctx context.Context, clientInfo ClientInfo, capabili
 		return ErrAlreadyInitialized
 	}
 
-	if !c.connected {
+	if !c.connectedState.Load() {
 		return ErrNotConnected
 	}
 
@@ -330,7 +364,17 @@ func (c *Client) initialize(ctx context.Context, clientInfo ClientInfo, capabili
 	// Check protocol version compatibility.
 	// The client supports any version from the server that is less than or equal
 	// to its own version, as the protocol is designed to be backward-compatible.
-	if initResult.ProtocolVersion > ProtocolVersion {
+	clientVer, err := time.Parse(time.DateOnly, ProtocolVersion)
+	if err != nil {
+		return fmt.Errorf("invalid client protocol version: %w", err)
+	}
+
+	serverVer, err := time.Parse(time.DateOnly, initResult.ProtocolVersion)
+	if err != nil {
+		return fmt.Errorf("invalid server protocol version %q: %w", initResult.ProtocolVersion, err)
+	}
+
+	if serverVer.After(clientVer) {
 		return NewVersionMismatchError(ProtocolVersion, initResult.ProtocolVersion)
 	}
 
@@ -358,13 +402,9 @@ func (c *Client) Close() error {
 		defer c.wg.Wait()
 		close(c.done)
 		close(c.notifications)
-		c.pending.Range(func(k, v interface{}) bool {
-			close(v.(chan RpcMessage))
-			c.pending.Delete(k)
-			return true
-		})
+		c.pending.closeAll()
 
-		c.connected = false
+		c.connectedState.Store(false)
 		err = c.transport.Close()
 	})
 	return err
@@ -372,10 +412,23 @@ func (c *Client) Close() error {
 
 // IsConnected returns whether the client is connected
 func (c *Client) IsConnected() bool {
-	return c.connected
+	return c.connectedState.Load()
 }
 
 // Request sends a raw request (for advanced use)
+//
+// To receive progress notifications for long-running operations, include a progressToken
+// in the request metadata:
+//
+//	params := map[string]interface{}{
+//	    "someParam": "value",
+//	    "_meta": map[string]interface{}{
+//	        "progressToken": "unique-token-123",
+//	    },
+//	}
+//
+// Progress notifications will be delivered through the Notifications() channel with
+// method "notifications/progress" and the matching progressToken.
 func (c *Client) Request(ctx context.Context, method string, params interface{}) (map[string]interface{}, error) {
 	if !c.IsConnected() {
 		return nil, ErrNotConnected
@@ -383,12 +436,12 @@ func (c *Client) Request(ctx context.Context, method string, params interface{})
 
 	id := c.idGen.Generate()
 	respCh := make(chan RpcMessage, 1)
-	c.pending.Store(id, respCh)
+	c.pending.add(id, respCh)
 
 	// Convert params to map
 	paramsMap, err := toMap(params)
 	if err != nil {
-		c.pending.Delete(id)
+		c.pending.delete(id)
 		return nil, fmt.Errorf("failed to convert params: %w", err)
 	}
 
@@ -409,14 +462,22 @@ func (c *Client) Request(ctx context.Context, method string, params interface{})
 	select {
 	case err = <-errChan:
 		if err != nil {
-			c.pending.Delete(id)
+			c.pending.delete(id)
 			return nil, fmt.Errorf("failed to do request: %w", err)
 		}
 	}
 
+	// Check if the context has a deadline to determine timeout behavior
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		// No deadline, apply default timeout
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+
 	select {
 	case <-ctx.Done():
-		c.pending.Delete(id)
+		c.pending.delete(id)
 		// optional cancel notification
 		_ = c.Notify("notifications/cancelled",
 			CancelledParams{RequestID: id, Reason: ctx.Err().Error()})
@@ -576,6 +637,11 @@ func (c *Client) ReadResource(ctx context.Context, uri string) ([]ResourceConten
 }
 
 // SubscribeToResource subscribes to resource changes
+//
+// Note: Resource subscription notifications are delivered through the Notifications() channel.
+// When a subscribed resource changes, you will receive a notification with method
+// "notifications/resources/updated" containing the resource URI. It is the caller's
+// responsibility to monitor the Notifications() channel and handle these events.
 func (c *Client) SubscribeToResource(ctx context.Context, uri string) error {
 	if !c.initialized {
 		return ErrNotInitialized
@@ -726,6 +792,29 @@ func (c *Client) CancelRequest(requestID RequestID, reason string) error {
 
 // Notifications is a read only channel that returns all notifications sent from the mcp server
 // Thread-safe - can be called concurrently after initialization.
+//
+// The notifications channel receives all server-sent notifications including:
+//   - Progress updates (method: "notifications/progress") when using progress tokens
+//   - Resource updates (method: "notifications/resources/updated") for subscribed resources
+//   - Tool list changes (method: "notifications/tools/list_changed")
+//   - Prompt list changes (method: "notifications/prompts/list_changed")
+//   - Logging messages (method: "notifications/message")
+//   - Any other custom notifications from the server
+//
+// Example usage:
+//
+//	go func() {
+//	    for notification := range client.Notifications() {
+//	        switch notification.Method {
+//	        case "notifications/progress":
+//	            // Handle progress update
+//	        case "notifications/resources/updated":
+//	            // Handle resource update
+//	        default:
+//	            // Handle other notifications
+//	        }
+//	    }
+//	}()
 func (c *Client) Notifications() <-chan RpcMessage {
 	return c.notifications
 }

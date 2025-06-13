@@ -107,6 +107,26 @@ func FallbackServerMetadata(serverUrl string) (*ServerMetadata, error) {
 	return &metadata, nil
 }
 
+// validateRedirectURI validates that a redirect URI is either localhost or HTTPS
+func validateRedirectURI(uri string) error {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return fmt.Errorf("invalid redirect URI: %w", err)
+	}
+
+	// Allow localhost URLs (any port)
+	if parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1" {
+		return nil
+	}
+
+	// For non-localhost, require HTTPS
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("redirect URI must use HTTPS for non-localhost URLs")
+	}
+
+	return nil
+}
+
 // DynamicRegistration performs dynamic client registration
 func DynamicRegistration(
 	ctx context.Context,
@@ -117,6 +137,13 @@ func DynamicRegistration(
 		Do(req *http.Request) (*http.Response, error)
 	},
 ) (*DynamicClient, error) {
+	// Validate all redirect URIs
+	for _, uri := range redirectUris {
+		if err := validateRedirectURI(uri); err != nil {
+			return nil, fmt.Errorf("invalid redirect URI %q: %w", uri, err)
+		}
+	}
+
 	registration := map[string]interface{}{
 		"client_name":   clientName,
 		"redirect_uris": redirectUris,

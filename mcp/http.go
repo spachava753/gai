@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,6 +29,10 @@ type HTTPConfig struct {
 
 	// HTTPClient allows using a custom HTTP client
 	HTTPClient *http.Client `json:"-"`
+
+	// AllowedOrigins specifies which origins are allowed for CORS (for server implementations)
+	// If empty, only same-origin requests are allowed
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
 }
 
 // HTTP implements Transport using HTTP with SSE support.
@@ -39,6 +44,9 @@ type HTTP struct {
 	config    HTTPConfig
 	client    *http.Client
 	sessionID string
+
+	// Stream ID counter for unique stream identification
+	streamCounter atomic.Uint64
 
 	// State that needs synchronization
 	connectionState struct {
@@ -211,6 +219,12 @@ func (t *HTTP) sendPost(message RpcMessage) error {
 		return AuthenticationError
 	}
 
+	if resp.StatusCode == http.StatusForbidden {
+		// Forbidden - insufficient permissions
+		resp.Body.Close()
+		return fmt.Errorf("forbidden: insufficient permissions (HTTP 403)")
+	}
+
 	if resp.StatusCode == http.StatusTooManyRequests {
 		// Rate limit error
 		retryAfter := 0
@@ -247,14 +261,16 @@ func (t *HTTP) sendPost(message RpcMessage) error {
 		var errResp RpcMessage
 		b, _ := io.ReadAll(resp.Body)
 		if err = json.Unmarshal(b, &errResp); err != nil {
+			// Return a general error with the status code if we can't parse the response
 			return NewTransportError("http", "decode error response",
-				fmt.Errorf("HTTP %d", resp.StatusCode))
+				fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
 		}
 		if errResp.Error != nil {
 			return NewProtocolError(errResp.Error.Code, errResp.Error.Message, errResp.Error.Data)
 		}
+		// Return a general error with the status code if no error details in response
 		return NewTransportError("http", "request failed",
-			fmt.Errorf("HTTP %d", resp.StatusCode))
+			fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
 	}
 
 	// Check if this is the initialize response
@@ -307,8 +323,8 @@ func (t *HTTP) handleSSEResponse(resp *http.Response) error {
 		done:     make(chan struct{}),
 	}
 
-	// Store stream using sync.Map
-	streamID := fmt.Sprintf("stream-%d", time.Now().UnixNano())
+	// Store stream using sync.Map with atomic counter for unique ID
+	streamID := fmt.Sprintf("stream-%d", t.streamCounter.Add(1))
 	t.sseStreams.Store(streamID, stream)
 
 	// Start reading SSE events
