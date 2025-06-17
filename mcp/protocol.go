@@ -92,8 +92,10 @@ type Capability struct {
 
 // ClientCapabilities represents the capabilities of a client
 type ClientCapabilities struct {
-	Roots        *Capability            `json:"roots,omitempty"`
-	Sampling     *Capability            `json:"sampling,omitempty"`
+	// TODO: support roots client capability
+	//Roots        *Capability            `json:"roots,omitempty"`
+	// TODO: support roots client capability
+	//Sampling     *Capability            `json:"sampling,omitempty"`
 	Experimental map[string]interface{} `json:"experimental,omitempty"`
 }
 

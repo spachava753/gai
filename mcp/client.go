@@ -545,6 +545,11 @@ func (c *Client) ListTools(ctx context.Context) ([]gai.Tool, error) {
 		return nil, ErrNotInitialized
 	}
 
+	// Check if server supports tools
+	if c.serverCapabilities.Tools == nil {
+		return nil, NewUnsupportedFeatureError("tools", "server does not advertise tools capability")
+	}
+
 	result, err := c.Request(ctx, "tools/list", nil)
 	if err != nil {
 		return nil, err
@@ -574,6 +579,11 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 		return nil, ErrNotInitialized
 	}
 
+	// Check if server supports tools
+	if c.serverCapabilities.Tools == nil {
+		return nil, NewUnsupportedFeatureError("tools", "server does not advertise tools capability")
+	}
+
 	params := map[string]interface{}{
 		"name":      name,
 		"arguments": arguments,
@@ -600,6 +610,11 @@ func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
 		return nil, ErrNotInitialized
 	}
 
+	// Check if server supports resources
+	if c.serverCapabilities.Resources == nil {
+		return nil, NewUnsupportedFeatureError("resources", "server does not advertise resources capability")
+	}
+
 	result, err := c.Request(ctx, "resources/list", nil)
 	if err != nil {
 		return nil, err
@@ -617,6 +632,11 @@ func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
 func (c *Client) ReadResource(ctx context.Context, uri string) ([]ResourceContent, error) {
 	if !c.initialized {
 		return nil, ErrNotInitialized
+	}
+
+	// Check if server supports resources
+	if c.serverCapabilities.Resources == nil {
+		return nil, NewUnsupportedFeatureError("resources", "server does not advertise resources capability")
 	}
 
 	params := ResourcesReadParams{
@@ -676,6 +696,14 @@ func (c *Client) UnsubscribeFromResource(ctx context.Context, uri string) error 
 		return ErrNotInitialized
 	}
 
+	// Check if server supports resources and subscriptions
+	if c.serverCapabilities.Resources == nil {
+		return NewUnsupportedFeatureError("resources", "server does not advertise resources capability")
+	}
+	if !c.serverCapabilities.Resources.Subscribe {
+		return NewUnsupportedFeatureError("resource subscriptions", "server does not support resource subscriptions")
+	}
+
 	params := map[string]interface{}{
 		"uri": uri,
 	}
@@ -691,6 +719,11 @@ func (c *Client) UnsubscribeFromResource(ctx context.Context, uri string) error 
 func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 	if !c.initialized {
 		return nil, ErrNotInitialized
+	}
+
+	// Check if server supports prompts
+	if c.serverCapabilities.Prompts == nil {
+		return nil, NewUnsupportedFeatureError("prompts", "server does not advertise prompts capability")
 	}
 
 	result, err := c.Request(ctx, "prompts/list", nil)
@@ -711,6 +744,11 @@ func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[string]string) (*PromptsGetResult, error) {
 	if !c.initialized {
 		return nil, ErrNotInitialized
+	}
+
+	// Check if server supports prompts
+	if c.serverCapabilities.Prompts == nil {
+		return nil, NewUnsupportedFeatureError("prompts", "server does not advertise prompts capability")
 	}
 
 	params := PromptsGetParams{
@@ -771,6 +809,15 @@ func (c *Client) PingWithTimeout(timeout time.Duration) error {
 // SetLoggingLevel sets the server logging level
 // Thread-safe - can be called concurrently after initialization.
 func (c *Client) SetLoggingLevel(ctx context.Context, level string) error {
+	if !c.initialized {
+		return ErrNotInitialized
+	}
+
+	// Check if server supports logging
+	if c.serverCapabilities.Logging == nil {
+		return NewUnsupportedFeatureError("logging", "server does not advertise logging capability")
+	}
+
 	params := map[string]interface{}{
 		"level": level,
 	}
