@@ -33,7 +33,7 @@ type RequestID = string
 type RpcMessage struct {
 	JSONRPC string         `json:"jsonrpc"`
 	ID      RequestID      `json:"id,omitempty"`
-	Method  string         `json:"method"`
+	Method  string         `json:"method,omitempty"`
 	Params  map[string]any `json:"params,omitempty"`
 	Result  map[string]any `json:"result,omitempty"`
 	Error   *Error         `json:"error,omitempty"`

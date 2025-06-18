@@ -385,7 +385,7 @@ func (c *Client) initialize(ctx context.Context, clientInfo ClientInfo, capabili
 	c.instructions = initResult.Instructions
 
 	// Send initialized notification
-	err = c.Notify("notifications/initialized", nil)
+	err = c.Notify(ctx, "notifications/initialized", nil)
 	if err != nil {
 		return fmt.Errorf("failed to send initialized notification: %w", err)
 	}
@@ -479,7 +479,7 @@ func (c *Client) Request(ctx context.Context, method string, params interface{})
 	case <-ctx.Done():
 		c.pending.delete(id)
 		// optional cancel notification
-		_ = c.Notify("notifications/cancelled",
+		_ = c.Notify(context.Background(), "notifications/cancelled",
 			CancelledParams{RequestID: id, Reason: ctx.Err().Error()})
 		return nil, ctx.Err()
 	case msg := <-respCh:
@@ -492,7 +492,7 @@ func (c *Client) Request(ctx context.Context, method string, params interface{})
 }
 
 // Notify sends a notification (for advanced use)
-func (c *Client) Notify(method string, params interface{}) error {
+func (c *Client) Notify(ctx context.Context, method string, params interface{}) error {
 	if !c.IsConnected() {
 		return ErrNotConnected
 	}
@@ -519,7 +519,14 @@ func (c *Client) Notify(method string, params interface{}) error {
 		msg:     notif,
 		errChan: errChan,
 	}
-	return <-errChan
+
+	// Wait for either context cancellation or error channel
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errChan:
+		return err
+	}
 }
 
 // GetServerInfo returns server information
@@ -834,7 +841,7 @@ func (c *Client) CancelRequest(requestID RequestID, reason string) error {
 		Reason:    reason,
 	}
 
-	return c.Notify("notifications/cancelled", params)
+	return c.Notify(context.Background(), "notifications/cancelled", params)
 }
 
 // Notifications is a read only channel that returns all notifications sent from the mcp server
