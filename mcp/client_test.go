@@ -255,7 +255,6 @@ func TestClient_HTTPSSE_DynamicClientRegistration_Integration(t *testing.T) {
 
 	ctx := context.Background()
 
-	//serverUrl := "https://api.githubcopilot.com/mcp/"
 	serverUrl := "https://ai-gateway.mcp.cloudflare.com/sse"
 
 	// We expect this to fail
