@@ -23,6 +23,8 @@ type HTTPSSE struct {
 	connectedState atomic.Bool
 	postEndpoint   atomic.Value // string
 	sseStream      atomic.Value // httpSSEStream Single active SSE stream
+
+	endpointChan chan struct{}
 }
 
 // httpSSEStream represents the active SSE connection
@@ -44,8 +46,9 @@ func NewHTTPSSE(config HTTPConfig) *HTTPSSE {
 	}
 
 	return &HTTPSSE{
-		config: config,
-		client: client,
+		config:       config,
+		client:       client,
+		endpointChan: make(chan struct{}),
 	}
 }
 
@@ -94,33 +97,15 @@ func (t *HTTPSSE) Connect(ctx context.Context) error {
 	// Start reading SSE events
 	go t.readSSEStream()
 
-	// Wait for endpoint event with timeout
-	endpointChan := make(chan string, 1)
-	go func() {
-		timeout := time.After(5 * time.Second)
-
-		for {
-			select {
-			case <-timeout:
-				endpointChan <- ""
-				return
-			case <-time.After(50 * time.Millisecond): // poll for endpoint
-				endpoint := t.postEndpoint.Load().(string)
-				if endpoint != "" {
-					endpointChan <- endpoint
-					return
-				}
-			}
-		}
-	}()
-
-	endpoint := <-endpointChan
-	if endpoint == "" {
+	select {
+	case <-ctx.Done():
 		// Clean up on timeout
 		sseStream := t.sseStream.Load().(httpSSEStream)
 		close(sseStream.done)
 		resp.Body.Close()
-		return NewTransportError("http+sse", "initialize", fmt.Errorf("timeout waiting for endpoint event"))
+		return ctx.Err()
+	case <-t.endpointChan:
+		// endpoint found
 	}
 
 	t.connectedState.Store(true)
@@ -296,6 +281,7 @@ func (t *HTTPSSE) readSSEStream() {
 					}
 
 					t.postEndpoint.Store(endpointData)
+					close(t.endpointChan)
 				} else {
 					// Parse the event data as a JSON-RPC message
 					var msg RpcMessage
