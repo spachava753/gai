@@ -243,46 +243,66 @@ func (c *Client) sender() {
 
 func (c *Client) receiver() {
 	defer c.wg.Done()
+
+	// Wait for connection before getting receive channel
+	for !c.connectedState.Load() {
+		select {
+		case <-c.done:
+			return
+		case <-time.After(10 * time.Millisecond):
+			// Check again
+		}
+	}
+
+	// Get the receive channel from transport
+	receiveChan := c.transport.Receive()
+
 	for {
 		select {
 		case <-c.done:
 			return
-		default:
-		}
-
-		msgs, err := c.transport.Receive()
-		if err != nil {
-			if c.options.ErrorHandler != nil {
-				c.options.ErrorHandler(fmt.Errorf("receive error: %w", err))
+		case msgOrErr, ok := <-receiveChan:
+			// Check if channel was closed
+			if !ok || (msgOrErr.Error == nil && msgOrErr.Message.JSONRPC == "") {
+				// Channel closed, transport disconnected
+				if c.options.ErrorHandler != nil {
+					c.options.ErrorHandler(fmt.Errorf("transport disconnected"))
+				}
+				return
 			}
-			continue
-		}
 
-		c.dispatch(msgs)
+			if msgOrErr.Error != nil {
+				if c.options.ErrorHandler != nil {
+					c.options.ErrorHandler(fmt.Errorf("receive error: %w", msgOrErr.Error))
+				}
+				continue
+			}
+
+			// Dispatch single message
+			c.dispatch(msgOrErr.Message)
+		}
 	}
 }
 
-func (c *Client) dispatch(msgs []RpcMessage) {
-	for _, m := range msgs {
-		switch {
-		// -------- response ----------------------------------------
-		case m.ID != "" && (m.Result != nil || m.Error != nil):
-			if ch, ok := c.pending.get(m.ID); ok {
-				ch <- m
-				close(ch)
-			}
-
-		// -------- notification ------------------------------------
-		case m.ID == "" && m.Method != "":
-			select { // non-blocking send; drop on full buffer
-			case c.notifications <- m:
-			default:
-			}
-
-		// -------- server request ----------------------------------
-		case m.ID != "" && m.Method != "":
-			c.handleSrvRequest(m)
+func (c *Client) dispatch(m RpcMessage) {
+	switch {
+	// -------- response ----------------------------------------
+	case m.ID != "" && (m.Result != nil || m.Error != nil):
+		if ch, ok := c.pending.get(m.ID); ok {
+			ch <- m
+			close(ch)
 		}
+
+	// -------- notification ------------------------------------
+	case m.ID == "" && m.Method != "":
+		select { // non-blocking send; drop on full buffer
+		case c.notifications <- m:
+		default:
+		}
+
+	// -------- server request ----------------------------------
+	case m.ID != "" && m.Method != "":
+		c.handleSrvRequest(m)
 	}
 }
 

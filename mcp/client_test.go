@@ -121,7 +121,7 @@ func TestClient_HTTPSSE_Integration(t *testing.T) {
 		URL: "https://docs.mcp.cloudflare.com/sse",
 	}
 
-	transport := mcp.NewHTTP(config)
+	transport := mcp.NewHTTPSSE(config)
 
 	ctx := context.Background()
 	clientInfo := mcp.ClientInfo{
@@ -192,7 +192,7 @@ func TestClient_StreamableHTTP_Integration(t *testing.T) {
 		URL: "https://mcp.deepwiki.com/mcp",
 	}
 
-	transport := mcp.NewHTTP(config)
+	transport := mcp.NewStreamableHTTP(config)
 
 	ctx := context.Background()
 	clientInfo := mcp.ClientInfo{
@@ -218,25 +218,26 @@ func TestClient_StreamableHTTP_Integration(t *testing.T) {
 	t.Logf("Successfully fetched %d tools.", len(tools))
 
 	// Find the search tool
-	var askQuestionTool *gai.Tool
+	var readWikiStructureTool *gai.Tool
 	for i, tool := range tools {
-		if tool.Name == "ask_question" {
-			askQuestionTool = &tools[i]
+		if tool.Name == "read_wiki_structure" {
+			readWikiStructureTool = &tools[i]
 			break
 		}
 	}
 
-	if askQuestionTool == nil {
-		t.Fatal("Could not find the 'search' tool in the tool list")
+	if readWikiStructureTool == nil {
+		t.Fatal("Could not find the 'readWikiStructureTool' tool in the tool list")
 	}
 
 	// 3. Call the search tool
-	t.Logf("Calling tool: %s", askQuestionTool.Name)
+	t.Logf("Calling tool: %s", readWikiStructureTool.Name)
 	args := map[string]interface{}{
-		"question": "what does the generator interface do?",
 		"repoName": "spachava753/gai",
 	}
-	result, err := client.CallTool(ctx, askQuestionTool.Name, args)
+	callToolCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	result, err := client.CallTool(callToolCtx, readWikiStructureTool.Name, args)
 	if err != nil {
 		t.Fatalf("Tool call failed: %v", err)
 	}
@@ -245,7 +246,7 @@ func TestClient_StreamableHTTP_Integration(t *testing.T) {
 		t.Fatal("Tool call result was nil")
 	}
 
-	t.Logf("Successfully called tool '%s' with question '%s' on repo %s.", askQuestionTool.Name, args["question"], args["repoName"])
+	t.Logf("Successfully called tool '%s' on repo %s.", readWikiStructureTool.Name, args["repoName"])
 }
 
 func TestClient_HTTPSSE_DynamicClientRegistration_Integration(t *testing.T) {
@@ -263,7 +264,7 @@ func TestClient_HTTPSSE_DynamicClientRegistration_Integration(t *testing.T) {
 		HTTPClient: http.DefaultClient,
 	}
 
-	transport := mcp.NewHTTP(config)
+	transport := mcp.NewHTTPSSE(config)
 
 	clientInfo := mcp.ClientInfo{
 		Name:    "test-client-auth-code-grant",
@@ -450,7 +451,7 @@ func TestClient_HTTPSSE_DynamicClientRegistration_Integration(t *testing.T) {
 		HTTPClient: conf.Client(context.WithValue(context.Background(), oauth2.HTTPClient, http.DefaultClient), tok),
 	}
 
-	transport = mcp.NewHTTP(config)
+	transport = mcp.NewHTTPSSE(config)
 
 	newClientCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()

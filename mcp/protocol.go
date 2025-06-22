@@ -5,6 +5,12 @@ import (
 	"fmt"
 )
 
+// MessageOrError contains either a message or an error from the transport
+type MessageOrError struct {
+	Message RpcMessage
+	Error   error
+}
+
 // Transport defines the interface for MCP transport implementations
 type Transport interface {
 	// Connect establishes the transport connection
@@ -16,8 +22,9 @@ type Transport interface {
 	// Send sends a JSON-RPC message
 	Send(msg RpcMessage) error
 
-	// Receive receives JSON-RPC messages
-	Receive() ([]RpcMessage, error)
+	// Receive returns a channel that delivers messages or errors
+	// The channel will be closed when the transport is closed
+	Receive() <-chan MessageOrError
 }
 
 // ProtocolVersion is the version of the MCP protocol supported by this implementation

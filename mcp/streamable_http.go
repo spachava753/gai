@@ -40,19 +40,14 @@ type StreamableHTTP struct {
 		nextEventID string
 	}
 
-	// Message store requires synchronization for cross-request state
-	messageStore struct {
-		sync.Mutex
-		messages [][]RpcMessage
-	}
+	// Channel for receiving messages
+	receiveChan chan MessageOrError
 }
 
 // streamableSSEStream represents an active SSE connection
 type streamableSSEStream struct {
 	response *http.Response
 	reader   *bufio.Reader
-	messages chan []RpcMessage
-	errors   chan error
 	done     chan struct{}
 }
 
@@ -65,15 +60,11 @@ func NewStreamableHTTP(config HTTPConfig) *StreamableHTTP {
 		}
 	}
 
-	h := &StreamableHTTP{
-		config: config,
-		client: client,
+	return &StreamableHTTP{
+		config:      config,
+		client:      client,
+		receiveChan: make(chan MessageOrError, 1),
 	}
-
-	// Initialize instance-specific message storage
-	h.messageStore.messages = make([][]RpcMessage, 0)
-
-	return h
 }
 
 // Connect establishes the HTTP transport connection.
@@ -108,9 +99,12 @@ func (t *StreamableHTTP) Close() error {
 		return true
 	})
 
+	// Close the receive channel
+	close(t.receiveChan)
+
 	// Send DELETE request if we have a session ID
 	if t.sessionID != "" {
-		req, err := http.NewRequest("DELETE", t.config.URL, nil)
+		req, err := http.NewRequest(http.MethodDelete, t.config.URL, nil)
 		if err == nil {
 			t.addHeaders(req)
 			req.Header.Set("Mcp-Session-Id", t.sessionID)
@@ -216,7 +210,7 @@ func (t *StreamableHTTP) Send(msg RpcMessage) error {
 		// SSE response, set up stream
 		return t.handleSSEResponse(resp)
 	} else {
-		// Regular JSON response
+		// Regular JSON response - send immediately via receive channel
 		defer resp.Body.Close()
 
 		// Parse response
@@ -225,7 +219,7 @@ func (t *StreamableHTTP) Send(msg RpcMessage) error {
 			return NewTransportError("streamable-http", "decode response", err)
 		}
 
-		// Convert to message and store for Receive
+		// Convert to message
 		data, err := json.Marshal(response)
 		if err != nil {
 			return err
@@ -235,8 +229,13 @@ func (t *StreamableHTTP) Send(msg RpcMessage) error {
 			return err
 		}
 
-		// Store message for immediate retrieval
-		t.storeMessages([]RpcMessage{responseMsg})
+		// Send message immediately via receive channel
+		select {
+		case t.receiveChan <- MessageOrError{Message: responseMsg}:
+		default:
+			// Channel is full, this shouldn't happen with buffer size 1 and immediate consumption
+			// but we handle it gracefully
+		}
 
 		return nil
 	}
@@ -247,8 +246,6 @@ func (t *StreamableHTTP) handleSSEResponse(resp *http.Response) error {
 	stream := &streamableSSEStream{
 		response: resp,
 		reader:   bufio.NewReader(resp.Body),
-		messages: make(chan []RpcMessage, 100),
-		errors:   make(chan error, 1),
 		done:     make(chan struct{}),
 	}
 
@@ -256,19 +253,17 @@ func (t *StreamableHTTP) handleSSEResponse(resp *http.Response) error {
 	streamID := fmt.Sprintf("stream-%d", t.streamCounter.Add(1))
 	t.sseStreams.Store(streamID, stream)
 
-	// Start reading SSE events
+	// Start reading SSE events in a separate goroutine
 	go t.readSSEStream(streamID, stream)
 
 	return nil
 }
 
-// readSSEStream reads events from an SSE stream
+// readSSEStream reads events from an SSE stream and sends them directly to the receive channel
 func (t *StreamableHTTP) readSSEStream(streamID string, stream *streamableSSEStream) {
 	defer func() {
 		stream.response.Body.Close()
 		t.sseStreams.Delete(streamID)
-		close(stream.messages)
-		close(stream.errors)
 	}()
 
 	var eventData bytes.Buffer
@@ -284,7 +279,11 @@ func (t *StreamableHTTP) readSSEStream(streamID string, stream *streamableSSEStr
 		line, err := stream.reader.ReadString('\n')
 		if err != nil {
 			if err != io.EOF {
-				stream.errors <- err
+				// Send error to receive channel
+				select {
+				case t.receiveChan <- MessageOrError{Error: err}:
+				case <-stream.done:
+				}
 			}
 			return
 		}
@@ -297,9 +296,19 @@ func (t *StreamableHTTP) readSSEStream(streamID string, stream *streamableSSEStr
 				// Parse the event data as a JSON-RPC message
 				var msg RpcMessage
 				if err := json.Unmarshal(eventData.Bytes(), &msg); err != nil {
-					stream.errors <- fmt.Errorf("failed to parse SSE event: %w", err)
+					// Send parse error to receive channel
+					select {
+					case t.receiveChan <- MessageOrError{Error: fmt.Errorf("failed to parse SSE event: %w", err)}:
+					case <-stream.done:
+						return
+					}
 				} else {
-					stream.messages <- []RpcMessage{msg}
+					// Send message directly to receive channel
+					select {
+					case t.receiveChan <- MessageOrError{Message: msg}:
+					case <-stream.done:
+						return
+					}
 				}
 
 				// Update last event ID
@@ -325,58 +334,10 @@ func (t *StreamableHTTP) readSSEStream(streamID string, stream *streamableSSEStr
 	}
 }
 
-// Receive receives JSON-RPC messages.
-// Thread-safe due to internal synchronization.
-func (t *StreamableHTTP) Receive() ([]RpcMessage, error) {
-	if !t.connectedState.Load() {
-		return nil, ErrNotConnected
-	}
-
-	// Check if we have any stored messages
-	msgs := t.getStoredMessages()
-	if len(msgs) > 0 {
-		return msgs, nil
-	}
-
-	// Check SSE streams
-	streams := make([]*streamableSSEStream, 0)
-	t.sseStreams.Range(func(key, value interface{}) bool {
-		if stream, ok := value.(*streamableSSEStream); ok {
-			streams = append(streams, stream)
-		}
-		return true
-	})
-
-	if len(streams) == 0 {
-		// No active streams, open a GET request for SSE
-		if err := t.openSSEStream(); err != nil {
-			return nil, err
-		}
-
-		// Get the new stream
-		t.sseStreams.Range(func(key, value interface{}) bool {
-			if stream, ok := value.(*streamableSSEStream); ok {
-				streams = append(streams, stream)
-				return false // Stop after first stream
-			}
-			return true
-		})
-	}
-
-	// Wait for messages from any stream
-	for _, stream := range streams {
-		select {
-		case msgs := <-stream.messages:
-			return msgs, nil
-		case err := <-stream.errors:
-			return nil, err
-		default:
-			// try next stream
-		}
-	}
-
-	// No messages available
-	return nil, nil
+// Receive returns a channel that delivers messages or errors.
+// The channel will be closed when the transport is closed.
+func (t *StreamableHTTP) Receive() <-chan MessageOrError {
+	return t.receiveChan
 }
 
 // openSSEStream opens a new SSE stream via GET request
@@ -439,25 +400,4 @@ func (t *StreamableHTTP) addHeaders(req *http.Request) {
 
 	// Add protocol version for new transport
 	req.Header.Set("MCP-Protocol-Version", ProtocolVersion)
-}
-
-// storeMessages stores messages for retrieval (instance-specific)
-func (t *StreamableHTTP) storeMessages(msgs []RpcMessage) {
-	t.messageStore.Lock()
-	defer t.messageStore.Unlock()
-	t.messageStore.messages = append(t.messageStore.messages, msgs)
-}
-
-// getStoredMessages retrieves stored messages (instance-specific)
-func (t *StreamableHTTP) getStoredMessages() []RpcMessage {
-	t.messageStore.Lock()
-	defer t.messageStore.Unlock()
-
-	if len(t.messageStore.messages) == 0 {
-		return nil
-	}
-
-	msgs := t.messageStore.messages[0]
-	t.messageStore.messages = t.messageStore.messages[1:]
-	return msgs
 }

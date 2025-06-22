@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -43,10 +44,14 @@ type Stdio struct {
 
 	// State
 	connectedState atomic.Bool
-	closed         bool
+	closedState    atomic.Bool
 
 	// For logging stderr
 	onStderr func(string)
+
+	// Channel for receiving messages
+	receiveChan chan MessageOrError
+	receiveOnce sync.Once
 }
 
 // NewStdio creates a new stdio transport
@@ -135,10 +140,10 @@ func (t *Stdio) readStderr() {
 
 // Close closes the stdio transport connection.
 func (t *Stdio) Close() error {
-	if t.closed {
+	if t.closedState.Load() {
 		return nil
 	}
-	t.closed = true
+	t.closedState.Store(true)
 	t.connectedState.Store(false)
 
 	var errs []error
@@ -228,16 +233,39 @@ func (t *Stdio) Send(msg RpcMessage) error {
 	return t.codec.WriteMessage(msg)
 }
 
-// Receive receives JSON-RPC messages.
-// Thread-safe due to codec internal synchronization.
-func (t *Stdio) Receive() ([]RpcMessage, error) {
-	if !t.connectedState.Load() {
-		return nil, ErrNotConnected
-	}
+// Receive returns a channel that delivers messages or errors.
+// The channel will be closed when the transport is closed.
+func (t *Stdio) Receive() <-chan MessageOrError {
+	// Ensure we only create the goroutine once
+	t.receiveOnce.Do(func() {
+		t.receiveChan = make(chan MessageOrError, 1)
+		go t.receiveLoop()
+	})
+	return t.receiveChan
+}
 
-	if t.codec == nil {
-		return nil, fmt.Errorf("codec not initialized")
-	}
+// receiveLoop continuously reads messages and sends them to the channel
+func (t *Stdio) receiveLoop() {
+	defer close(t.receiveChan)
 
-	return t.codec.ReadMessage()
+	for {
+		if !t.connectedState.Load() {
+			return
+		}
+
+		if t.codec == nil {
+			t.receiveChan <- MessageOrError{Error: fmt.Errorf("codec not initialized")}
+			return
+		}
+
+		msg, err := t.codec.ReadMessage()
+		if err != nil {
+			if !t.closedState.Load() {
+				t.receiveChan <- MessageOrError{Error: err}
+			}
+			return
+		}
+
+		t.receiveChan <- MessageOrError{Message: msg}
+	}
 }

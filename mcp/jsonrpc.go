@@ -41,12 +41,12 @@ func (c *Codec) WriteMessage(msg RpcMessage) error {
 }
 
 // ReadMessage reads a JSON-RPC message
-func (c *Codec) ReadMessage() ([]RpcMessage, error) {
+func (c *Codec) ReadMessage() (RpcMessage, error) {
 	if !c.decoder.Scan() {
 		if err := c.decoder.Err(); err != nil {
-			return nil, err
+			return RpcMessage{}, err
 		}
-		return nil, io.EOF
+		return RpcMessage{}, io.EOF
 	}
 
 	line := c.decoder.Bytes()
@@ -54,10 +54,10 @@ func (c *Codec) ReadMessage() ([]RpcMessage, error) {
 	// Parse as a single message
 	var msg RpcMessage
 	if err := json.Unmarshal(line, &msg); err != nil {
-		return nil, fmt.Errorf("failed to parse message: %w", err)
+		return RpcMessage{}, fmt.Errorf("failed to parse message: %w", err)
 	}
 
-	return []RpcMessage{msg}, nil
+	return msg, nil
 }
 
 // IDGenerator generates unique request IDs using nanoid

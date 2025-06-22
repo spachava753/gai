@@ -87,7 +87,7 @@ func NewProtocolError(code int, message string, data interface{}) error {
 }
 
 // AuthenticationError represents authentication failures
-var AuthenticationError error = errors.New("unauthorized connection")
+var AuthenticationError = errors.New("unauthorized connection")
 
 // ErrLegacyHTTPSSERequired is returned when a server only supports the old HTTP+SSE transport
 var ErrLegacyHTTPSSERequired = errors.New("server requires legacy HTTP+SSE transport (protocol version 2024-11-05)")

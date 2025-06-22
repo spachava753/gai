@@ -9,11 +9,32 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// HTTPConfig contains configuration for HTTP transport
+type HTTPConfig struct {
+	// Timeout is the default timeout for operations
+	Timeout int `json:"timeout,omitempty"`
+
+	// URL is the MCP endpoint URL
+	URL string `json:"url"`
+
+	// Headers to include in requests
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// HTTPClient allows using a custom HTTP client
+	HTTPClient *http.Client `json:"-"`
+
+	// AllowedOrigins specifies which origins are allowed for CORS (for server implementations)
+	// If empty, only same-origin requests are allowed
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+}
 
 // HTTPSSE implements Transport using HTTP with Server-Sent Events (old protocol version 2024-11-05).
 type HTTPSSE struct {
@@ -24,14 +45,19 @@ type HTTPSSE struct {
 	postEndpoint   atomic.Value // string
 	sseStream      atomic.Value // httpSSEStream Single active SSE stream
 
-	endpointChan chan struct{}
+	endpointChan     chan struct{}
+	endpointChanOnce sync.Once
+
+	// Channel for receiving messages
+	receiveChan chan MessageOrError
+	receiveOnce sync.Once
 }
 
 // httpSSEStream represents the active SSE connection
 type httpSSEStream struct {
 	response *http.Response
 	reader   *bufio.Reader
-	messages chan []RpcMessage
+	messages chan RpcMessage
 	errors   chan error
 	done     chan struct{}
 }
@@ -86,13 +112,14 @@ func (t *HTTPSSE) Connect(ctx context.Context) error {
 	}
 
 	// Create the SSE stream
-	t.sseStream.Store(httpSSEStream{
+	stream := httpSSEStream{
 		response: resp,
 		reader:   bufio.NewReader(resp.Body),
-		messages: make(chan []RpcMessage, 100),
-		errors:   make(chan error, 1),
+		messages: make(chan RpcMessage),
+		errors:   make(chan error),
 		done:     make(chan struct{}),
-	})
+	}
+	t.sseStream.Store(stream)
 
 	// Start reading SSE events
 	go t.readSSEStream()
@@ -100,8 +127,7 @@ func (t *HTTPSSE) Connect(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		// Clean up on timeout
-		sseStream := t.sseStream.Load().(httpSSEStream)
-		close(sseStream.done)
+		close(stream.done)
 		resp.Body.Close()
 		return ctx.Err()
 	case <-t.endpointChan:
@@ -133,11 +159,15 @@ func (t *HTTPSSE) Close() error {
 
 // Send sends a JSON-RPC message via HTTP POST
 func (t *HTTPSSE) Send(msg RpcMessage) error {
-	endpoint := t.postEndpoint.Load().(string)
-
 	if !t.connectedState.Load() {
 		return ErrNotConnected
 	}
+
+	endpointVal := t.postEndpoint.Load()
+	if endpointVal == nil {
+		return NewTransportError("http+sse", "send", fmt.Errorf("no POST endpoint available"))
+	}
+	endpoint := endpointVal.(string)
 
 	if endpoint == "" {
 		return NewTransportError("http+sse", "send", fmt.Errorf("no POST endpoint available"))
@@ -183,8 +213,7 @@ func (t *HTTPSSE) Send(msg RpcMessage) error {
 	if resp.StatusCode >= 400 {
 		// Error response
 		var errResp RpcMessage
-		b, _ := io.ReadAll(resp.Body)
-		if err = json.Unmarshal(b, &errResp); err != nil {
+		if err = json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
 			return NewTransportError("http+sse", "decode error response",
 				fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
 		}
@@ -195,35 +224,58 @@ func (t *HTTPSSE) Send(msg RpcMessage) error {
 			fmt.Errorf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
 	}
 
-	// Success (200 OK expected for old protocol)
+	if !slices.Contains([]int{http.StatusOK, http.StatusAccepted}, resp.StatusCode) {
+		return NewTransportError("http+sse", "request failed",
+			fmt.Errorf(
+				"unknown HTTP status code returned from server %d: %s",
+				resp.StatusCode,
+				http.StatusText(resp.StatusCode),
+			))
+	}
+
 	return nil
 }
 
-// Receive receives JSON-RPC messages from the SSE stream.
-// Thread-safe due to internal synchronization.
-func (t *HTTPSSE) Receive() ([]RpcMessage, error) {
-	if !t.connectedState.Load() {
-		return nil, ErrNotConnected
-	}
+// Receive returns a channel that delivers messages or errors.
+// The channel will be closed when the transport is closed.
+func (t *HTTPSSE) Receive() <-chan MessageOrError {
+	// Ensure we only create the goroutine once
+	t.receiveOnce.Do(func() {
+		t.receiveChan = make(chan MessageOrError, 1)
+		go t.receiveLoop()
+	})
+	return t.receiveChan
+}
 
-	if t.sseStream.Load() == nil {
-		return nil, NewTransportError("http+sse", "receive", fmt.Errorf("no SSE stream available"))
-	}
+// receiveLoop continuously reads messages from the SSE stream
+func (t *HTTPSSE) receiveLoop() {
+	defer close(t.receiveChan)
 
-	stream := t.sseStream.Load().(httpSSEStream)
+	for {
+		if !t.connectedState.Load() {
+			return
+		}
 
-	// Use a timeout to avoid blocking forever
-	timer := time.NewTimer(100 * time.Millisecond)
-	defer timer.Stop()
+		if t.sseStream.Load() == nil {
+			t.receiveChan <- MessageOrError{Error: NewTransportError("http+sse", "receive", fmt.Errorf("no SSE stream available"))}
+			return
+		}
 
-	select {
-	case msgs := <-stream.messages:
-		return msgs, nil
-	case err := <-stream.errors:
-		return nil, err
-	case <-timer.C:
-		// No messages available right now
-		return nil, nil
+		stream := t.sseStream.Load().(httpSSEStream)
+
+		select {
+		case msg := <-stream.messages:
+			select {
+			case t.receiveChan <- MessageOrError{Message: msg}:
+			case <-stream.done:
+				return
+			}
+		case err := <-stream.errors:
+			t.receiveChan <- MessageOrError{Error: err}
+			return
+		case <-stream.done:
+			return
+		}
 	}
 }
 
@@ -281,7 +333,9 @@ func (t *HTTPSSE) readSSEStream() {
 					}
 
 					t.postEndpoint.Store(endpointData)
-					close(t.endpointChan)
+					t.endpointChanOnce.Do(func() {
+						close(t.endpointChan)
+					})
 				} else {
 					// Parse the event data as a JSON-RPC message
 					var msg RpcMessage
@@ -292,7 +346,7 @@ func (t *HTTPSSE) readSSEStream() {
 						}
 					} else {
 						select {
-						case stream.messages <- []RpcMessage{msg}:
+						case stream.messages <- msg:
 						case <-stream.done:
 							return
 						}
