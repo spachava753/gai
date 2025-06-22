@@ -179,8 +179,8 @@ func TestClient_HTTPSSE_Integration(t *testing.T) {
 		t.Fatalf("Tool call failed: %v", err)
 	}
 
-	if result == nil {
-		t.Fatal("Tool call result was nil")
+	if len(result.Blocks) == 0 {
+		t.Fatal("Tool call result had no blocks")
 	}
 
 	t.Logf("Successfully called tool '%s' with query '%s'.", searchTool.Name, args["query"])
@@ -242,8 +242,8 @@ func TestClient_StreamableHTTP_Integration(t *testing.T) {
 		t.Fatalf("Tool call failed: %v", err)
 	}
 
-	if result == nil {
-		t.Fatal("Tool call result was nil")
+	if len(result.Blocks) == 0 {
+		t.Fatal("Tool call result had no blocks")
 	}
 
 	t.Logf("Successfully called tool '%s' on repo %s.", readWikiStructureTool.Name, args["repoName"])

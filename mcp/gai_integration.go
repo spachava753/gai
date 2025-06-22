@@ -253,40 +253,13 @@ func (c *toolCallback) Call(ctx context.Context, parametersJSON json.RawMessage,
 		}, nil
 	}
 
-	// Convert result to string
-	var resultStr string
-	switch v := result.(type) {
-	case string:
-		resultStr = v
-	case map[string]interface{}:
-		// Check if it's a content block
-		if content, ok := v["content"].(string); ok {
-			resultStr = content
-		} else {
-			// JSON encode the result
-			data, err := json.Marshal(v)
-			if err != nil {
-				return gai.Message{}, fmt.Errorf("failed to marshal result: %w", err)
-			}
-			resultStr = string(data)
-		}
-	default:
-		resultStr = fmt.Sprintf("%v", result)
+	// Update the result message with the correct tool call ID
+	// Since CallTool now returns a gai.Message, we need to update the IDs
+	for i := range result.Blocks {
+		result.Blocks[i].ID = toolCallID
 	}
 
-	// Return successful result
-	return gai.Message{
-		Role: gai.ToolResult,
-		Blocks: []gai.Block{
-			{
-				ID:           toolCallID,
-				BlockType:    gai.Content,
-				ModalityType: gai.Text,
-				MimeType:     "text/plain",
-				Content:      gai.Str(resultStr),
-			},
-		},
-	}, nil
+	return result, nil
 }
 
 // RegisterMCPToolsWithGenerator registers all MCP tools returned by the server

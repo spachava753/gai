@@ -121,7 +121,7 @@ func (p *pendingRequests) closeAll() {
 // **Concurrency-Safe Methods (safe to call from multiple goroutines):**
 //   - Close() - Safe to call concurrently and multiple times
 //   - Reading from Notifications() channel - Safe from any goroutine
-//   - Request() and Notify() - Safe to call concurrently
+//   - request() and Notify() - Safe to call concurrently
 //   - All request-response methods (ListTools, CallTool, etc.) - Safe to call concurrently
 //   - Ping methods - Safe to call concurrently
 //   - Getter methods (IsConnected, GetServerInfo, etc.) - Safe to call concurrently
@@ -396,7 +396,7 @@ func (c *Client) initialize(ctx context.Context, clientInfo ClientInfo, capabili
 		ClientInfo:      clientInfo,
 	}
 
-	result, err := c.Request(ctx, "initialize", params)
+	result, err := c.request(ctx, "initialize", params)
 	if err != nil {
 		return fmt.Errorf("initialize request failed: %w", err)
 	}
@@ -461,7 +461,7 @@ func (c *Client) IsConnected() bool {
 	return c.connectedState.Load()
 }
 
-// Request sends a raw request (for advanced use)
+// request sends a raw request
 //
 // To receive progress notifications for long-running operations, include a progressToken
 // in the request metadata:
@@ -475,7 +475,7 @@ func (c *Client) IsConnected() bool {
 //
 // Progress notifications will be delivered through the Notifications() channel with
 // method "notifications/progress" and the matching progressToken.
-func (c *Client) Request(ctx context.Context, method string, params interface{}) (map[string]interface{}, error) {
+func (c *Client) request(ctx context.Context, method string, params interface{}) (map[string]interface{}, error) {
 	if !c.IsConnected() {
 		return nil, ErrNotConnected
 	}
@@ -537,7 +537,7 @@ func (c *Client) Request(ctx context.Context, method string, params interface{})
 	}
 }
 
-// Notify sends a notification (for advanced use)
+// Notify sends a notification
 func (c *Client) Notify(ctx context.Context, method string, params interface{}) error {
 	if !c.IsConnected() {
 		return ErrNotConnected
@@ -603,7 +603,7 @@ func (c *Client) ListTools(ctx context.Context) ([]gai.Tool, error) {
 		return nil, NewUnsupportedFeatureError("tools", "server does not advertise tools capability")
 	}
 
-	result, err := c.Request(ctx, "tools/list", nil)
+	result, err := c.request(ctx, "tools/list", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -626,15 +626,15 @@ func (c *Client) ListTools(ctx context.Context) ([]gai.Tool, error) {
 }
 
 // CallTool calls a tool by name. The arguments map must conform to the tool's input schema.
-// The return value is provider-defined and may be of any JSON-compatible type.
-func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (any, error) {
+// The return value is converted from the MCP tool result format into a gai.Message.
+func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (gai.Message, error) {
 	if !c.initialized {
-		return nil, ErrNotInitialized
+		return gai.Message{}, ErrNotInitialized
 	}
 
 	// Check if server supports tools
 	if c.serverCapabilities.Tools == nil {
-		return nil, NewUnsupportedFeatureError("tools", "server does not advertise tools capability")
+		return gai.Message{}, NewUnsupportedFeatureError("tools", "server does not advertise tools capability")
 	}
 
 	params := map[string]interface{}{
@@ -642,17 +642,13 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 		"arguments": arguments,
 	}
 
-	result, err := c.Request(ctx, "tools/call", params)
+	result, err := c.request(ctx, "tools/call", params)
 	if err != nil {
-		return nil, err
+		return gai.Message{}, err
 	}
 
-	// Tools can return any type of result
-	if content, ok := result["content"]; ok {
-		return content, nil
-	}
-
-	return result, nil
+	// Convert the result to a gai.Message
+	return convertCallToolResultToGAIMessage(result)
 }
 
 // Resource-related methods
@@ -668,7 +664,7 @@ func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
 		return nil, NewUnsupportedFeatureError("resources", "server does not advertise resources capability")
 	}
 
-	result, err := c.Request(ctx, "resources/list", nil)
+	result, err := c.request(ctx, "resources/list", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -696,7 +692,7 @@ func (c *Client) ReadResource(ctx context.Context, uri string) ([]ResourceConten
 		URI: uri,
 	}
 
-	result, err := c.Request(ctx, "resources/read", params)
+	result, err := c.request(ctx, "resources/read", params)
 	if err != nil {
 		return nil, err
 	}
@@ -730,7 +726,7 @@ func (c *Client) SubscribeToResource(ctx context.Context, uri string) error {
 		"uri": uri,
 	}
 
-	result, err := c.Request(ctx, "resources/subscribe", params)
+	result, err := c.request(ctx, "resources/subscribe", params)
 	if err != nil {
 		return err
 	}
@@ -761,7 +757,7 @@ func (c *Client) UnsubscribeFromResource(ctx context.Context, uri string) error 
 		"uri": uri,
 	}
 
-	_, err := c.Request(ctx, "resources/unsubscribe", params)
+	_, err := c.request(ctx, "resources/unsubscribe", params)
 	return err
 }
 
@@ -778,7 +774,7 @@ func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 		return nil, NewUnsupportedFeatureError("prompts", "server does not advertise prompts capability")
 	}
 
-	result, err := c.Request(ctx, "prompts/list", nil)
+	result, err := c.request(ctx, "prompts/list", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -807,7 +803,7 @@ func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[strin
 		Arguments: arguments,
 	}
 
-	result, err := c.Request(ctx, "prompts/get", params)
+	result, err := c.request(ctx, "prompts/get", params)
 	if err != nil {
 		return nil, err
 	}
@@ -822,7 +818,7 @@ func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[strin
 
 // Ping sends a ping request
 func (c *Client) Ping(ctx context.Context) error {
-	_, err := c.Request(ctx, "ping", nil)
+	_, err := c.request(ctx, "ping", nil)
 	return err
 }
 
@@ -841,7 +837,7 @@ func (c *Client) SetLoggingLevel(ctx context.Context, level string) error {
 		"level": level,
 	}
 
-	_, err := c.Request(ctx, "logging/setLevel", params)
+	_, err := c.request(ctx, "logging/setLevel", params)
 	return err
 }
 
@@ -883,11 +879,6 @@ func (c *Client) Notifications() <-chan RpcMessage {
 	return c.notifications
 }
 
-// GetIDGenerator returns the ID generator (for advanced use)
-func (c *Client) GetIDGenerator() interface{ Generate() RequestID } {
-	return c.idGen
-}
-
 // toMap converts a value to a map
 func toMap(v interface{}) (map[string]interface{}, error) {
 	if v == nil {
@@ -914,7 +905,7 @@ func toMap(v interface{}) (map[string]interface{}, error) {
 }
 
 // parseResult parses a result map into a struct
-func parseResult(result map[string]interface{}, v interface{}) error {
+func parseResult[T any](result map[string]interface{}, v T) error {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err
