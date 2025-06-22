@@ -142,26 +142,15 @@ type InitializeResult struct {
 	Instructions    string             `json:"instructions,omitempty"`
 }
 
-// Root represents a filesystem root
-type Root struct {
-	URI  string `json:"uri"`
-	Name string `json:"name,omitempty"`
-}
-
-// RootsListResult represents the result of a roots/list request
-type RootsListResult struct {
-	Roots []Root `json:"roots"`
-}
-
 // tool represents a tool definition
 type tool struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description,omitempty"`
-	InputSchema InputSchema `json:"inputSchema"`
+	InputSchema inputSchema `json:"inputSchema"`
 }
 
-// InputSchema represents the schema for tool input
-type InputSchema struct {
+// inputSchema represents the schema for tool input
+type inputSchema struct {
 	Type       string                 `json:"type"`
 	Properties map[string]interface{} `json:"properties,omitempty"`
 	Required   []string               `json:"required,omitempty"`
@@ -245,14 +234,6 @@ type ModelPreferences struct {
 // ModelHint represents a hint for model selection
 type ModelHint struct {
 	Name string `json:"name"`
-}
-
-// CreateMessageParams represents parameters for sampling/createMessage
-type CreateMessageParams struct {
-	Messages         []Message         `json:"messages"`
-	ModelPreferences *ModelPreferences `json:"modelPreferences,omitempty"`
-	SystemPrompt     string            `json:"systemPrompt,omitempty"`
-	MaxTokens        int               `json:"maxTokens,omitempty"`
 }
 
 // CreateMessageResult represents the result of sampling/createMessage

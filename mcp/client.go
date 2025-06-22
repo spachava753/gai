@@ -132,7 +132,6 @@ type Client struct {
 	// request tracking
 	pending *pendingRequests
 
-	// misc
 	transport Transport
 	idGen     *IDGenerator
 
@@ -144,8 +143,8 @@ type Client struct {
 	// Options
 	options Options
 
-	// Thread-safe connection state tracking
 	connectedState atomic.Bool
+	connectedChan  chan struct{}
 
 	// Protocol version negotiated
 	protocolVersion string
@@ -181,11 +180,11 @@ type Client struct {
 //
 // Returns a fully initialized and ready-to-use client, or an error if setup fails.
 func NewClient(ctx context.Context, transport Transport, clientInfo ClientInfo, capabilities ClientCapabilities, options Options) (*Client, error) {
-	notifications := make(chan RpcMessage, 256)
+	notifications := make(chan RpcMessage)
 	outbound := make(chan struct {
 		msg     RpcMessage
 		errChan chan error
-	}, 256)
+	})
 
 	c := &Client{
 		transport:     transport,
@@ -197,6 +196,7 @@ func NewClient(ctx context.Context, transport Transport, clientInfo ClientInfo, 
 		wg:            new(sync.WaitGroup),
 		pending:       &pendingRequests{},
 		once:          new(sync.Once),
+		connectedChan: make(chan struct{}),
 	}
 
 	// Start background goroutines
@@ -249,8 +249,7 @@ func (c *Client) receiver() {
 		select {
 		case <-c.done:
 			return
-		case <-time.After(10 * time.Millisecond):
-			// Check again
+		case <-c.connectedChan:
 		}
 	}
 
@@ -263,7 +262,7 @@ func (c *Client) receiver() {
 			return
 		case msgOrErr, ok := <-receiveChan:
 			// Check if channel was closed
-			if !ok || (msgOrErr.Error == nil && msgOrErr.Message.JSONRPC == "") {
+			if !ok {
 				// Channel closed, transport disconnected
 				if c.options.ErrorHandler != nil {
 					c.options.ErrorHandler(fmt.Errorf("transport disconnected"))
@@ -350,6 +349,7 @@ func (c *Client) connect(ctx context.Context) error {
 	}
 
 	c.connectedState.Store(true)
+	close(c.connectedChan)
 	return nil
 }
 
@@ -377,7 +377,7 @@ func (c *Client) initialize(ctx context.Context, clientInfo ClientInfo, capabili
 
 	// Parse result
 	var initResult InitializeResult
-	if err := ParseResult(result, &initResult); err != nil {
+	if err := parseResult(result, &initResult); err != nil {
 		return fmt.Errorf("failed to parse initialize result: %w", err)
 	}
 
@@ -544,7 +544,7 @@ func (c *Client) Notify(ctx context.Context, method string, params interface{}) 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case err := <-errChan:
+	case err = <-errChan:
 		return err
 	}
 }
@@ -583,7 +583,7 @@ func (c *Client) ListTools(ctx context.Context) ([]gai.Tool, error) {
 	}
 
 	var listResult toolsListResult
-	if err := ParseResult(result, &listResult); err != nil {
+	if err := parseResult(result, &listResult); err != nil {
 		return nil, err
 	}
 
@@ -648,7 +648,7 @@ func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
 	}
 
 	var listResult ResourcesListResult
-	if err := ParseResult(result, &listResult); err != nil {
+	if err := parseResult(result, &listResult); err != nil {
 		return nil, err
 	}
 
@@ -676,7 +676,7 @@ func (c *Client) ReadResource(ctx context.Context, uri string) ([]ResourceConten
 	}
 
 	var readResult ResourcesReadResult
-	if err := ParseResult(result, &readResult); err != nil {
+	if err := parseResult(result, &readResult); err != nil {
 		return nil, err
 	}
 
@@ -742,7 +742,6 @@ func (c *Client) UnsubscribeFromResource(ctx context.Context, uri string) error 
 // Prompt-related methods
 
 // ListPrompts lists available prompts
-// Thread-safe - can be called concurrently after initialization.
 func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 	if !c.initialized {
 		return nil, ErrNotInitialized
@@ -759,7 +758,7 @@ func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 	}
 
 	var listResult PromptsListResult
-	if err := ParseResult(result, &listResult); err != nil {
+	if err := parseResult(result, &listResult); err != nil {
 		return nil, err
 	}
 
@@ -767,7 +766,6 @@ func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
 }
 
 // GetPrompt gets a prompt with arguments
-// Thread-safe - can be called concurrently after initialization.
 func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[string]string) (*PromptsGetResult, error) {
 	if !c.initialized {
 		return nil, ErrNotInitialized
@@ -789,52 +787,20 @@ func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[strin
 	}
 
 	var getResult PromptsGetResult
-	if err := ParseResult(result, &getResult); err != nil {
+	if err := parseResult(result, &getResult); err != nil {
 		return nil, err
 	}
 
 	return &getResult, nil
 }
 
-// Sampling-related methods
-
-// CreateMessage creates a message using LLM sampling
-// Thread-safe - can be called concurrently after initialization.
-func (c *Client) CreateMessage(ctx context.Context, params CreateMessageParams) (*CreateMessageResult, error) {
-	if !c.initialized {
-		return nil, ErrNotInitialized
-	}
-
-	result, err := c.Request(ctx, "sampling/createMessage", params)
-	if err != nil {
-		return nil, err
-	}
-
-	var createResult CreateMessageResult
-	if err := ParseResult(result, &createResult); err != nil {
-		return nil, err
-	}
-
-	return &createResult, nil
-}
-
 // Ping sends a ping request
-// Thread-safe - can be called concurrently after initialization.
 func (c *Client) Ping(ctx context.Context) error {
 	_, err := c.Request(ctx, "ping", nil)
 	return err
 }
 
-// PingWithTimeout sends a ping with a specific timeout
-// Thread-safe - can be called concurrently after initialization.
-func (c *Client) PingWithTimeout(timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	return c.Ping(ctx)
-}
-
 // SetLoggingLevel sets the server logging level
-// Thread-safe - can be called concurrently after initialization.
 func (c *Client) SetLoggingLevel(ctx context.Context, level string) error {
 	if !c.initialized {
 		return ErrNotInitialized
@@ -854,7 +820,6 @@ func (c *Client) SetLoggingLevel(ctx context.Context, level string) error {
 }
 
 // CancelRequest cancels a specific request
-// Thread-safe - can be called concurrently after initialization.
 func (c *Client) CancelRequest(requestID RequestID, reason string) error {
 	params := CancelledParams{
 		RequestID: requestID,
@@ -865,7 +830,6 @@ func (c *Client) CancelRequest(requestID RequestID, reason string) error {
 }
 
 // Notifications is a read only channel that returns all notifications sent from the mcp server
-// Thread-safe - can be called concurrently after initialization.
 //
 // The notifications channel receives all server-sent notifications including:
 //   - Progress updates (method: "notifications/progress") when using progress tokens
@@ -894,7 +858,6 @@ func (c *Client) Notifications() <-chan RpcMessage {
 }
 
 // GetIDGenerator returns the ID generator (for advanced use)
-// Thread-safe - can be called concurrently.
 func (c *Client) GetIDGenerator() interface{ Generate() RequestID } {
 	return c.idGen
 }
@@ -924,8 +887,8 @@ func toMap(v interface{}) (map[string]interface{}, error) {
 	return result, nil
 }
 
-// ParseResult parses a result map into a struct
-func ParseResult(result map[string]interface{}, v interface{}) error {
+// parseResult parses a result map into a struct
+func parseResult(result map[string]interface{}, v interface{}) error {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err

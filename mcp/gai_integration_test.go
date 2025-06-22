@@ -18,7 +18,7 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 			mcpTool: tool{
 				Name:        "simple_tool",
 				Description: "A simple tool without parameters",
-				InputSchema: InputSchema{
+				InputSchema: inputSchema{
 					Type: "object",
 				},
 			},
@@ -36,7 +36,7 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 			mcpTool: tool{
 				Name:        "string_param_tool",
 				Description: "A tool with a string parameter",
-				InputSchema: InputSchema{
+				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
 						"text": map[string]interface{}{
@@ -66,7 +66,7 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 			mcpTool: tool{
 				Name:        "required_param_tool",
 				Description: "A tool with required parameters",
-				InputSchema: InputSchema{
+				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
 						"path": map[string]interface{}{
@@ -106,7 +106,7 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 			mcpTool: tool{
 				Name:        "multi_type_tool",
 				Description: "A tool with multiple parameter types",
-				InputSchema: InputSchema{
+				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
 						"text": map[string]interface{}{
@@ -162,7 +162,7 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 			mcpTool: tool{
 				Name:        "nested_object_tool",
 				Description: "A tool with nested object parameters",
-				InputSchema: InputSchema{
+				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
 						"config": map[string]interface{}{
@@ -216,7 +216,7 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 			mcpTool: tool{
 				Name:        "array_tool",
 				Description: "A tool with array parameters",
-				InputSchema: InputSchema{
+				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
 						"tags": map[string]interface{}{
@@ -272,7 +272,7 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 			mcpTool: tool{
 				Name:        "enum_tool",
 				Description: "A tool with enumeration parameters",
-				InputSchema: InputSchema{
+				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
 						"color": map[string]interface{}{
@@ -314,7 +314,7 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 			mcpTool: tool{
 				Name:        "complex_tool",
 				Description: "A tool with complex nested structure",
-				InputSchema: InputSchema{
+				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
 						"user": map[string]interface{}{
@@ -450,7 +450,7 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 			mcpTool: tool{
 				Name:        "invalid_schema_tool",
 				Description: "A tool with an invalid schema",
-				InputSchema: InputSchema{
+				InputSchema: inputSchema{
 					Type: "invalid_type",
 				},
 			},
@@ -462,7 +462,7 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 			mcpTool: tool{
 				Name:        "create_pull_request_review",
 				Description: "Create a review for a pull request.",
-				InputSchema: InputSchema{
+				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]interface{}{
 						"owner": map[string]interface{}{
