@@ -100,6 +100,9 @@ func (t *HTTPSSE) Connect(ctx context.Context) error {
 
 	if resp.StatusCode >= 400 {
 		resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized {
+			return AuthenticationError
+		}
 		return NewTransportError("http+sse", "GET request failed",
 			fmt.Errorf("HTTP %d", resp.StatusCode))
 	}
@@ -139,7 +142,6 @@ func (t *HTTPSSE) Connect(ctx context.Context) error {
 }
 
 // Close closes the HTTP+SSE transport connection.
-// Not thread-safe - must not be called concurrently with other methods.
 func (t *HTTPSSE) Close() error {
 	if !t.connectedState.Load() {
 		return nil
