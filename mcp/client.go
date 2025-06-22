@@ -21,11 +21,37 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	gonanoid "github.com/matoous/go-nanoid/v2"
 	"github.com/spachava753/gai"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// IDer generates unique request IDs using nanoid
+type IDer interface {
+	Generate() RequestID
+}
+
+// NewIDGenerator creates a new request ID generator
+func NewIDGenerator() IDer {
+	return &nanoIder{}
+}
+
+type nanoIder struct{}
+
+// Generate generates a new unique request ID using nanoid
+func (g *nanoIder) Generate() RequestID {
+	// Generate a nanoid with default alphabet and length (21 characters)
+	// This provides excellent uniqueness guarantees and is URL-safe
+	id, err := gonanoid.New()
+	if err != nil {
+		// Fallback to a simple UUID-like string if nanoid fails
+		// This should never happen in practice
+		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+	}
+	return id
+}
 
 // Options contains options for creating a client
 type Options struct {
@@ -133,7 +159,7 @@ type Client struct {
 	pending *pendingRequests
 
 	transport Transport
-	idGen     *IDGenerator
+	idGen     IDer
 
 	// goroutine coordination
 	done chan struct{}   // close(done) => stop all internals

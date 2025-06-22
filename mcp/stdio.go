@@ -3,6 +3,7 @@ package mcp
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,9 +31,7 @@ type StdioConfig struct {
 }
 
 // Stdio implements Transport using stdio communication.
-// Thread Safety: This transport is NOT thread-safe. Connect/Close must not
-// be called concurrently. Send/Receive operations are synchronized internally
-// by the codec.
+// Send/Receive operations are synchronized internally.
 type Stdio struct {
 	config    StdioConfig
 	cmd       *exec.Cmd
@@ -40,7 +39,11 @@ type Stdio struct {
 	stdout    io.ReadCloser
 	stderr    io.ReadCloser
 	stderrBuf *bufio.Reader
-	codec     *Codec
+
+	// JSON-RPC encoding/decoding functionality (previously in codec)
+	codecMu sync.Mutex
+	encoder *json.Encoder
+	decoder *bufio.Scanner
 
 	// State
 	connectedState atomic.Bool
@@ -64,6 +67,34 @@ func NewStdio(config StdioConfig) *Stdio {
 // SetStderrHandler sets a handler for stderr output
 func (t *Stdio) SetStderrHandler(handler func(string)) {
 	t.onStderr = handler
+}
+
+// writeMessage writes a JSON-RPC message
+func (t *Stdio) writeMessage(msg RpcMessage) error {
+	t.codecMu.Lock()
+	defer t.codecMu.Unlock()
+
+	return t.encoder.Encode(msg)
+}
+
+// readMessage reads a JSON-RPC message
+func (t *Stdio) readMessage() (RpcMessage, error) {
+	if !t.decoder.Scan() {
+		if err := t.decoder.Err(); err != nil {
+			return RpcMessage{}, err
+		}
+		return RpcMessage{}, io.EOF
+	}
+
+	line := t.decoder.Bytes()
+
+	// Parse as a single message
+	var msg RpcMessage
+	if err := json.Unmarshal(line, &msg); err != nil {
+		return RpcMessage{}, fmt.Errorf("failed to parse message: %w", err)
+	}
+
+	return msg, nil
 }
 
 // Connect establishes the stdio transport connection.
@@ -107,8 +138,15 @@ func (t *Stdio) Connect(ctx context.Context) error {
 		return NewTransportError("stdio", "start process", err)
 	}
 
-	// Create codec
-	t.codec = NewCodec(t.stdout, t.stdin)
+	// Create encoder and decoder for JSON-RPC communication
+	t.encoder = json.NewEncoder(t.stdin)
+
+	scanner := bufio.NewScanner(t.stdout)
+	// Set a larger buffer for the scanner to handle large messages
+	const maxScanTokenSize = 10 * 1024 * 1024 // 10MB
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, maxScanTokenSize)
+	t.decoder = scanner
 
 	// Start stderr reader
 	t.stderrBuf = bufio.NewReader(t.stderr)
@@ -220,17 +258,17 @@ func (t *Stdio) GetProcessInfo() (pid int, running bool) {
 }
 
 // Send sends a JSON-RPC message.
-// Thread-safe due to codec internal synchronization.
+// Thread-safe due to internal synchronization.
 func (t *Stdio) Send(msg RpcMessage) error {
 	if !t.connectedState.Load() {
 		return ErrNotConnected
 	}
 
-	if t.codec == nil {
-		return fmt.Errorf("codec not initialized")
+	if t.encoder == nil {
+		return fmt.Errorf("encoder not initialized")
 	}
 
-	return t.codec.WriteMessage(msg)
+	return t.writeMessage(msg)
 }
 
 // Receive returns a channel that delivers messages or errors.
@@ -253,12 +291,12 @@ func (t *Stdio) receiveLoop() {
 			return
 		}
 
-		if t.codec == nil {
-			t.receiveChan <- MessageOrError{Error: fmt.Errorf("codec not initialized")}
+		if t.decoder == nil {
+			t.receiveChan <- MessageOrError{Error: fmt.Errorf("decoder not initialized")}
 			return
 		}
 
-		msg, err := t.codec.ReadMessage()
+		msg, err := t.readMessage()
 		if err != nil {
 			if !t.closedState.Load() {
 				t.receiveChan <- MessageOrError{Error: err}
