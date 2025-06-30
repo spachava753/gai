@@ -16,10 +16,6 @@ import (
 )
 
 // StreamableHTTP implements Transport using Streamable HTTP (protocol version 2025-03-26).
-// Thread Safety: This transport has mixed concurrency requirements:
-// - Connect/Close must not be called concurrently
-// - Send/Receive are synchronized internally due to HTTP requests and SSE streams
-// - SSE stream management uses sync.Map for safe concurrent access
 type StreamableHTTP struct {
 	config    HTTPConfig
 	client    *http.Client
@@ -30,6 +26,9 @@ type StreamableHTTP struct {
 
 	// State that needs synchronization
 	connectedState atomic.Bool
+
+	// Use sync.Once to ensure Connect is only called once
+	connectOnce sync.Once
 
 	// SSE stream management using sync.Map for concurrent access
 	sseStreams sync.Map // map[string]*streamableSSEStream
@@ -42,6 +41,9 @@ type StreamableHTTP struct {
 
 	// Channel for receiving messages
 	receiveChan chan MessageOrError
+
+	// Use sync.Once to ensure Close is only called once
+	closeOnce sync.Once
 }
 
 // streamableSSEStream represents an active SSE connection
@@ -68,51 +70,46 @@ func NewStreamableHTTP(config HTTPConfig) *StreamableHTTP {
 }
 
 // Connect establishes the HTTP transport connection.
-// Not thread-safe - must not be called concurrently with other methods.
 func (t *StreamableHTTP) Connect(ctx context.Context) error {
-	if t.connectedState.Load() {
-		return ErrAlreadyConnected
-	}
-
-	// For HTTP transport, we don't need to establish a persistent connection
-	// We'll connect on-demand for each request
-	t.connectedState.Store(true)
-
-	return nil
+	var result error
+	t.connectOnce.Do(func() {
+		if t.connectedState.Load() {
+			result = ErrAlreadyConnected
+			return
+		}
+		t.connectedState.Store(true)
+	})
+	return result
 }
 
 // Close closes the HTTP transport connection.
-// Not thread-safe - must not be called concurrently with other methods.
+// This method is thread-safe and can be called concurrently multiple times.
 func (t *StreamableHTTP) Close() error {
-	if !t.connectedState.Load() {
-		return nil
-	}
-	t.connectedState.Store(false)
-
-	// Close all SSE streams
-	t.sseStreams.Range(func(key, value interface{}) bool {
-		if stream, ok := value.(*streamableSSEStream); ok {
-			close(stream.done)
-			stream.response.Body.Close()
+	var err error
+	t.closeOnce.Do(func() {
+		t.connectedState.Store(false)
+		t.sseStreams.Range(func(key, value interface{}) bool {
+			if stream, ok := value.(*streamableSSEStream); ok {
+				close(stream.done)
+				errClose := stream.response.Body.Close()
+				if errClose != nil && err == nil {
+					err = errClose
+				}
+			}
+			t.sseStreams.Delete(key)
+			return true
+		})
+		close(t.receiveChan)
+		if t.sessionID != "" {
+			req, reqErr := http.NewRequest(http.MethodDelete, t.config.URL, nil)
+			if reqErr == nil {
+				t.addHeaders(req)
+				req.Header.Set("Mcp-Session-Id", t.sessionID)
+				t.client.Do(req)
+			}
 		}
-		t.sseStreams.Delete(key)
-		return true
 	})
-
-	// Close the receive channel
-	close(t.receiveChan)
-
-	// Send DELETE request if we have a session ID
-	if t.sessionID != "" {
-		req, err := http.NewRequest(http.MethodDelete, t.config.URL, nil)
-		if err == nil {
-			t.addHeaders(req)
-			req.Header.Set("Mcp-Session-Id", t.sessionID)
-			t.client.Do(req)
-		}
-	}
-
-	return nil
+	return err
 }
 
 // Send sends a JSON-RPC message via HTTP POST

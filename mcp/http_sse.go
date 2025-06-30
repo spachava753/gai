@@ -42,8 +42,11 @@ type HTTPSSE struct {
 	client *http.Client
 
 	connectedState atomic.Bool
-	postEndpoint   atomic.Value // string
-	sseStream      atomic.Value // httpSSEStream Single active SSE stream
+
+	// Use sync.Once to ensure Connect is only called once
+	connectOnce  sync.Once
+	postEndpoint atomic.Value // string
+	sseStream    atomic.Value // httpSSEStream Single active SSE stream
 
 	endpointChan     chan struct{}
 	endpointChanOnce sync.Once
@@ -51,6 +54,9 @@ type HTTPSSE struct {
 	// Channel for receiving messages
 	receiveChan chan MessageOrError
 	receiveOnce sync.Once
+
+	// Use sync.Once to ensure Close is only called once
+	closeOnce sync.Once
 }
 
 // httpSSEStream represents the active SSE connection
@@ -80,83 +86,88 @@ func NewHTTPSSE(config HTTPConfig) *HTTPSSE {
 
 // Connect establishes the HTTP+SSE transport connection.
 func (t *HTTPSSE) Connect(ctx context.Context) error {
-	if t.connectedState.Load() {
-		return ErrAlreadyConnected
-	}
-
-	// Issue a GET request to establish SSE connection and get endpoint
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.config.URL, nil)
-	if err != nil {
-		return NewTransportError("http+sse", "create GET request", err)
-	}
-
-	t.addHeaders(req)
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return NewTransportError("http+sse", "send GET request", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusUnauthorized {
-			return AuthenticationError
+	var result error
+	t.connectOnce.Do(func() {
+		if t.connectedState.Load() {
+			result = ErrAlreadyConnected
+			return
 		}
-		return NewTransportError("http+sse", "GET request failed",
-			fmt.Errorf("HTTP %d", resp.StatusCode))
-	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentType, "text/event-stream") {
-		resp.Body.Close()
-		return NewTransportError("http+sse", "unexpected content type",
-			fmt.Errorf("expected text/event-stream, got %s", contentType))
-	}
+		// Issue a GET request to establish SSE connection and get endpoint
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.config.URL, nil)
+		if err != nil {
+			result = NewTransportError("http+sse", "create GET request", err)
+			return
+		}
 
-	// Create the SSE stream
-	stream := httpSSEStream{
-		response: resp,
-		reader:   bufio.NewReader(resp.Body),
-		messages: make(chan RpcMessage),
-		errors:   make(chan error),
-		done:     make(chan struct{}),
-	}
-	t.sseStream.Store(stream)
+		t.addHeaders(req)
+		req.Header.Set("Accept", "text/event-stream")
 
-	// Start reading SSE events
-	go t.readSSEStream()
+		resp, err := t.client.Do(req)
+		if err != nil {
+			result = NewTransportError("http+sse", "send GET request", err)
+			return
+		}
 
-	select {
-	case <-ctx.Done():
-		// Clean up on timeout
-		close(stream.done)
-		resp.Body.Close()
-		return ctx.Err()
-	case <-t.endpointChan:
-		// endpoint found
-	}
+		if resp.StatusCode >= 400 {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusUnauthorized {
+				result = AuthenticationError
+				return
+			}
+			result = NewTransportError("http+sse", "GET request failed",
+				fmt.Errorf("HTTP %d", resp.StatusCode))
+			return
+		}
 
-	t.connectedState.Store(true)
-	return nil
+		contentType := resp.Header.Get("Content-Type")
+		if !strings.HasPrefix(contentType, "text/event-stream") {
+			resp.Body.Close()
+			result = NewTransportError("http+sse", "unexpected content type",
+				fmt.Errorf("expected text/event-stream, got %s", contentType))
+			return
+		}
+
+		// Create the SSE stream
+		stream := httpSSEStream{
+			response: resp,
+			reader:   bufio.NewReader(resp.Body),
+			messages: make(chan RpcMessage),
+			errors:   make(chan error),
+			done:     make(chan struct{}),
+		}
+		t.sseStream.Store(stream)
+
+		// Start reading SSE events
+		go t.readSSEStream()
+
+		select {
+		case <-ctx.Done():
+			close(stream.done)
+			resp.Body.Close()
+			result = ctx.Err()
+			return
+		case <-t.endpointChan:
+			// endpoint found
+		}
+
+		t.connectedState.Store(true)
+	})
+	return result
 }
 
 // Close closes the HTTP+SSE transport connection.
 func (t *HTTPSSE) Close() error {
-	if !t.connectedState.Load() {
-		return nil
-	}
-
-	t.connectedState.Store(false)
-
-	// Close the SSE stream
-	if t.sseStream.Load() != nil {
-		sseStream := t.sseStream.Load().(httpSSEStream)
-		close(sseStream.done)
-		sseStream.response.Body.Close()
-	}
-
-	return nil
+	var err error
+	t.closeOnce.Do(func() {
+		t.connectedState.Store(false)
+		if t.sseStream.Load() != nil {
+			sseStream := t.sseStream.Load().(httpSSEStream)
+			close(sseStream.done)
+			err = sseStream.response.Body.Close()
+		}
+	})
+	return err
 }
 
 // Send sends a JSON-RPC message via HTTP POST
@@ -273,7 +284,11 @@ func (t *HTTPSSE) receiveLoop() {
 				return
 			}
 		case err := <-stream.errors:
-			t.receiveChan <- MessageOrError{Error: err}
+			select {
+			case t.receiveChan <- MessageOrError{Error: err}:
+			case <-stream.done:
+				return
+			}
 			return
 		case <-stream.done:
 			return
@@ -377,6 +392,4 @@ func (t *HTTPSSE) addHeaders(req *http.Request) {
 	for k, v := range t.config.Headers {
 		req.Header.Set(k, v)
 	}
-
-	// No session ID or protocol version for old protocol
 }

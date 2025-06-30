@@ -47,7 +47,10 @@ type Stdio struct {
 
 	// State
 	connectedState atomic.Bool
-	closedState    atomic.Bool
+
+	// Use sync.Once to ensure Connect is only called once
+	connectOnce sync.Once
+	closedState atomic.Bool
 
 	// For logging stderr
 	onStderr func(string)
@@ -55,6 +58,9 @@ type Stdio struct {
 	// Channel for receiving messages
 	receiveChan chan MessageOrError
 	receiveOnce sync.Once
+
+	// Use sync.Once to ensure Close is only called once
+	closeOnce sync.Once
 }
 
 // NewStdio creates a new stdio transport
@@ -99,61 +105,68 @@ func (t *Stdio) readMessage() (RpcMessage, error) {
 
 // Connect establishes the stdio transport connection.
 func (t *Stdio) Connect(ctx context.Context) error {
-	if t.connectedState.Load() {
-		return ErrAlreadyConnected
-	}
-
-	// Create command
-	t.cmd = exec.CommandContext(ctx, t.config.Command, t.config.Args...)
-
-	// Set environment variables
-	if len(t.config.Env) > 0 {
-		env := os.Environ()
-		for k, v := range t.config.Env {
-			env = append(env, fmt.Sprintf("%s=%s", k, v))
+	var result error
+	t.connectOnce.Do(func() {
+		if t.connectedState.Load() {
+			result = ErrAlreadyConnected
+			return
 		}
-		t.cmd.Env = env
-	}
+		// Create command
+		t.cmd = exec.CommandContext(ctx, t.config.Command, t.config.Args...)
 
-	// Create pipes
-	var err error
-	t.stdin, err = t.cmd.StdinPipe()
-	if err != nil {
-		return NewTransportError("stdio", "create stdin pipe", err)
-	}
+		// Set environment variables
+		if len(t.config.Env) > 0 {
+			env := os.Environ()
+			for k, v := range t.config.Env {
+				env = append(env, fmt.Sprintf("%s=%s", k, v))
+			}
+			t.cmd.Env = env
+		}
 
-	t.stdout, err = t.cmd.StdoutPipe()
-	if err != nil {
-		return NewTransportError("stdio", "create stdout pipe", err)
-	}
+		// Create pipes
+		var err error
+		t.stdin, err = t.cmd.StdinPipe()
+		if err != nil {
+			result = NewTransportError("stdio", "create stdin pipe", err)
+			return
+		}
 
-	// TODO: figure out whether we even need a stderr pipe if the server is supposed to send logs to client
-	t.stderr, err = t.cmd.StderrPipe()
-	if err != nil {
-		return NewTransportError("stdio", "create stderr pipe", err)
-	}
+		t.stdout, err = t.cmd.StdoutPipe()
+		if err != nil {
+			result = NewTransportError("stdio", "create stdout pipe", err)
+			return
+		}
 
-	// Start the process
-	if err := t.cmd.Start(); err != nil {
-		return NewTransportError("stdio", "start process", err)
-	}
+		// TODO: figure out whether we even need a stderr pipe if the server is supposed to send logs to client
+		t.stderr, err = t.cmd.StderrPipe()
+		if err != nil {
+			result = NewTransportError("stdio", "create stderr pipe", err)
+			return
+		}
 
-	// Create encoder and decoder for JSON-RPC communication
-	t.encoder = json.NewEncoder(t.stdin)
+		// Start the process
+		if err := t.cmd.Start(); err != nil {
+			result = NewTransportError("stdio", "start process", err)
+			return
+		}
 
-	scanner := bufio.NewScanner(t.stdout)
-	// Set a larger buffer for the scanner to handle large messages
-	const maxScanTokenSize = 10 * 1024 * 1024 // 10MB
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, maxScanTokenSize)
-	t.decoder = scanner
+		// Create encoder and decoder for JSON-RPC communication
+		t.encoder = json.NewEncoder(t.stdin)
 
-	// Start stderr reader
-	t.stderrBuf = bufio.NewReader(t.stderr)
-	go t.readStderr()
+		scanner := bufio.NewScanner(t.stdout)
+		// Set a larger buffer for the scanner to handle large messages
+		const maxScanTokenSize = 10 * 1024 * 1024 // 10MB
+		buf := make([]byte, 0, 64*1024)
+		scanner.Buffer(buf, maxScanTokenSize)
+		t.decoder = scanner
 
-	t.connectedState.Store(true)
-	return nil
+		// Start stderr reader
+		t.stderrBuf = bufio.NewReader(t.stderr)
+		go t.readStderr()
+
+		t.connectedState.Store(true)
+	})
+	return result
 }
 
 // readStderr reads and logs stderr output
@@ -178,70 +191,68 @@ func (t *Stdio) readStderr() {
 
 // Close closes the stdio transport connection.
 func (t *Stdio) Close() error {
-	if t.closedState.Load() {
-		return nil
-	}
-	t.closedState.Store(true)
-	t.connectedState.Store(false)
+	var result error
+	t.closeOnce.Do(func() {
+		t.closedState.Store(true)
+		t.connectedState.Store(false)
 
-	var errs []error
+		var errs []error
 
-	// Close stdin to signal the process
-	if t.stdin != nil {
-		if err := t.stdin.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("close stdin: %w", err))
-		}
-	}
-
-	// Wait for process to exit with timeout
-	done := make(chan error, 1)
-	go func() {
-		if t.cmd != nil && t.cmd.Process != nil {
-			done <- t.cmd.Wait()
-		} else {
-			done <- nil
-		}
-	}()
-
-	select {
-	case err := <-done:
-		var exitErr *exec.ExitError
-		if err != nil && errors.As(err, &exitErr) {
-			errs = append(errs, fmt.Errorf("process wait: %w", exitErr))
-		}
-	case <-time.After(5 * time.Second):
-		// Try SIGTERM first
-		if t.cmd != nil && t.cmd.Process != nil {
-			if err := t.cmd.Process.Signal(syscall.SIGTERM); err != nil {
-				errs = append(errs, fmt.Errorf("send SIGTERM: %w", err))
+		// Close stdin to signal the process
+		if t.stdin != nil {
+			if err := t.stdin.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("close stdin: %w", err))
 			}
+		}
 
-			// Give it another 2 seconds
-			select {
-			case <-done:
-				// Process exited
-			case <-time.After(2 * time.Second):
-				// Force kill
-				if err := t.cmd.Process.Kill(); err != nil {
-					errs = append(errs, fmt.Errorf("kill process: %w", err))
+		// Wait for process to exit with timeout
+		done := make(chan error, 1)
+		go func() {
+			if t.cmd != nil && t.cmd.Process != nil {
+				done <- t.cmd.Wait()
+			} else {
+				done <- nil
+			}
+		}()
+
+		select {
+		case err := <-done:
+			var exitErr *exec.ExitError
+			if err != nil && errors.As(err, &exitErr) {
+				errs = append(errs, fmt.Errorf("process wait: %w", exitErr))
+			}
+		case <-time.After(5 * time.Second):
+			// Try SIGTERM first
+			if t.cmd != nil && t.cmd.Process != nil {
+				if err := t.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+					errs = append(errs, fmt.Errorf("send SIGTERM: %w", err))
+				}
+				// Give it another 2 seconds
+				select {
+				case <-done:
+					// Process exited
+				case <-time.After(2 * time.Second):
+					// Force kill
+					if err := t.cmd.Process.Kill(); err != nil {
+						errs = append(errs, fmt.Errorf("kill process: %w", err))
+					}
 				}
 			}
 		}
-	}
 
-	// Close pipes
-	if t.stdout != nil {
-		t.stdout.Close()
-	}
-	if t.stderr != nil {
-		t.stderr.Close()
-	}
+		// Close pipes
+		if t.stdout != nil {
+			t.stdout.Close()
+		}
+		if t.stderr != nil {
+			t.stderr.Close()
+		}
 
-	if len(errs) > 0 {
-		return NewTransportError("stdio", "close", fmt.Errorf("multiple errors: %v", errs))
-	}
-
-	return nil
+		if len(errs) > 0 {
+			result = NewTransportError("stdio", "close", fmt.Errorf("multiple errors: %v", errs))
+		}
+	})
+	return result
 }
 
 // GetProcessInfo returns information about the running process

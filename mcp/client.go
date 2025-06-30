@@ -46,9 +46,7 @@ func (g *nanoIder) Generate() RequestID {
 	// This provides excellent uniqueness guarantees and is URL-safe
 	id, err := gonanoid.New()
 	if err != nil {
-		// Fallback to a simple UUID-like string if nanoid fails
-		// This should never happen in practice
-		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+		panic(err)
 	}
 	return id
 }
