@@ -175,8 +175,8 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 				}
 				contentParts = append(contentParts, a.NewTextBlock(block.Content.String()))
 			case ToolCall:
-				// Parse the tool call content as ToolUseInput
-				var toolUse ToolUseInput
+				// Parse the tool call content as ToolCallInput
+				var toolUse ToolCallInput
 				if err := json.Unmarshal([]byte(block.Content.String()), &toolUse); err != nil {
 					return a.MessageParam{}, fmt.Errorf("invalid tool call content: %w", err)
 				}
@@ -553,13 +553,13 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 				Content:      Str(contentPart.Text),
 			})
 		case "tool_use":
-			// Create a ToolUseInput with standardized format
+			// Create a ToolCallInput with standardized format
 			var toolParams map[string]interface{}
 			if err := json.Unmarshal(contentPart.Input, &toolParams); err != nil {
 				return Response{}, fmt.Errorf("failed to unmarshal tool use input: %w", err)
 			}
 
-			toolUse := ToolUseInput{
+			toolUse := ToolCallInput{
 				Name:       contentPart.Name,
 				Parameters: toolParams,
 			}

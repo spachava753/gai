@@ -12,8 +12,8 @@ import (
 	"strings"
 )
 
-// MarshalJSONToolUseInput marshals a ToolUseInput, never panics.
-func MarshalJSONToolUseInput(t ToolUseInput) ([]byte, error) {
+// MarshalJSONToolUseInput marshals a ToolCallInput, never panics.
+func MarshalJSONToolUseInput(t ToolCallInput) ([]byte, error) {
 	data, err := json.Marshal(t)
 	if err != nil {
 		return []byte("{}"), err
@@ -433,7 +433,7 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 				toolCallCount++
 				id := fmt.Sprintf("toolcall-%d", toolCallCount)
 				toolCallIDToFunc[id] = fc.Name
-				jsonData, _ := MarshalJSONToolUseInput(ToolUseInput{
+				jsonData, _ := MarshalJSONToolUseInput(ToolCallInput{
 					Name:       fc.Name,
 					Parameters: fc.Args,
 				})
@@ -522,7 +522,7 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 			}
 			if block.BlockType == ToolCall && block.ModalityType == Text {
 				// Unmarshal to get function name, params
-				var toolUse ToolUseInput
+				var toolUse ToolCallInput
 				if err := json.Unmarshal([]byte(block.Content.String()), &toolUse); err != nil {
 					return nil, fmt.Errorf("unmarshalling tool call content failed: %w", err)
 				}

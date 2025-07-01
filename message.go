@@ -215,7 +215,7 @@ func PDFBlock(data []byte, filename string) Block {
 //		"units": "fahrenheit",
 //	})
 func ToolCallBlock(id, toolName string, parameters map[string]any) (Block, error) {
-	toolUse := ToolUseInput{
+	toolUse := ToolCallInput{
 		Name:       toolName,
 		Parameters: parameters,
 	}

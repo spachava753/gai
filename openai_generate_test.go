@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"errors"
+	oaissestream "github.com/openai/openai-go/packages/ssestream"
 	"testing"
 
 	oai "github.com/openai/openai-go"
@@ -17,6 +18,10 @@ type mockChatCompletionService struct {
 
 func (m *mockChatCompletionService) New(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (*oai.ChatCompletion, error) {
 	return m.response, m.err
+}
+
+func (m *mockChatCompletionService) NewStreaming(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (stream *oaissestream.Stream[oai.ChatCompletionChunk]) {
+	panic("unimplemented")
 }
 
 func TestGenerate(t *testing.T) {
