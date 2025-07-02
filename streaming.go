@@ -5,8 +5,13 @@ import (
 	"iter"
 )
 
+type StreamChunk struct {
+	Block           Block
+	CandidatesIndex int
+}
+
 // A StreamingGenerator takes a Dialog and optional GenOpts and returns an iterator used for streaming generation.
-// The iterator yields a Block and an error, which may be nil.
+// The iterator yields a slice of Block and an error, which may be nil. It yields a slice of Block to support
 //
 // A [context.Context] is provided to the Generator as to provide not only cancellation and request specific values,
 // but also to pass Generator implementation specific parameters if needed.
@@ -25,7 +30,7 @@ import (
 //   - [EmptyDialogErr] when no messages are provided in the dialog
 //   - [AuthenticationErr] when there are authentication or authorization issues
 type StreamingGenerator interface {
-	Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[Block, error]
+	Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error]
 }
 
 // StreamingAdapter converts a StreamingGenerator to a Generator

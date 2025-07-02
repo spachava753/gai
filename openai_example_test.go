@@ -200,16 +200,16 @@ func ExampleOpenAiGenerator_Stream() {
 	}
 
 	// Stream a response
-	var blocks []Block
-	for block, err := range gen.Stream(context.Background(), dialog, nil) {
+	blocks := make([][]Block, 2)
+	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{N: 2}) {
 		if err != nil {
 			fmt.Println(err.Error())
 			return
 		}
-		blocks = append(blocks, block)
+		blocks[chunk.CandidatesIndex] = append(blocks[chunk.CandidatesIndex], chunk.Block)
 	}
 
-	if len(blocks) > 1 {
+	if len(blocks) == 2 && len(blocks[0]) > 1 && len(blocks[1]) > 1 {
 		fmt.Println("Response received")
 	}
 
@@ -451,12 +451,12 @@ func ExampleOpenAiGenerator_Stream_parallelToolUse() {
 
 	// Stream a response
 	var blocks []Block
-	for block, err := range gen.Stream(context.Background(), dialog, nil) {
+	for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
 		if err != nil {
 			fmt.Println(err.Error())
 			return
 		}
-		blocks = append(blocks, block)
+		blocks = append(blocks, chunk.Block)
 	}
 
 	if len(blocks) > 1 {
@@ -540,12 +540,12 @@ func ExampleOpenAiGenerator_Stream_parallelToolUse() {
 
 	// Stream a response
 	blocks = nil
-	for block, err := range gen.Stream(context.Background(), dialog, nil) {
+	for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
 		if err != nil {
 			fmt.Println(err.Error())
 			return
 		}
-		blocks = append(blocks, block)
+		blocks = append(blocks, chunk.Block)
 	}
 
 	if len(blocks) > 1 {

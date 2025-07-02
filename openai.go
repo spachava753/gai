@@ -734,16 +734,16 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	return result, nil
 }
 
-func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[Block, error] {
-	return func(yield func(Block, error) bool) {
+func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
+	return func(yield func(StreamChunk, error) bool) {
 		if g.client == nil {
-			yield(Block{}, fmt.Errorf("openai: client not initialized"))
+			yield(StreamChunk{}, fmt.Errorf("openai: client not initialized"))
 			return
 		}
 
 		// Check for empty dialog
 		if len(dialog) == 0 {
-			yield(Block{}, EmptyDialogErr)
+			yield(StreamChunk{}, EmptyDialogErr)
 			return
 		}
 
@@ -752,7 +752,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		for _, msg := range dialog {
 			oaiMsg, err := toOpenAIMessage(msg)
 			if err != nil {
-				yield(Block{}, fmt.Errorf("failed to convert message: %w", err))
+				yield(StreamChunk{}, fmt.Errorf("failed to convert message: %w", err))
 				return
 			}
 			messages = append(messages, oaiMsg)
@@ -843,10 +843,10 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 						modalities = append(modalities, "audio")
 						hasAudio = true
 					case Image:
-						yield(Block{}, UnsupportedOutputModalityErr("image output not supported by model"))
+						yield(StreamChunk{}, UnsupportedOutputModalityErr("image output not supported by model"))
 						return
 					case Video:
-						yield(Block{}, UnsupportedOutputModalityErr("video output not supported by model"))
+						yield(StreamChunk{}, UnsupportedOutputModalityErr("video output not supported by model"))
 						return
 					}
 				}
@@ -855,14 +855,14 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 				// Set audio configuration if audio output is requested
 				if hasAudio {
 					if options.AudioConfig.VoiceName == "" {
-						yield(Block{}, InvalidParameterErr{
+						yield(StreamChunk{}, InvalidParameterErr{
 							Parameter: "AudioConfig.VoiceName",
 							Reason:    "voice name is required for audio output",
 						})
 						return
 					}
 					if options.AudioConfig.Format == "" {
-						yield(Block{}, InvalidParameterErr{
+						yield(StreamChunk{}, InvalidParameterErr{
 							Parameter: "AudioConfig.Format",
 							Reason:    "format is required for audio output",
 						})
@@ -880,7 +880,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 				case "low", "medium", "high":
 					params.ReasoningEffort = oai.ReasoningEffort(options.ThinkingBudget)
 				default:
-					yield(Block{}, InvalidParameterErr{
+					yield(StreamChunk{}, InvalidParameterErr{
 						Parameter: "thinking budget",
 						Reason: fmt.Sprintf(
 							"invalid thinking budget, expected 'low', 'medium', or 'high': %s",
@@ -909,44 +909,50 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			chunk := stream.Current()
 
 			if len(chunk.Choices) > 1 {
-				panic("n > 1 not supported")
+				panic("choices > 1 not supported")
 			}
 
 			switch chunk.Choices[0].FinishReason {
 			case "length":
-				yield(Block{}, MaxGenerationLimitErr)
+				yield(StreamChunk{}, MaxGenerationLimitErr)
 			case "content_filter":
-				yield(Block{}, ContentPolicyErr("could not produce response"))
+				yield(StreamChunk{}, ContentPolicyErr("could not produce response"))
 			}
 
 			if chunk.Choices[0].Delta.Refusal != "" {
-				yield(Block{}, errors.New("content refused"))
+				yield(StreamChunk{}, errors.New("content refused"))
 				return
 			}
 
 			if chunk.Choices[0].Delta.Content != "" {
-				if !yield(Block{
-					BlockType:    Content,
-					ModalityType: Text,
-					MimeType:     "text/plain",
-					Content:      Str(chunk.Choices[0].Delta.Content),
+				if !yield(StreamChunk{
+					Block: Block{
+						BlockType:    Content,
+						ModalityType: Text,
+						MimeType:     "text/plain",
+						Content:      Str(chunk.Choices[0].Delta.Content),
+					},
+					CandidatesIndex: int(chunk.Choices[0].Index),
 				}, nil) {
 					return
 				}
 			}
 
 			if len(chunk.Choices[0].Delta.ToolCalls) > 1 {
-				panic("expected only one tool call")
+				panic("tool call > 1 not supported")
 			}
 
 			if len(chunk.Choices[0].Delta.ToolCalls) == 1 {
 				toolCall := chunk.Choices[0].Delta.ToolCalls[0]
-				if !yield(Block{
-					ID:           toolCall.ID,
-					BlockType:    ToolCall,
-					ModalityType: Text,
-					MimeType:     "text/plain",
-					Content:      Str(toolCall.Function.Name + toolCall.Function.Arguments),
+				if !yield(StreamChunk{
+					Block: Block{
+						ID:           toolCall.ID,
+						BlockType:    ToolCall,
+						ModalityType: Text,
+						MimeType:     "text/plain",
+						Content:      Str(toolCall.Function.Name + toolCall.Function.Arguments),
+					},
+					CandidatesIndex: int(chunk.Choices[0].Index),
 				}, nil) {
 					return
 				}
@@ -961,7 +967,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		}
 
 		if stream.Err() != nil {
-			yield(Block{}, stream.Err())
+			yield(StreamChunk{}, stream.Err())
 		}
 	}
 }
