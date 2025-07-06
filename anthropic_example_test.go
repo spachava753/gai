@@ -3,8 +3,10 @@ package gai
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	a "github.com/anthropics/anthropic-sdk-go"
+	"maps"
 	"os"
 	"strings"
 )
@@ -55,12 +57,51 @@ func ExampleAnthropicGenerator_Generate() {
 	// 1
 }
 
+func ExampleAnthropicGenerator_Stream() {
+	// Create an Anthropic client
+	client := a.NewClient()
+
+	// Demonstration of how to enable system prompt caching
+	svc := NewAnthropicServiceWrapper(&client.Messages, EnableSystemCaching)
+
+	// Instantiate an Anthropic Generator
+	gen := NewAnthropicGenerator(svc, string(a.ModelClaude3_5HaikuLatest), "You are a helpful assistant")
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("Hi!"),
+				},
+			},
+		},
+	}
+
+	// Stream a response
+	blocks := make([][]Block, 2)
+	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{N: 2, MaxGenerationTokens: 1024}) {
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		blocks[chunk.CandidatesIndex] = append(blocks[chunk.CandidatesIndex], chunk.Block)
+	}
+
+	if len(blocks) == 2 && len(blocks[0]) > 1 && len(blocks[1]) > 1 {
+		fmt.Println("Response received")
+	}
+
+	// Output: Response received
+}
+
 func ExampleAnthropicGenerator_Generate_thinking() {
 	// Create an Anthropic client
 	client := a.NewClient()
 
 	// Instantiate an Anthropic Generator
-	gen := NewAnthropicGenerator(&client.Messages, string(a.ModelClaude3_7SonnetLatest), "You are a helpful assistant")
+	gen := NewAnthropicGenerator(&client.Messages, string(a.ModelClaudeSonnet4_0), "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -272,7 +313,7 @@ func ExampleAnthropicGenerator_Register_parallelToolUse() {
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
 		&client.Messages,
-		string(a.ModelClaude3_5SonnetLatest),
+		string(a.ModelClaudeSonnet4_0),
 		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
 Only mention one of the stock tickers and nothing else.
 
@@ -313,18 +354,21 @@ Assistant: MSFT
 	}
 
 	// Generate a response
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 8096})
+	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{
+		MaxGenerationTokens: 8096,
+		ThinkingBudget:      "4000",
+	})
 	if err != nil {
 		panic(err.Error())
 	}
-	fmt.Println(resp.Candidates[0].Blocks[0].Content)
 	fmt.Println(resp.Candidates[0].Blocks[1].Content)
+	fmt.Println(resp.Candidates[0].Blocks[2].Content)
 
 	dialog = append(dialog, resp.Candidates[0], Message{
 		Role: ToolResult,
 		Blocks: []Block{
 			{
-				ID:           resp.Candidates[0].Blocks[0].ID,
+				ID:           resp.Candidates[0].Blocks[1].ID,
 				ModalityType: Text,
 				Content:      Str("123.45"),
 			},
@@ -333,14 +377,17 @@ Assistant: MSFT
 		Role: ToolResult,
 		Blocks: []Block{
 			{
-				ID:           resp.Candidates[0].Blocks[1].ID,
+				ID:           resp.Candidates[0].Blocks[2].ID,
 				ModalityType: Text,
 				Content:      Str("678.45"),
 			},
 		},
 	})
 
-	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 8096})
+	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{
+		MaxGenerationTokens: 8096,
+		ThinkingBudget:      "4000",
+	})
 	if err != nil {
 		panic(err.Error())
 	}
@@ -349,6 +396,204 @@ Assistant: MSFT
 	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
 	// {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
 	// MSFT
+}
+
+func ExampleAnthropicGenerator_Stream_parallelToolUse() {
+	// Create an Anthropic client
+	client := a.NewClient()
+
+	// Register tools
+	tickerTool := Tool{
+		Name:        "get_stock_price",
+		Description: "Get the current stock price for a given ticker symbol.",
+		InputSchema: InputSchema{
+			Type: Object,
+			Properties: map[string]Property{
+				"ticker": {
+					Type:        String,
+					Description: "The stock ticker symbol, e.g. AAPL for Apple Inc.",
+				},
+			},
+			Required: []string{"ticker"},
+		},
+	}
+
+	// Instantiate an Anthropic Generator
+	gen := NewAnthropicGenerator(
+		&client.Messages,
+		string(a.ModelClaudeSonnet4_0),
+		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
+Only mention one of the stock tickers and nothing else.
+
+Only output the price, like
+<example>
+User: Which one is more expensive? Apple or NVidia?
+Assistant: calls get_stock_price for both Apple and Nvidia
+Tool Result: Apple: 123.45; Nvidia: 345.65
+Assistant: Nvidia
+</example>
+
+<example>
+User: Which one is more expensive? Microsft or Netflix?
+Assistant: calls get_stock_price for both Apple and Nvidia
+Tool Result: MSFT: 876.45; NFLX: 345.65
+Assistant: MSFT
+</example>
+`,
+	)
+
+	// Register tools
+	tickerTool.Description += "\nYou can call this tool in parallel"
+	if err := gen.Register(tickerTool); err != nil {
+		panic(err.Error())
+	}
+
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("Which stock, Apple vs. Microsoft, is more expensive?"),
+				},
+			},
+		},
+	}
+
+	// Stream a response
+	var blocks []Block
+	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{
+		MaxGenerationTokens: 32000,
+		ThinkingBudget:      "10000",
+	}) {
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		blocks = append(blocks, chunk.Block)
+	}
+
+	if len(blocks) > 1 {
+		fmt.Println("Response received")
+	}
+
+	// collect the blocks
+	var prevToolCallId string
+	var toolCalls []Block
+	var toolcallArgs string
+	var toolCallInput ToolCallInput
+	thinking := Block{
+		BlockType:    Thinking,
+		ModalityType: Text,
+		MimeType:     "text/plain",
+		ExtraFields:  make(map[string]interface{}),
+	}
+	thinkingStr := ""
+	for _, block := range blocks {
+		if block.BlockType == Thinking {
+			if block.Content != nil {
+				thinkingStr += block.Content.String()
+			}
+			maps.Copy(thinking.ExtraFields, block.ExtraFields)
+			continue
+		}
+		if block.ID != "" && block.ID != prevToolCallId {
+			if toolcallArgs != "" {
+				// Parse the arguments string into a map
+				if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
+					panic(err.Error())
+				}
+
+				// Marshal back to JSON for consistent representation
+				toolUseJSON, err := json.Marshal(toolCallInput)
+				if err != nil {
+					panic(err.Error())
+				}
+				toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
+				toolCallInput = ToolCallInput{}
+				toolcallArgs = ""
+			}
+			prevToolCallId = block.ID
+			toolCalls = append(toolCalls, Block{
+				ID:           block.ID,
+				BlockType:    ToolCall,
+				ModalityType: Text,
+				MimeType:     "text/plain",
+			})
+			toolCallInput.Name = block.Content.String()
+		} else {
+			toolcallArgs += block.Content.String()
+		}
+	}
+
+	thinking.Content = Str(thinkingStr)
+
+	if toolcallArgs != "" {
+		// Parse the arguments string into a map
+		if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
+			panic(err.Error())
+		}
+
+		// Marshal back to JSON for consistent representation
+		toolUseJSON, err := json.Marshal(toolCallInput)
+		if err != nil {
+			panic(err.Error())
+		}
+		toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
+		toolCallInput = ToolCallInput{}
+	}
+
+	fmt.Println(len(toolCalls))
+
+	assistantMsg := make([]Block, 0, len(toolCalls)+1)
+	assistantMsg = append(assistantMsg, thinking)
+	assistantMsg = append(assistantMsg, toolCalls...)
+
+	dialog = append(dialog, Message{
+		Role:   Assistant,
+		Blocks: assistantMsg,
+	},
+		Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           toolCalls[0].ID,
+					ModalityType: Text,
+					Content:      Str("123.45"),
+				},
+			},
+		}, Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           toolCalls[1].ID,
+					ModalityType: Text,
+					Content:      Str("678.45"),
+				},
+			},
+		})
+
+	// Stream a response
+	blocks = nil
+	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{
+		MaxGenerationTokens: 32000,
+		ThinkingBudget:      "10000",
+	}) {
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		blocks = append(blocks, chunk.Block)
+	}
+
+	if len(blocks) > 0 {
+		fmt.Println("Response received")
+	}
+
+	// Output: Response received
+	// 2
+	// Response received
 }
 
 func ExampleAnthropicGenerator_Count() {
