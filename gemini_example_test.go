@@ -45,6 +45,40 @@ func ExampleGeminiGenerator_Generate() {
 	// Output: The capital of France is Paris.
 }
 
+func ExampleGeminiGenerator_Stream() {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
+		return
+	}
+
+	ctx := context.Background()
+	client, err := genai.NewClient(
+		ctx,
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
+	)
+
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
+	if err != nil {
+		fmt.Println("Error creating GeminiGenerator:", err)
+		return
+	}
+	dialog := Dialog{
+		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("What is the capital of France?")}}},
+	}
+	for chunk, err := range g.Stream(context.Background(), dialog, nil) {
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		fmt.Printf(chunk.Block.Content.String())
+	}
+	// Output: The capital of France is Paris.
+}
+
 func ExampleGeminiGenerator_Register() {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
@@ -406,6 +440,59 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 	// Output: Block type: tool_call | ID: toolcall-1 | Content: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
 	// Block type: tool_call | ID: toolcall-2 | Content: {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
 	// Block type: tool_call | ID: toolcall-3 | Content: {"name":"get_stock_price","parameters":{"ticker":"TSLA"}}
+}
+
+func ExampleGeminiGenerator_Stream_parallelToolUse() {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
+		return
+	}
+
+	ctx := context.Background()
+	client, err := genai.NewClient(
+		ctx,
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
+	)
+
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
+	if err != nil {
+		fmt.Println("Error creating GeminiGenerator:", err)
+		return
+	}
+
+	// Register the get_stock_price tool
+	stockTool := Tool{
+		Name:        "get_stock_price",
+		Description: "Get the current stock price for a given ticker symbol.",
+		InputSchema: InputSchema{
+			Type: Object,
+			Properties: map[string]Property{
+				"ticker": {Type: String, Description: "Stock ticker symbol (e.g. AAPL)"},
+			},
+			Required: []string{"ticker"},
+		},
+	}
+	_ = g.Register(stockTool)
+	dialog := Dialog{
+		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Give me the current prices for AAPL, MSFT, and TSLA.")}}},
+	}
+	for chunk, err := range g.Stream(context.Background(), dialog, nil) {
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		fmt.Printf("Block type: %s | ID: %s | Content: %s\n", chunk.Block.BlockType, chunk.Block.ID, chunk.Block.Content)
+	}
+	// Output: Block type: tool_call | ID: toolcall-1 | Content: get_stock_price
+	// Block type: tool_call | ID:  | Content: {"ticker":"AAPL"}
+	// Block type: tool_call | ID: toolcall-2 | Content: get_stock_price
+	// Block type: tool_call | ID:  | Content: {"ticker":"MSFT"}
+	// Block type: tool_call | ID: toolcall-3 | Content: get_stock_price
+	// Block type: tool_call | ID:  | Content: {"ticker":"TSLA"}
 }
 
 func ExampleGeminiGenerator_Count() {

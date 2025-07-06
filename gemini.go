@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"google.golang.org/genai"
+	"iter"
 	"maps"
 	"slices"
 	"strings"
@@ -237,6 +238,7 @@ type GeminiGenerator struct {
 // Returns a ToolCapableGenerator that also implements TokenCounter, or an error if initialization fails.
 func NewGeminiGenerator(client *genai.Client, modelName, systemInstructions string) (interface {
 	ToolCapableGenerator
+	StreamingGenerator
 	TokenCounter
 }, error) {
 	inner := &GeminiGenerator{
@@ -470,6 +472,233 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	}
 
 	return result, nil
+}
+
+func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
+	return func(yield func(StreamChunk, error) bool) {
+		if g.client == nil {
+			yield(StreamChunk{}, fmt.Errorf("gemini: client not initialized"))
+			return
+		}
+
+		if len(dialog) == 0 {
+			yield(StreamChunk{}, EmptyDialogErr)
+			return
+		}
+
+		// We'll keep a mapping of toolCallID -> functionName for this call.
+		toolCallIDToFunc := make(map[string]string)
+		toolCallCount := 0
+
+		genContentConfig := &genai.GenerateContentConfig{}
+		// Set system prompt if provided
+		if g.systemInstructions != "" {
+			genContentConfig.SystemInstruction = &genai.Content{
+				Parts: []*genai.Part{genai.NewPartFromText(g.systemInstructions)},
+			}
+		}
+		// If tools are registered, attach them
+		if len(g.tools) > 0 {
+			toolList := make([]*genai.FunctionDeclaration, 0, len(g.tools))
+			for _, t := range g.tools {
+				toolList = append(toolList, t)
+			}
+			genContentConfig.Tools = []*genai.Tool{
+				{
+					FunctionDeclarations: toolList,
+				},
+			}
+		}
+
+		// generation parameters
+		if options != nil {
+			if options.ToolChoice != "" {
+				tc := &genai.ToolConfig{}
+				mode := genai.FunctionCallingConfigModeAuto
+				var allowedFuncNames []string
+				switch {
+				case options.ToolChoice == ToolChoiceToolsRequired:
+					mode = genai.FunctionCallingConfigModeAny
+				case options.ToolChoice != ToolChoiceAuto:
+					mode = genai.FunctionCallingConfigModeAny
+					allowedFuncNames = []string{options.ToolChoice}
+				}
+				tc.FunctionCallingConfig = &genai.FunctionCallingConfig{
+					Mode:                 mode,
+					AllowedFunctionNames: allowedFuncNames,
+				}
+				genContentConfig.ToolConfig = tc
+			}
+
+			if options.Temperature > 0 {
+				genContentConfig.Temperature = genai.Ptr(float32(options.Temperature))
+			}
+			if options.MaxGenerationTokens > 0 {
+				genContentConfig.MaxOutputTokens = int32(options.MaxGenerationTokens)
+			}
+			if options.N > 1 {
+				genContentConfig.CandidateCount = int32(options.N)
+			}
+			if options.StopSequences != nil {
+				genContentConfig.StopSequences = options.StopSequences
+			}
+			if options.TopP > 0 {
+				genContentConfig.TopP = genai.Ptr(float32(options.TopP))
+			}
+			if options.TopK > 0 {
+				genContentConfig.TopK = genai.Ptr(float32(options.TopK))
+			}
+		}
+
+		allContents, err := prepareGeminiChatHistory(dialog, toolCallIDToFunc)
+		if err != nil {
+			yield(StreamChunk{}, err)
+			return
+		}
+
+		for resp, err := range g.client.Models.GenerateContentStream(ctx, g.modelName, allContents, genContentConfig) {
+			if err != nil {
+				var apierr genai.APIError
+				if errors.As(err, &apierr) {
+					// Map HTTP status codes to our error types
+					switch apierr.Code {
+					case 401:
+						yield(StreamChunk{}, AuthenticationErr(apierr.Error()))
+						return
+					case 403:
+						yield(StreamChunk{}, ApiErr{
+							StatusCode: apierr.Code,
+							Type:       "permission_error",
+							Message:    apierr.Error(),
+						})
+						return
+					case 404:
+						yield(StreamChunk{}, ApiErr{
+							StatusCode: apierr.Code,
+							Type:       "not_found_error",
+							Message:    apierr.Error(),
+						})
+						return
+					case 429:
+						yield(StreamChunk{}, RateLimitErr(apierr.Error()))
+						return
+					case 500:
+						yield(StreamChunk{}, ApiErr{
+							StatusCode: apierr.Code,
+							Type:       "api_error",
+							Message:    apierr.Error(),
+						})
+						return
+					case 503:
+						yield(StreamChunk{}, ApiErr{
+							StatusCode: apierr.Code,
+							Type:       "service_unavailable",
+							Message:    apierr.Error(),
+						})
+						return
+					default:
+						// Default to invalid_request_error for 400 and other status codes
+						yield(StreamChunk{}, ApiErr{
+							StatusCode: apierr.Code,
+							Type:       "invalid_request_error",
+							Message:    apierr.Error(),
+						})
+						return
+					}
+				}
+				yield(StreamChunk{}, fmt.Errorf("gemini: generation failed: %w", err))
+				return
+			}
+			if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
+				if !yield(StreamChunk{
+					Block:           TextBlock(""),
+					CandidatesIndex: 0,
+				}, nil) {
+					return
+				}
+			}
+			if len(resp.Candidates) != 1 {
+				panic("cannot handle multiple candidates at this time")
+			}
+
+			for _, part := range resp.Candidates[0].Content.Parts {
+				if part.Text != "" {
+					if part.Thought {
+						if !yield(StreamChunk{
+							Block: Block{
+								BlockType:    Thinking,
+								ModalityType: Text,
+								MimeType:     "text/plain",
+								Content:      Str(part.Text),
+								ExtraFields:  nil,
+							},
+							CandidatesIndex: 0,
+						}, nil) {
+							return
+						}
+					} else {
+						if !yield(StreamChunk{
+							Block: TextBlock(part.Text),
+						}, nil) {
+							return
+						}
+					}
+				} else {
+					if part.InlineData != nil {
+						panic("unknown block type")
+					}
+					if part.CodeExecutionResult != nil {
+						panic("unknown block type")
+					}
+					if part.ExecutableCode != nil {
+						panic("unknown block type")
+					}
+					if part.FileData != nil {
+						panic("unknown block type")
+					}
+					if part.FunctionCall != nil {
+						if part.FunctionCall.Name != "" {
+							toolCallCount++
+							id := fmt.Sprintf("toolcall-%d", toolCallCount)
+							toolCallIDToFunc[id] = part.FunctionCall.Name
+							if !yield(StreamChunk{
+								Block: Block{
+									ID:           id,
+									BlockType:    ToolCall,
+									ModalityType: Text,
+									MimeType:     "text/plain",
+									Content:      Str(part.FunctionCall.Name),
+								},
+								CandidatesIndex: 0,
+							}, nil) {
+								return
+							}
+						}
+						if part.FunctionCall.Args != nil {
+							contentJson, err := json.Marshal(part.FunctionCall.Args)
+							if err != nil {
+								panic(err)
+							}
+							if !yield(StreamChunk{
+								Block: Block{
+									BlockType:    ToolCall,
+									ModalityType: Text,
+									MimeType:     "text/plain",
+									Content:      Str(contentJson),
+								},
+								CandidatesIndex: 0,
+							}, nil) {
+								return
+							}
+						}
+					}
+					if part.FunctionResponse != nil {
+						panic("unexpected block type")
+					}
+				}
+			}
+		}
+	}
 }
 
 // msgToGeminiContent is a helper to map a Message to a Gemini Content, with support for tool calls/results
