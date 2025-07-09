@@ -16,6 +16,10 @@ type mockAnthropicSvc struct {
 	lastSystemPresent bool
 }
 
+func (m *mockAnthropicSvc) New(ctx context.Context, body a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error) {
+	return nil, nil
+}
+
 func (m *mockAnthropicSvc) NewStreaming(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (stream *ssestream.Stream[a.MessageStreamEventUnion]) {
 	return nil
 }

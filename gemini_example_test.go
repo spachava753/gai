@@ -26,7 +26,7 @@ func ExampleGeminiGenerator_Generate() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-1.5-flash", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -41,6 +41,40 @@ func ExampleGeminiGenerator_Generate() {
 	}
 	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
 		fmt.Println(response.Candidates[0].Blocks[0].Content)
+	}
+	// Output: The capital of France is Paris.
+}
+
+func ExampleGeminiGenerator_Stream() {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
+		return
+	}
+
+	ctx := context.Background()
+	client, err := genai.NewClient(
+		ctx,
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
+	)
+
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant. You respond to the user with plain text format.")
+	if err != nil {
+		fmt.Println("Error creating GeminiGenerator:", err)
+		return
+	}
+	dialog := Dialog{
+		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("What is the capital of France?")}}},
+	}
+	for chunk, err := range g.Stream(context.Background(), dialog, nil) {
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		fmt.Printf(chunk.Block.Content.String())
 	}
 	// Output: The capital of France is Paris.
 }
@@ -63,7 +97,7 @@ func ExampleGeminiGenerator_Register() {
 
 	g, err := NewGeminiGenerator(
 		client,
-		"gemini-2.5-flash-preview-05-20",
+		"gemini-2.5-pro",
 		`You are a helpful assistant. You can call tools in parallel. 
 When a user asks for the server time, always call the server time tool, don't use previously returned results`,
 	)
@@ -149,7 +183,7 @@ When a user asks for the server time, always call the server time tool, don't us
 		time.Time{}.String(),
 	))
 
-	dialog = append(dialog, Message{
+	dialog = append(dialog, response.Candidates[0], Message{
 		Role: User,
 		Blocks: []Block{{
 			BlockType:    Content,
@@ -253,7 +287,7 @@ func ExampleGeminiGenerator_Generate_image() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-03-25", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -317,7 +351,7 @@ func ExampleGeminiGenerator_Generate_audio() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-06-05", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -371,7 +405,7 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash-preview-05-20", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -408,6 +442,59 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 	// Block type: tool_call | ID: toolcall-3 | Content: {"name":"get_stock_price","parameters":{"ticker":"TSLA"}}
 }
 
+func ExampleGeminiGenerator_Stream_parallelToolUse() {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
+		return
+	}
+
+	ctx := context.Background()
+	client, err := genai.NewClient(
+		ctx,
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
+	)
+
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
+	if err != nil {
+		fmt.Println("Error creating GeminiGenerator:", err)
+		return
+	}
+
+	// Register the get_stock_price tool
+	stockTool := Tool{
+		Name:        "get_stock_price",
+		Description: "Get the current stock price for a given ticker symbol.",
+		InputSchema: InputSchema{
+			Type: Object,
+			Properties: map[string]Property{
+				"ticker": {Type: String, Description: "Stock ticker symbol (e.g. AAPL)"},
+			},
+			Required: []string{"ticker"},
+		},
+	}
+	_ = g.Register(stockTool)
+	dialog := Dialog{
+		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Give me the current prices for AAPL, MSFT, and TSLA.")}}},
+	}
+	for chunk, err := range g.Stream(context.Background(), dialog, nil) {
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		fmt.Printf("Block type: %s | ID: %s | Content: %s\n", chunk.Block.BlockType, chunk.Block.ID, chunk.Block.Content)
+	}
+	// Output: Block type: tool_call | ID: toolcall-1 | Content: get_stock_price
+	// Block type: tool_call | ID:  | Content: {"ticker":"AAPL"}
+	// Block type: tool_call | ID: toolcall-2 | Content: get_stock_price
+	// Block type: tool_call | ID:  | Content: {"ticker":"MSFT"}
+	// Block type: tool_call | ID: toolcall-3 | Content: get_stock_price
+	// Block type: tool_call | ID:  | Content: {"ticker":"TSLA"}
+}
+
 func ExampleGeminiGenerator_Count() {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
@@ -427,7 +514,7 @@ func ExampleGeminiGenerator_Count() {
 	)
 
 	// Create a generator
-	g, err := NewGeminiGenerator(client, "gemini-1.5-pro", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -513,7 +600,7 @@ func ExampleGeminiGenerator_Generate_pdf() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash-preview-05-20", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return

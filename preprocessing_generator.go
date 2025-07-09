@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"fmt"
+	"iter"
 )
 
 // preprocessToolResults consolidates consecutive tool result messages that respond to tool calls
@@ -153,4 +154,11 @@ func (p *PreprocessingGenerator) Register(tool Tool) error {
 func (p *PreprocessingGenerator) Generate(ctx context.Context, dialog Dialog, opts *GenOpts) (Response, error) {
 	processed := preprocessToolResults(dialog)
 	return p.Inner.Generate(ctx, processed, opts)
+}
+
+func (p *PreprocessingGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
+	if g, ok := any(p.Inner).(StreamingGenerator); ok {
+		return g.Stream(ctx, dialog, options)
+	}
+	panic("inner generator does not implement StreamingGenerator")
 }

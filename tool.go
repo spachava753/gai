@@ -620,9 +620,9 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen Gen
 	}
 }
 
-// ToolUseInput represents a standardized format for tool use in all generators.
+// ToolCallInput represents a standardized format for tool use in all generators.
 // It contains the name of the tool to use and the parameters to pass to it.
-type ToolUseInput struct {
+type ToolCallInput struct {
 	Name       string         `json:"name"`
 	Parameters map[string]any `json:"parameters"`
 }

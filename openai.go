@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"github.com/openai/openai-go/option"
+	oaissestream "github.com/openai/openai-go/packages/ssestream"
 	"github.com/pkoukk/tiktoken-go" // Added for token counting
 	"image"
 	_ "image/gif"  // Register GIF format
 	_ "image/jpeg" // Register JPEG format
 	_ "image/png"  // Register PNG format
+	"iter"
 	"math"
 	"slices"
 	"strings"
@@ -273,8 +275,8 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 					return oai.ChatCompletionMessageParamUnion{}, UnsupportedInputModalityErr(block.ModalityType.String())
 				}
 			case ToolCall:
-				// Parse the tool call content as ToolUseInput
-				var toolUse ToolUseInput
+				// Parse the tool call content as ToolCallInput
+				var toolUse ToolCallInput
 				if err := json.Unmarshal([]byte(block.Content.String()), &toolUse); err != nil {
 					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("invalid tool call content: %w", err)
 				}
@@ -671,8 +673,8 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		// Handle tool calls
 		if toolCalls := choice.Message.ToolCalls; len(toolCalls) > 0 {
 			for _, toolCall := range toolCalls {
-				// Create a ToolUseInput with standardized format
-				toolUse := ToolUseInput{
+				// Create a ToolCallInput with standardized format
+				toolUse := ToolCallInput{
 					Name: toolCall.Function.Name,
 				}
 
@@ -692,7 +694,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 					BlockType:    ToolCall,
 					ModalityType: Text,
 					MimeType:     "application/json",
-					Content:      Str(string(toolUseJSON)),
+					Content:      Str(toolUseJSON),
 				})
 			}
 		}
@@ -732,8 +734,247 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	return result, nil
 }
 
+func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
+	return func(yield func(StreamChunk, error) bool) {
+		if g.client == nil {
+			yield(StreamChunk{}, fmt.Errorf("openai: client not initialized"))
+			return
+		}
+
+		// Check for empty dialog
+		if len(dialog) == 0 {
+			yield(StreamChunk{}, EmptyDialogErr)
+			return
+		}
+
+		// Convert each message to OpenAI format
+		var messages []oai.ChatCompletionMessageParamUnion
+		for _, msg := range dialog {
+			oaiMsg, err := toOpenAIMessage(msg)
+			if err != nil {
+				yield(StreamChunk{}, fmt.Errorf("failed to convert message: %w", err))
+				return
+			}
+			messages = append(messages, oaiMsg)
+		}
+
+		// Create OpenAI chat completion params
+		params := oai.ChatCompletionNewParams{
+			Model:    g.model,
+			Messages: messages,
+		}
+
+		// Add system instructions if present
+		if g.systemInstructions != "" {
+			params.Messages = append([]oai.ChatCompletionMessageParamUnion{
+				oai.SystemMessage(g.systemInstructions),
+			}, messages...)
+		}
+
+		// Map our options to OpenAI params if options are provided
+		if options != nil {
+			// Set temperature if non-zero
+			if options.Temperature != 0 {
+				params.Temperature = oai.Float(options.Temperature)
+			}
+
+			// Set top_p if non-zero
+			if options.TopP != 0 {
+				params.TopP = oai.Float(options.TopP)
+			}
+
+			// Set frequency penalty if non-zero
+			if options.FrequencyPenalty != 0 {
+				params.FrequencyPenalty = oai.Float(options.FrequencyPenalty)
+			}
+
+			// Set presence penalty if non-zero
+			if options.PresencePenalty != 0 {
+				params.PresencePenalty = oai.Float(options.PresencePenalty)
+			}
+
+			// Set max tokens if specified
+			if options.MaxGenerationTokens > 0 {
+				params.MaxCompletionTokens = oai.Int(int64(options.MaxGenerationTokens))
+			}
+
+			// Set number of completions if specified
+			if options.N > 0 {
+				params.N = oai.Int(int64(options.N))
+			}
+
+			// Set stop sequences if specified
+			if len(options.StopSequences) > 0 {
+				// OpenAI accepts either a single string or array of strings
+				if len(options.StopSequences) == 1 {
+					params.Stop = oai.ChatCompletionNewParamsStopUnion{OfString: oai.String(options.StopSequences[0])}
+				} else {
+					params.Stop = oai.ChatCompletionNewParamsStopUnion{OfStringArray: options.StopSequences}
+				}
+			}
+
+			// Set tool choice if specified
+			if options.ToolChoice != "" {
+				switch options.ToolChoice {
+				case ToolChoiceAuto:
+					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceAuto)}
+				case ToolChoiceToolsRequired:
+					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceToolsRequired)}
+				default:
+					// Specific tool name
+					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfChatCompletionNamedToolChoice: &oai.ChatCompletionNamedToolChoiceParam{
+						Function: oai.ChatCompletionNamedToolChoiceFunctionParam{
+							Name: options.ToolChoice,
+						},
+					}}
+				}
+			}
+
+			// Handle multimodality options
+			if len(options.OutputModalities) > 0 {
+				// Set requested modalities
+				modalities := make([]string, 0, len(options.OutputModalities))
+				hasAudio := false
+				for _, m := range options.OutputModalities {
+					switch m {
+					case Text:
+						modalities = append(modalities, "text")
+					case Audio:
+						modalities = append(modalities, "audio")
+						hasAudio = true
+					case Image:
+						yield(StreamChunk{}, UnsupportedOutputModalityErr("image output not supported by model"))
+						return
+					case Video:
+						yield(StreamChunk{}, UnsupportedOutputModalityErr("video output not supported by model"))
+						return
+					}
+				}
+				params.Modalities = modalities
+
+				// Set audio configuration if audio output is requested
+				if hasAudio {
+					if options.AudioConfig.VoiceName == "" {
+						yield(StreamChunk{}, InvalidParameterErr{
+							Parameter: "AudioConfig.VoiceName",
+							Reason:    "voice name is required for audio output",
+						})
+						return
+					}
+					if options.AudioConfig.Format == "" {
+						yield(StreamChunk{}, InvalidParameterErr{
+							Parameter: "AudioConfig.Format",
+							Reason:    "format is required for audio output",
+						})
+						return
+					}
+					params.Audio = oai.ChatCompletionAudioParam{
+						Voice:  oai.ChatCompletionAudioParamVoice(options.AudioConfig.VoiceName),
+						Format: oai.ChatCompletionAudioParamFormat(options.AudioConfig.Format),
+					}
+				}
+			}
+
+			if options.ThinkingBudget != "" {
+				switch options.ThinkingBudget {
+				case "low", "medium", "high":
+					params.ReasoningEffort = oai.ReasoningEffort(options.ThinkingBudget)
+				default:
+					yield(StreamChunk{}, InvalidParameterErr{
+						Parameter: "thinking budget",
+						Reason: fmt.Sprintf(
+							"invalid thinking budget, expected 'low', 'medium', or 'high': %s",
+							options.ThinkingBudget,
+						),
+					})
+					return
+				}
+			}
+		}
+
+		// Add tools if any are registered
+		if len(g.tools) > 0 {
+			var tools []oai.ChatCompletionToolParam
+			for _, tool := range g.tools {
+				tools = append(tools, tool)
+			}
+			params.Tools = tools
+		}
+
+		// Start the stream
+		stream := g.client.NewStreaming(ctx, params)
+		defer stream.Close()
+		acc := oai.ChatCompletionAccumulator{}
+		for stream.Next() {
+			chunk := stream.Current()
+
+			if len(chunk.Choices) > 1 {
+				panic("choices > 1 not supported")
+			}
+
+			switch chunk.Choices[0].FinishReason {
+			case "length":
+				yield(StreamChunk{}, MaxGenerationLimitErr)
+			case "content_filter":
+				yield(StreamChunk{}, ContentPolicyErr("could not produce response"))
+			}
+
+			if chunk.Choices[0].Delta.Refusal != "" {
+				yield(StreamChunk{}, errors.New("content refused"))
+				return
+			}
+
+			if chunk.Choices[0].Delta.Content != "" {
+				if !yield(StreamChunk{
+					Block: Block{
+						BlockType:    Content,
+						ModalityType: Text,
+						MimeType:     "text/plain",
+						Content:      Str(chunk.Choices[0].Delta.Content),
+					},
+					CandidatesIndex: int(chunk.Choices[0].Index),
+				}, nil) {
+					return
+				}
+			}
+
+			if len(chunk.Choices[0].Delta.ToolCalls) > 1 {
+				panic("tool call > 1 not supported")
+			}
+
+			if len(chunk.Choices[0].Delta.ToolCalls) == 1 {
+				toolCall := chunk.Choices[0].Delta.ToolCalls[0]
+				if !yield(StreamChunk{
+					Block: Block{
+						ID:           toolCall.ID,
+						BlockType:    ToolCall,
+						ModalityType: Text,
+						MimeType:     "text/plain",
+						Content:      Str(toolCall.Function.Name + toolCall.Function.Arguments),
+					},
+					CandidatesIndex: int(chunk.Choices[0].Index),
+				}, nil) {
+					return
+				}
+			}
+
+			acc.AddChunk(chunk)
+
+			// When this fires, the current chunk value will not contain content data
+			if _, ok := acc.JustFinishedContent(); ok {
+				return
+			}
+		}
+
+		if stream.Err() != nil {
+			yield(StreamChunk{}, stream.Err())
+		}
+	}
+}
+
 type OpenAICompletionService interface {
 	New(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (res *oai.ChatCompletion, err error)
+	NewStreaming(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (stream *oaissestream.Stream[oai.ChatCompletionChunk])
 }
 
 // NewOpenAiGenerator creates a new OpenAI generator with the specified model.

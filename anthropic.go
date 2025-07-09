@@ -8,6 +8,7 @@ import (
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
+	"iter"
 	"strconv"
 )
 
@@ -175,8 +176,8 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 				}
 				contentParts = append(contentParts, a.NewTextBlock(block.Content.String()))
 			case ToolCall:
-				// Parse the tool call content as ToolUseInput
-				var toolUse ToolUseInput
+				// Parse the tool call content as ToolCallInput
+				var toolUse ToolCallInput
 				if err := json.Unmarshal([]byte(block.Content.String()), &toolUse); err != nil {
 					return a.MessageParam{}, fmt.Errorf("invalid tool call content: %w", err)
 				}
@@ -467,17 +468,8 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	// Use message streaming, as the anthropic sdk *forces* us to use streaming for large models,
 	// even if we _want_ to just the standard http request. As such, we will simply use streaming
 	// for all models to keep things simple
-	stream := g.client.NewStreaming(ctx, params)
-	var resp a.Message
-	for stream.Next() {
-		event := stream.Current()
-		err := resp.Accumulate(event)
-		if err != nil {
-			return Response{}, err
-		}
-	}
-
-	if err := stream.Err(); err != nil {
+	resp, err := g.client.New(ctx, params)
+	if err != nil {
 		// Convert Anthropic SDK error to our error types based on status code
 		var apierr *a.Error
 		if errors.As(err, &apierr) {
@@ -553,13 +545,13 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 				Content:      Str(contentPart.Text),
 			})
 		case "tool_use":
-			// Create a ToolUseInput with standardized format
+			// Create a ToolCallInput with standardized format
 			var toolParams map[string]interface{}
 			if err := json.Unmarshal(contentPart.Input, &toolParams); err != nil {
 				return Response{}, fmt.Errorf("failed to unmarshal tool use input: %w", err)
 			}
 
-			toolUse := ToolUseInput{
+			toolUse := ToolCallInput{
 				Name:       contentPart.Name,
 				Parameters: toolParams,
 			}
@@ -624,6 +616,251 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	return result, nil
 }
 
+func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
+	return func(yield func(StreamChunk, error) bool) {
+		if g.client == nil {
+			yield(StreamChunk{}, fmt.Errorf("openai: client not initialized"))
+			return
+		}
+
+		// Check for empty dialog
+		if len(dialog) == 0 {
+			yield(StreamChunk{}, EmptyDialogErr)
+			return
+		}
+
+		// Convert each message to Anthropic format
+		var messages []a.MessageParam
+		for _, msg := range dialog {
+			anthropicMsg, err := toAnthropicMessage(msg)
+			if err != nil {
+				yield(StreamChunk{}, fmt.Errorf("failed to convert message: %w", err))
+				return
+			}
+			messages = append(messages, anthropicMsg)
+		}
+
+		// Create Anthropic message params
+		params := a.MessageNewParams{
+			Model:    a.Model(g.model),
+			Messages: messages,
+		}
+
+		// Add system instructions if present
+		if g.systemInstructions != "" {
+			params.System = []a.TextBlockParam{
+				{
+					Text: g.systemInstructions,
+				},
+			}
+		}
+
+		// Map our options to OpenAI params if options are provided
+		if options != nil {
+			// Set temperature if non-zero
+			if options.Temperature != 0 {
+				params.Temperature = a.Float(options.Temperature)
+			}
+
+			// Set top_p if non-zero
+			if options.TopP != 0 {
+				params.TopP = a.Float(options.TopP)
+			}
+
+			// Set frequency penalty if non-zero
+			if options.FrequencyPenalty != 0 {
+				yield(StreamChunk{}, fmt.Errorf("frequency penalty is invalid"))
+				return
+			}
+
+			// Set presence penalty if non-zero
+			if options.PresencePenalty != 0 {
+				yield(StreamChunk{}, fmt.Errorf("presence penalty is invalid"))
+				return
+			}
+
+			// Set max tokens if specified
+			if options.MaxGenerationTokens > 0 {
+				params.MaxTokens = int64(options.MaxGenerationTokens)
+			}
+
+			// Set number of completions if specified
+			if options.N > 0 {
+				yield(StreamChunk{}, fmt.Errorf("n is invalid"))
+				return
+			}
+
+			// Set stop sequences if specified
+			if len(options.StopSequences) > 0 {
+				params.StopSequences = options.StopSequences
+			}
+
+			// Set tool choice if specified
+			if options.ToolChoice != "" {
+				switch options.ToolChoice {
+				case ToolChoiceAuto:
+					params.ToolChoice = a.ToolChoiceUnionParam{
+						OfAuto: &a.ToolChoiceAutoParam{},
+					}
+				case ToolChoiceToolsRequired:
+					params.ToolChoice = a.ToolChoiceUnionParam{
+						OfAny: &a.ToolChoiceAnyParam{},
+					}
+				default:
+					// Specific tool name
+					params.ToolChoice = a.ToolChoiceUnionParam{
+						OfTool: &a.ToolChoiceToolParam{
+							Name: options.ToolChoice,
+						},
+					}
+				}
+			}
+
+			// Handle multimodality options
+			if len(options.OutputModalities) > 0 {
+				for _, m := range options.OutputModalities {
+					switch m {
+					case Audio, Image, Video:
+						yield(StreamChunk{}, UnsupportedOutputModalityErr("image output not supported by model"))
+						return
+					}
+				}
+			}
+
+			if options.ThinkingBudget != "" {
+				budget, err := strconv.ParseUint(options.ThinkingBudget, 10, 64)
+				if err != nil {
+					yield(StreamChunk{}, InvalidParameterErr{
+						Parameter: "thinking budget",
+						Reason:    fmt.Sprintf("value is not a unsigned int: %s", err),
+					})
+				}
+
+				params.Thinking = a.ThinkingConfigParamUnion{
+					OfEnabled: &a.ThinkingConfigEnabledParam{
+						BudgetTokens: int64(budget),
+					},
+				}
+			}
+		}
+
+		// Add tools if any are registered
+		if len(g.tools) > 0 {
+			var tools []a.ToolUnionParam
+			for _, tool := range g.tools {
+				tools = append(tools, a.ToolUnionParam{
+					OfTool: &tool,
+				})
+			}
+			params.Tools = tools
+		}
+
+		// Start the stream
+		stream := g.client.NewStreaming(ctx, params)
+		defer stream.Close()
+		for stream.Next() {
+			chunk := stream.Current()
+
+			switch event := chunk.AsAny().(type) {
+			case a.ContentBlockStartEvent:
+				// if a content block start type event and tool call, then extract the tool call details
+				// all types of content block deltas are automatically handled in the `case a.ContentBlockDeltaEvent`
+				if event.ContentBlock.Type != "tool_use" {
+					continue
+				}
+				if !yield(StreamChunk{
+					Block: Block{
+						ID:           event.ContentBlock.ID,
+						BlockType:    ToolCall,
+						ModalityType: Text,
+						MimeType:     "text/plain",
+						Content:      Str(event.ContentBlock.Name),
+					},
+					CandidatesIndex: 0,
+				}, nil) {
+					return
+				}
+			case a.ContentBlockDeltaEvent:
+				switch delta := event.Delta.AsAny().(type) {
+				case a.TextDelta:
+					if delta.Text == "" {
+						continue
+					}
+					if !yield(StreamChunk{
+						Block: Block{
+							BlockType:    Content,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(delta.Text),
+						},
+						CandidatesIndex: 0,
+					}, nil) {
+						return
+					}
+				case a.InputJSONDelta:
+					// ignore empty partial json chunks
+					if delta.PartialJSON == "" {
+						continue
+					}
+					if !yield(StreamChunk{
+						Block: Block{
+							BlockType:    ToolCall,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(delta.PartialJSON),
+						},
+						CandidatesIndex: 0,
+					}, nil) {
+						return
+					}
+				case a.ThinkingDelta:
+					if delta.Thinking == "" {
+						continue
+					}
+					if !yield(StreamChunk{
+						Block: Block{
+							BlockType:    Thinking,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(delta.Thinking),
+						},
+						CandidatesIndex: 0,
+					}, nil) {
+						return
+					}
+				case a.SignatureDelta:
+					if delta.Signature == "" {
+						continue
+					}
+					if !yield(StreamChunk{
+						Block: Block{
+							BlockType:    Thinking,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							ExtraFields: map[string]interface{}{
+								generatorPrefix + thinkingSignatureKey: delta.Signature,
+							},
+						},
+						CandidatesIndex: 0,
+					}, nil) {
+						return
+					}
+				case a.CitationsDelta:
+					panic("citation block type not supported")
+				default:
+					panic("unknown block type")
+				}
+			}
+
+		}
+
+		if stream.Err() != nil {
+			yield(StreamChunk{}, stream.Err())
+		}
+	}
+
+}
+
 // AnthropicSvc defines the interface for interacting with the Anthropic API.
 // It requires the methods needed for both generation and token counting.
 //
@@ -631,6 +868,9 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 // allowing for direct use or wrapping with additional functionality
 // (such as caching via AnthropicServiceWrapper).
 type AnthropicSvc interface {
+	// New generates a new message using the Anthropic API
+	New(ctx context.Context, body a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error)
+
 	// NewStreaming generates a new streaming message using the Anthropic API
 	NewStreaming(ctx context.Context, body a.MessageNewParams, opts ...option.RequestOption) (stream *ssestream.Stream[a.MessageStreamEventUnion])
 
@@ -658,6 +898,7 @@ type AnthropicSvc interface {
 // The returned generator also implements the TokenCounter interface for token counting.
 func NewAnthropicGenerator(client AnthropicSvc, model, systemInstructions string) interface {
 	ToolCapableGenerator
+	StreamingGenerator
 	TokenCounter
 } {
 	inner := &AnthropicGenerator{
