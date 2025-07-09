@@ -26,7 +26,7 @@ func ExampleGeminiGenerator_Generate() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-1.5-flash", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -61,7 +61,7 @@ func ExampleGeminiGenerator_Stream() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant. You respond to the user with plain text format.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -97,7 +97,7 @@ func ExampleGeminiGenerator_Register() {
 
 	g, err := NewGeminiGenerator(
 		client,
-		"gemini-2.5-flash-preview-05-20",
+		"gemini-2.5-pro",
 		`You are a helpful assistant. You can call tools in parallel. 
 When a user asks for the server time, always call the server time tool, don't use previously returned results`,
 	)
@@ -183,7 +183,7 @@ When a user asks for the server time, always call the server time tool, don't us
 		time.Time{}.String(),
 	))
 
-	dialog = append(dialog, Message{
+	dialog = append(dialog, response.Candidates[0], Message{
 		Role: User,
 		Blocks: []Block{{
 			BlockType:    Content,
@@ -287,7 +287,7 @@ func ExampleGeminiGenerator_Generate_image() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-03-25", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -351,7 +351,7 @@ func ExampleGeminiGenerator_Generate_audio() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-pro-preview-06-05", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -405,7 +405,7 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash-preview-05-20", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -514,7 +514,7 @@ func ExampleGeminiGenerator_Count() {
 	)
 
 	// Create a generator
-	g, err := NewGeminiGenerator(client, "gemini-1.5-pro", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -600,7 +600,7 @@ func ExampleGeminiGenerator_Generate_pdf() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash-preview-05-20", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return

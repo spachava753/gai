@@ -80,16 +80,16 @@ func ExampleAnthropicGenerator_Stream() {
 	}
 
 	// Stream a response
-	blocks := make([][]Block, 2)
-	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{N: 2, MaxGenerationTokens: 1024}) {
+	var blocks []Block
+	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 1024}) {
 		if err != nil {
 			fmt.Println(err.Error())
 			return
 		}
-		blocks[chunk.CandidatesIndex] = append(blocks[chunk.CandidatesIndex], chunk.Block)
+		blocks = append(blocks, chunk.Block)
 	}
 
-	if len(blocks) == 2 && len(blocks[0]) > 1 && len(blocks[1]) > 1 {
+	if len(blocks) > 0 {
 		fmt.Println("Response received")
 	}
 

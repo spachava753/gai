@@ -103,7 +103,7 @@ func ExampleOpenAiGenerator_Generate_audio() {
 				{
 					BlockType:    Content,
 					ModalityType: Text,
-					Content:      Str("What is the name of person in the greeting in this audio? Return a one word response of the name"),
+					Content:      Str("In this audio, a person is introducing themselves. What is the name of person in the greeting in this audio? Return a one word response of the name"),
 				},
 			},
 		},

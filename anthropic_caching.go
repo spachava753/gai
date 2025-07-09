@@ -52,6 +52,27 @@ type AnthropicServiceWrapper struct {
 	wrapped AnthropicSvc
 }
 
+// New implements the AnthropicSvc interface by applying all registered
+// parameter modifier functions to the request parameters before passing them to the
+// wrapped service.
+//
+// Each modifier function is called in the order they were registered. If any modifier
+// returns an error, the request is aborted and the error is returned.
+//
+// After all modifiers have been successfully applied, the modified parameters are
+// passed to the wrapped service's New method.
+func (svc AnthropicServiceWrapper) New(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error) {
+	for _, f := range svc.funcs {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err := f(ctx, &params); err != nil {
+			return nil, err
+		}
+	}
+	return svc.wrapped.New(ctx, params, opts...)
+}
+
 // NewStreaming implements the AnthropicSvc interface by applying all registered
 // parameter modifier functions to the request parameters before passing them to the
 // wrapped service.
