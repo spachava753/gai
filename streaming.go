@@ -335,3 +335,13 @@ func (s StreamingAdapter) Generate(ctx context.Context, dialog Dialog, options *
 		FinishReason: finishReason,
 	}, nil
 }
+
+func (s StreamingAdapter) Register(tool Tool) error {
+	i, ok := s.S.(ToolRegister)
+	if !ok {
+		return fmt.Errorf("inner generator does not implement ToolRegister")
+	}
+	return i.Register(tool)
+}
+
+var _ ToolCapableGenerator = (*StreamingAdapter)(nil)
