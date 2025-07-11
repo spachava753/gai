@@ -837,6 +837,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							BlockType:    Thinking,
 							ModalityType: Text,
 							MimeType:     "text/plain",
+							Content:      Str(""),
 							ExtraFields: map[string]interface{}{
 								generatorPrefix + thinkingSignatureKey: delta.Signature,
 							},

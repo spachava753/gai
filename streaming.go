@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 )
 
 // StreamChunk represents a single chunk of content yielded during streaming generation.
@@ -252,11 +253,14 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 			// Group all consecutive thinking blocks
 			j := i + 1
 			joined := blk.Content.String()
+			extraFields := make(map[string]interface{})
+			maps.Copy(extraFields, blk.ExtraFields)
 			for j < n && blocks[j].BlockType == Thinking {
 				if blocks[j].ModalityType != Text {
 					return nil, fmt.Errorf("content block type %q does not have text modality (got %q)", blocks[j].BlockType, blocks[j].ModalityType)
 				}
 				joined += blocks[j].Content.String()
+				maps.Copy(extraFields, blocks[j].ExtraFields)
 				j++
 			}
 			result = append(result, Block{
@@ -264,6 +268,7 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 				ModalityType: Text, // safe default
 				MimeType:     "text/plain",
 				Content:      Str(joined),
+				ExtraFields:  extraFields,
 			})
 			i = j
 			continue
@@ -275,11 +280,14 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 			// Group consecutive content/text blocks
 			j := i + 1
 			joined := blk.Content.String()
+			extraFields := make(map[string]interface{})
+			maps.Copy(extraFields, blk.ExtraFields)
 			for j < n && blocks[j].BlockType == Content {
 				if blocks[j].ModalityType != Text {
 					return nil, fmt.Errorf("content block type %q does not have text modality (got %q)", blocks[j].BlockType, blocks[j].ModalityType)
 				}
 				joined += blocks[j].Content.String()
+				maps.Copy(extraFields, blocks[j].ExtraFields)
 				j++
 			}
 			result = append(result, Block{
@@ -287,6 +295,7 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 				ModalityType: Text,
 				MimeType:     "text/plain",
 				Content:      Str(joined),
+				ExtraFields:  extraFields,
 			})
 			i = j
 			continue
@@ -297,10 +306,13 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 			}
 			id := blk.ID
 			toolName := blk.Content.String()
+			extraFields := make(map[string]interface{})
+			maps.Copy(extraFields, blk.ExtraFields)
 			jsonDelta := ""
 			j := i + 1
 			for j < n && blocks[j].BlockType == ToolCall && blocks[j].ID == "" {
 				jsonDelta += blocks[j].Content.String()
+				maps.Copy(extraFields, blocks[j].ExtraFields)
 				j++
 			}
 			// Combine all json deltas into one
@@ -323,6 +335,7 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 				ModalityType: Text,
 				MimeType:     "text/plain",
 				Content:      Str(marshal),
+				ExtraFields:  extraFields,
 			})
 			i = j
 			continue
