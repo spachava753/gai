@@ -112,7 +112,7 @@ func (t *Stdio) Connect(ctx context.Context) error {
 			return
 		}
 		// Create command
-		t.cmd = exec.CommandContext(ctx, t.config.Command, t.config.Args...)
+		t.cmd = exec.Command(t.config.Command, t.config.Args...)
 
 		// Set environment variables
 		if len(t.config.Env) > 0 {

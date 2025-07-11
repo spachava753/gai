@@ -556,6 +556,8 @@ fallbackGen, err := gai.NewFallbackGenerator(
 
 The package includes MCP (Model Context Protocol) client support for connecting to external tools and data sources. The MCP client allows you to connect to MCP servers via stdio, HTTP, or other transports and use their tools within the gai framework.
 
+Note: This MCP implementation does not support JSON-RPC batch requests/responses. All messages are sent and received individually for simplicity and forward compatibility with planned protocol changes.
+
 Example MCP usage:
 
 ```go
@@ -576,7 +578,7 @@ client, err := mcp.NewClient(ctx, transport, mcp.ClientInfo{
 err = mcp.RegisterMCPToolsWithGenerator(ctx, client, toolGen)
 ```
 
-For more information and examples, see the README and example files in the repository.
+For more information and examples, example files in the repository.
 
 ## License
 
