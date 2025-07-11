@@ -30,12 +30,7 @@ const (
 //
 // Panics if the value in the metrics map cannot be type asserted to int.
 func InputTokens(m Metrics) (int, bool) {
-	inputTokensVal, ok := m[UsageMetricInputTokens]
-	if !ok {
-		return 0, false
-	}
-	inputTokens := inputTokensVal.(int)
-	return inputTokens, true
+	return GetMetric[int](m, UsageMetricInputTokens)
 }
 
 // OutputTokens returns the number of tokens generated in the Response from the metrics.
@@ -47,12 +42,7 @@ func InputTokens(m Metrics) (int, bool) {
 //
 // Panics if the value in the metrics map cannot be type asserted to int.
 func OutputTokens(m Metrics) (int, bool) {
-	outputTokensVal, ok := m[UsageMetricGenerationTokens]
-	if !ok {
-		return 0, false
-	}
-	outputTokens := outputTokensVal.(int)
-	return outputTokens, true
+	return GetMetric[int](m, UsageMetricGenerationTokens)
 }
 
 // GetMetric is a generic function that retrieves a metric value of type T from the metrics map.
@@ -67,17 +57,17 @@ func OutputTokens(m Metrics) (int, bool) {
 // Example usage:
 //
 //	// Get a float64 metric
-//	if cost, ok := GetMetric[float64](metrics); ok {
+//	if cost, ok := GetMetric[float64](metrics, "cost"); ok {
 //	    fmt.Printf("Request cost: $%.2f\n", cost)
 //	}
 //
 //	// Get a string metric
-//	if model, ok := GetMetric[string](metrics); ok {
+//	if model, ok := GetMetric[string](metrics, "model"); ok {
 //	    fmt.Printf("Model used: %s\n", model)
 //	}
-func GetMetric[T any](m Metrics) (T, bool) {
+func GetMetric[T any](m Metrics, key string) (T, bool) {
 	var metric T
-	metricVal, ok := m[UsageMetricGenerationTokens]
+	metricVal, ok := m[key]
 	if !ok {
 		return metric, false
 	}

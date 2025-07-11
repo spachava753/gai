@@ -26,7 +26,7 @@ func ExampleGeminiGenerator_Generate() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant. You respond to the user with plain text format.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return

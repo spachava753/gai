@@ -1,22 +1,4 @@
-// Package gai_test provides examples demonstrating the usage of StreamingAdapter.
-//
-// StreamingAdapter is a key component that bridges the gap between streaming and
-// non-streaming interfaces in the gai package. It allows you to:
-//
-// 1. Convert any StreamingGenerator to a regular Generator
-// 2. Internally handle streaming while presenting a simple Generate() interface
-// 3. Automatically compress streaming chunks into complete responses
-// 4. Handle tool calls that are streamed in multiple chunks
-//
-// This is particularly useful when:
-// - You want to use streaming for better performance but need a simpler API
-// - You're integrating with systems that expect complete responses
-// - You want to hide the complexity of streaming from end users
-// - You need to collect all chunks before processing the complete response
-//
-// The examples in this file demonstrate various use cases and patterns for
-// effectively using StreamingAdapter in your applications.
-package gai_test
+package gai
 
 import (
 	"context"
@@ -26,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go"
-	"github.com/spachava753/gai"
 )
 
 // ExampleStreamingAdapter demonstrates how to use StreamingAdapter to convert
@@ -37,7 +18,7 @@ func ExampleStreamingAdapter() {
 	client := openai.NewClient()
 
 	// Create a generator with streaming support
-	gen := gai.NewOpenAiGenerator(
+	gen := NewOpenAiGenerator(
 		&client.Chat.Completions,
 		openai.ChatModelGPT4oMini,
 		"You are a helpful assistant.",
@@ -45,14 +26,14 @@ func ExampleStreamingAdapter() {
 
 	// Wrap the generator with StreamingAdapter
 	// This converts the streaming interface to a regular Generate interface
-	adapter := gai.StreamingAdapter{S: &gen}
+	adapter := StreamingAdapter{S: &gen}
 
 	// Create a simple dialog
-	dialog := gai.Dialog{
+	dialog := Dialog{
 		{
-			Role: gai.User,
-			Blocks: []gai.Block{
-				gai.TextBlock("What is the capital of France?"),
+			Role: User,
+			Blocks: []Block{
+				TextBlock("What is the capital of France?"),
 			},
 		},
 	}
@@ -81,25 +62,25 @@ func ExampleStreamingAdapter_withTools() {
 	client := openai.NewClient()
 
 	// Create a generator with streaming support
-	gen := gai.NewOpenAiGenerator(
+	gen := NewOpenAiGenerator(
 		&client.Chat.Completions,
 		openai.ChatModelGPT4oMini,
 		"You are a helpful weather assistant.",
 	)
 
 	// Register a weather tool
-	weatherTool := gai.Tool{
+	weatherTool := Tool{
 		Name:        "get_weather",
 		Description: "Get the current weather in a given location",
-		InputSchema: gai.InputSchema{
-			Type: gai.Object,
-			Properties: map[string]gai.Property{
+		InputSchema: InputSchema{
+			Type: Object,
+			Properties: map[string]Property{
 				"location": {
-					Type:        gai.String,
+					Type:        String,
 					Description: "The city and state, e.g. San Francisco, CA",
 				},
 				"unit": {
-					Type:        gai.String,
+					Type:        String,
 					Enum:        []string{"celsius", "fahrenheit"},
 					Description: "The unit of temperature",
 				},
@@ -114,21 +95,21 @@ func ExampleStreamingAdapter_withTools() {
 	}
 
 	// Wrap with StreamingAdapter
-	adapter := gai.StreamingAdapter{S: &gen}
+	adapter := StreamingAdapter{S: &gen}
 
 	// Create a dialog asking about weather
-	dialog := gai.Dialog{
+	dialog := Dialog{
 		{
-			Role: gai.User,
-			Blocks: []gai.Block{
-				gai.TextBlock("What's the weather like in New York?"),
+			Role: User,
+			Blocks: []Block{
+				TextBlock("What's the weather like in New York?"),
 			},
 		},
 	}
 
 	// Generate with tool use enabled
-	response, err := adapter.Generate(context.Background(), dialog, &gai.GenOpts{
-		ToolChoice: gai.ToolChoiceAuto,
+	response, err := adapter.Generate(context.Background(), dialog, &GenOpts{
+		ToolChoice: ToolChoiceAuto,
 	})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -138,9 +119,9 @@ func ExampleStreamingAdapter_withTools() {
 	// The response should contain a tool call
 	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
 		block := response.Candidates[0].Blocks[0]
-		if block.BlockType == gai.ToolCall {
+		if block.BlockType == ToolCall {
 			// Parse the tool call
-			var toolCall gai.ToolCallInput
+			var toolCall ToolCallInput
 			if err := json.Unmarshal([]byte(block.Content.String()), &toolCall); err == nil {
 				fmt.Printf("Tool called: %s\n", toolCall.Name)
 				fmt.Printf("Location: %v\n", toolCall.Parameters["location"])
@@ -160,17 +141,17 @@ func ExampleStreamingAdapter_errorHandling() {
 	client := openai.NewClient()
 
 	// Create a generator
-	gen := gai.NewOpenAiGenerator(
+	gen := NewOpenAiGenerator(
 		&client.Chat.Completions,
 		openai.ChatModelGPT4oMini,
 		"You are a helpful assistant.",
 	)
 
 	// Wrap with StreamingAdapter
-	adapter := gai.StreamingAdapter{S: &gen}
+	adapter := StreamingAdapter{S: &gen}
 
 	// Create an empty dialog (which should cause an error)
-	dialog := gai.Dialog{}
+	dialog := Dialog{}
 
 	// Try to generate - this should return an error
 	_, err := adapter.Generate(context.Background(), dialog, nil)
@@ -191,34 +172,34 @@ func ExampleStreamingAdapter_multipleBlocks() {
 
 	// Create a mock streaming generator that yields multiple chunks
 	mockGen := &mockStreamingGenerator{
-		chunks: []gai.StreamChunk{
+		chunks: []StreamChunk{
 			// First content chunk
 			{
-				Block: gai.Block{
-					BlockType:    gai.Content,
-					ModalityType: gai.Text,
+				Block: Block{
+					BlockType:    Content,
+					ModalityType: Text,
 					MimeType:     "text/plain",
-					Content:      gai.Str("The weather in "),
+					Content:      Str("The weather in "),
 				},
 				CandidatesIndex: 0,
 			},
 			// Second content chunk (will be concatenated)
 			{
-				Block: gai.Block{
-					BlockType:    gai.Content,
-					ModalityType: gai.Text,
+				Block: Block{
+					BlockType:    Content,
+					ModalityType: Text,
 					MimeType:     "text/plain",
-					Content:      gai.Str("Paris is "),
+					Content:      Str("Paris is "),
 				},
 				CandidatesIndex: 0,
 			},
 			// Third content chunk (will be concatenated)
 			{
-				Block: gai.Block{
-					BlockType:    gai.Content,
-					ModalityType: gai.Text,
+				Block: Block{
+					BlockType:    Content,
+					ModalityType: Text,
 					MimeType:     "text/plain",
-					Content:      gai.Str("sunny today."),
+					Content:      Str("sunny today."),
 				},
 				CandidatesIndex: 0,
 			},
@@ -226,7 +207,7 @@ func ExampleStreamingAdapter_multipleBlocks() {
 	}
 
 	// Wrap with StreamingAdapter
-	adapter := gai.StreamingAdapter{S: mockGen}
+	adapter := StreamingAdapter{S: mockGen}
 
 	// Generate
 	response, err := adapter.Generate(context.Background(), nil, nil)
@@ -238,7 +219,7 @@ func ExampleStreamingAdapter_multipleBlocks() {
 	// The adapter should have compressed the three chunks into one block
 	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) == 1 {
 		fmt.Println("Compressed content:", response.Candidates[0].Blocks[0].Content)
-		fmt.Println("Finish reason:", response.FinishReason == gai.EndTurn)
+		fmt.Println("Finish reason:", response.FinishReason == EndTurn)
 	}
 
 	// Output:
@@ -253,21 +234,21 @@ func ExampleStreamingAdapter_parallelToolCalls() {
 	client := openai.NewClient()
 
 	// Create a generator
-	gen := gai.NewOpenAiGenerator(
+	gen := NewOpenAiGenerator(
 		&client.Chat.Completions,
 		openai.ChatModelGPT4oMini,
 		"You are a helpful stock price assistant.",
 	)
 
 	// Register a stock price tool
-	stockTool := gai.Tool{
+	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol",
-		InputSchema: gai.InputSchema{
-			Type: gai.Object,
-			Properties: map[string]gai.Property{
+		InputSchema: InputSchema{
+			Type: Object,
+			Properties: map[string]Property{
 				"ticker": {
-					Type:        gai.String,
+					Type:        String,
 					Description: "The stock ticker symbol, e.g. AAPL",
 				},
 			},
@@ -281,21 +262,21 @@ func ExampleStreamingAdapter_parallelToolCalls() {
 	}
 
 	// Wrap with StreamingAdapter
-	adapter := gai.StreamingAdapter{S: &gen}
+	adapter := StreamingAdapter{S: &gen}
 
 	// Ask about multiple stocks
-	dialog := gai.Dialog{
+	dialog := Dialog{
 		{
-			Role: gai.User,
-			Blocks: []gai.Block{
-				gai.TextBlock("What are the current prices of Apple and Microsoft stocks?"),
+			Role: User,
+			Blocks: []Block{
+				TextBlock("What are the current prices of Apple and Microsoft stocks?"),
 			},
 		},
 	}
 
 	// Generate with tool use
-	response, err := adapter.Generate(context.Background(), dialog, &gai.GenOpts{
-		ToolChoice: gai.ToolChoiceAuto,
+	response, err := adapter.Generate(context.Background(), dialog, &GenOpts{
+		ToolChoice: ToolChoiceAuto,
 	})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -305,9 +286,9 @@ func ExampleStreamingAdapter_parallelToolCalls() {
 	// Count the number of tool calls
 	toolCallCount := 0
 	for _, block := range response.Candidates[0].Blocks {
-		if block.BlockType == gai.ToolCall {
+		if block.BlockType == ToolCall {
 			toolCallCount++
-			var toolCall gai.ToolCallInput
+			var toolCall ToolCallInput
 			if err := json.Unmarshal([]byte(block.Content.String()), &toolCall); err == nil {
 				fmt.Printf("Tool call %d: %s with ticker=%v\n",
 					toolCallCount, toolCall.Name, toolCall.Parameters["ticker"])
@@ -315,27 +296,12 @@ func ExampleStreamingAdapter_parallelToolCalls() {
 		}
 	}
 
-	fmt.Printf("Finish reason: %v\n", response.FinishReason == gai.ToolUse)
+	fmt.Printf("Finish reason: %v\n", response.FinishReason == ToolUse)
 
 	// Output:
 	// Tool call 1: get_stock_price with ticker=AAPL
 	// Tool call 2: get_stock_price with ticker=MSFT
 	// Finish reason: true
-}
-
-// mockStreamingGenerator is a simple mock implementation for demonstration
-type mockStreamingGenerator struct {
-	chunks []gai.StreamChunk
-}
-
-func (m *mockStreamingGenerator) Stream(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) iter.Seq2[gai.StreamChunk, error] {
-	return func(yield func(gai.StreamChunk, error) bool) {
-		for _, chunk := range m.chunks {
-			if !yield(chunk, nil) {
-				return
-			}
-		}
-	}
 }
 
 // ExampleStreamingAdapter_customUsage shows how to create a custom generator
@@ -350,14 +316,14 @@ func ExampleStreamingAdapter_customUsage() {
 	}
 
 	// Wrap with StreamingAdapter to get a regular Generator interface
-	adapter := gai.StreamingAdapter{S: customGen}
+	adapter := StreamingAdapter{S: customGen}
 
 	// Now you can use it as a regular generator
-	dialog := gai.Dialog{
+	dialog := Dialog{
 		{
-			Role: gai.User,
-			Blocks: []gai.Block{
-				gai.TextBlock("Hello!"),
+			Role: User,
+			Blocks: []Block{
+				TextBlock("Hello!"),
 			},
 		},
 	}
@@ -384,11 +350,11 @@ type customStreamingGenerator struct {
 	systemPrompt string
 }
 
-func (c *customStreamingGenerator) Stream(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) iter.Seq2[gai.StreamChunk, error] {
-	return func(yield func(gai.StreamChunk, error) bool) {
+func (c *customStreamingGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
+	return func(yield func(StreamChunk, error) bool) {
 		// Validate input
 		if len(dialog) == 0 {
-			yield(gai.StreamChunk{}, gai.EmptyDialogErr)
+			yield(StreamChunk{}, EmptyDialogErr)
 			return
 		}
 
@@ -396,12 +362,12 @@ func (c *customStreamingGenerator) Stream(ctx context.Context, dialog gai.Dialog
 		responseChunks := []string{"Mock response: ", "Hello! ", "How can I ", "help you ", "today?"}
 
 		for _, chunk := range responseChunks {
-			if !yield(gai.StreamChunk{
-				Block: gai.Block{
-					BlockType:    gai.Content,
-					ModalityType: gai.Text,
+			if !yield(StreamChunk{
+				Block: Block{
+					BlockType:    Content,
+					ModalityType: Text,
 					MimeType:     "text/plain",
-					Content:      gai.Str(chunk),
+					Content:      Str(chunk),
 				},
 				CandidatesIndex: 0,
 			}, nil) {
@@ -419,26 +385,26 @@ func ExampleStreamingAdapter_withToolGenerator() {
 	client := openai.NewClient()
 
 	// Create a generator with streaming support
-	baseGen := gai.NewOpenAiGenerator(
+	baseGen := NewOpenAiGenerator(
 		&client.Chat.Completions,
 		openai.ChatModelGPT4oMini,
 		"You are a helpful assistant that can check weather and time.",
 	)
 
 	// Create a ToolGenerator
-	toolGen := &gai.ToolGenerator{
+	toolGen := &ToolGenerator{
 		G: &baseGen,
 	}
 
 	// Register weather tool with callback
-	weatherTool := gai.Tool{
+	weatherTool := Tool{
 		Name:        "get_weather",
 		Description: "Get the current weather in a location",
-		InputSchema: gai.InputSchema{
-			Type: gai.Object,
-			Properties: map[string]gai.Property{
+		InputSchema: InputSchema{
+			Type: Object,
+			Properties: map[string]Property{
 				"location": {
-					Type:        gai.String,
+					Type:        String,
 					Description: "The city and state",
 				},
 			},
@@ -447,7 +413,7 @@ func ExampleStreamingAdapter_withToolGenerator() {
 	}
 
 	// Simple weather callback
-	weatherCallback := gai.ToolCallBackFunc[struct {
+	weatherCallback := ToolCallBackFunc[struct {
 		Location string `json:"location"`
 	}](func(ctx context.Context, params struct{ Location string }) (string, error) {
 		// Mock weather data
@@ -460,11 +426,11 @@ func ExampleStreamingAdapter_withToolGenerator() {
 	}
 
 	// Create a dialog
-	dialog := gai.Dialog{
+	dialog := Dialog{
 		{
-			Role: gai.User,
-			Blocks: []gai.Block{
-				gai.TextBlock("What's the weather in San Francisco?"),
+			Role: User,
+			Blocks: []Block{
+				TextBlock("What's the weather in San Francisco?"),
 			},
 		},
 	}
@@ -480,9 +446,9 @@ func ExampleStreamingAdapter_withToolGenerator() {
 	// Print the final response (skipping tool calls and results)
 	foundWeatherResponse := false
 	for _, msg := range completeDialog {
-		if msg.Role == gai.Assistant && len(msg.Blocks) > 0 {
+		if msg.Role == Assistant && len(msg.Blocks) > 0 {
 			block := msg.Blocks[0]
-			if block.BlockType == gai.Content {
+			if block.BlockType == Content {
 				content := block.Content.String()
 				// Check if the response mentions weather in San Francisco
 				if strings.Contains(content, "San Francisco") &&

@@ -1,8 +1,10 @@
 package gai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"strings"
 	"testing"
 )
@@ -113,4 +115,23 @@ func TestStreamingAdapterBlockCompression(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
+}
+
+// mockStreamingGenerator is a test helper that yields pre-defined chunks
+type mockStreamingGenerator struct {
+	chunks []StreamChunk
+	err    error
+}
+
+func (m *mockStreamingGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
+	return func(yield func(StreamChunk, error) bool) {
+		for _, chunk := range m.chunks {
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+		if m.err != nil {
+			yield(StreamChunk{}, m.err)
+		}
+	}
 }
