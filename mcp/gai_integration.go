@@ -15,9 +15,10 @@ func convertMCPToolToGAITool(mcpTool tool) (gai.Tool, error) {
 	gaiTool := gai.Tool{
 		Name:        mcpTool.Name,
 		Description: mcpTool.Description,
-		InputSchema: gai.InputSchema{
-			Type: gai.Object, // Default type
-		},
+	}
+
+	if len(mcpTool.InputSchema.Properties) == 0 {
+		return gaiTool, nil
 	}
 
 	// Validate input schema type
@@ -27,23 +28,24 @@ func convertMCPToolToGAITool(mcpTool tool) (gai.Tool, error) {
 
 	// Copy required fields directly
 	gaiTool.InputSchema.Required = mcpTool.InputSchema.Required
+	gaiTool.InputSchema = gai.InputSchema{
+		Type: gai.Object,
+	}
 
 	// Convert properties
-	if len(mcpTool.InputSchema.Properties) > 0 {
-		gaiTool.InputSchema.Properties = make(map[string]gai.Property)
-		for propName, propValue := range mcpTool.InputSchema.Properties {
-			propMap, ok := propValue.(map[string]interface{})
-			if !ok {
-				return gai.Tool{}, fmt.Errorf("property '%s' is not a valid object", propName)
-			}
-
-			prop, err := convertProperty(propMap)
-			if err != nil {
-				return gai.Tool{}, fmt.Errorf("failed to convert property '%s': %w", propName, err)
-			}
-
-			gaiTool.InputSchema.Properties[propName] = prop
+	gaiTool.InputSchema.Properties = make(map[string]gai.Property)
+	for propName, propValue := range mcpTool.InputSchema.Properties {
+		propMap, ok := propValue.(map[string]interface{})
+		if !ok {
+			return gai.Tool{}, fmt.Errorf("property '%s' is not a valid object", propName)
 		}
+
+		prop, err := convertProperty(propMap)
+		if err != nil {
+			return gai.Tool{}, fmt.Errorf("failed to convert property '%s': %w", propName, err)
+		}
+
+		gaiTool.InputSchema.Properties[propName] = prop
 	}
 
 	return gaiTool, nil
