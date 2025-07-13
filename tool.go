@@ -446,6 +446,14 @@ type GenOptsGenerator func(dialog Dialog) *GenOpts
 // tool choice, or modalities based on the conversation context. If optsGen is nil,
 // a default function that returns nil options will be used.
 //
+// Error Handling:
+// If an error occurs during the looped generation process (e.g., tool callback
+// execution fails, invalid tool calls, context cancellation), the dialog accumulated
+// up to that point is returned along with the error. This partial dialog includes
+// all successfully processed messages, tool calls, and tool results that occurred
+// before the error, allowing callers to inspect the conversation state when the
+// error occurred.
+//
 // Example usage with dynamic options:
 //
 //	dialog, err := toolGen.Generate(ctx, dialog, func(d Dialog) *GenOpts {
