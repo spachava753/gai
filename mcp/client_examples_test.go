@@ -8,16 +8,21 @@ import (
 	"github.com/spachava753/gai/mcp"
 	"golang.org/x/oauth2"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
 )
 
 func ExampleNewStdio() {
-	// Example: Connects to an MCP time server using the stdio (docker) transport
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	config := mcp.StdioConfig{
 		Command: "docker",
-		Args:    []string{"run", "-i", "--rm", "mcp/time"},
+		Args:    []string{"run", "-i", "--mount", fmt.Sprintf("type=bind,src=%s,dst=/projects/workspace", wd), "desktopcommander", "/projects/workspace"},
 	}
 	transport := mcp.NewStdio(config)
 	ctx := context.Background()
@@ -43,15 +48,15 @@ func ExampleNewStdio() {
 		fmt.Println("No tools returned by server")
 		return
 	}
-	fmt.Println("Available tool:", tools[0].Name)
-	// Find get_current_time tool and invoke it
+	// Find list_allowed_directories tool and invoke it
 	for _, tool := range tools {
-		if tool.Name == "get_current_time" {
-			_, err := client.CallTool(ctx, tool.Name, map[string]interface{}{"timezone": "UTC"})
+		if tool.Name == "list_directory" {
+			msg, err := client.CallTool(ctx, tool.Name, map[string]interface{}{"path": "."})
+			_ = msg
 			if err != nil {
-				fmt.Println("Error calling get_current_time:", err)
+				fmt.Println("Error calling list_directory:", err)
 			} else {
-				fmt.Println("Got time")
+				fmt.Println("Got list_directory")
 			}
 			break
 		}
@@ -62,9 +67,8 @@ func ExampleNewStdio() {
 		fmt.Println("Ping succeeded")
 	}
 	// Output: Connected: true
-	// Server name: mcp-time
-	// Available tool: get_current_time
-	// Got time
+	// Server name: desktop-commander
+	// Got list_directory
 	// Ping succeeded
 }
 

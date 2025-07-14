@@ -32,6 +32,10 @@ const (
 
 	// Integer represents JSON Schema's 'integer' type
 	Integer
+
+	// Any represents a property that can be of any JSON type
+	// This corresponds to JSON Schema properties without a "type" field
+	Any
 )
 
 // String implements fmt.Stringer and returns the JSON Schema type name
@@ -51,6 +55,8 @@ func (p PropertyType) String() string {
 		return "string"
 	case Integer:
 		return "integer"
+	case Any:
+		return "any"
 	default:
 		return fmt.Sprintf("PropertyType(%d)", p)
 	}

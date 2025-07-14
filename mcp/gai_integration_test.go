@@ -26,7 +26,8 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 				Name:        "simple_tool",
 				Description: "A simple tool without parameters",
 				InputSchema: gai.InputSchema{
-					Type: gai.Object,
+					Type:       gai.Object,
+					Properties: map[string]gai.Property{},
 				},
 			},
 			wantErr: false,
@@ -650,10 +651,6 @@ func TestConvertMCPToolToGAITool(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.wantTool.Name, gotTool.Name)
 				assert.Equal(t, tt.wantTool.Description, gotTool.Description)
-
-				// In the stub implementation, we're not fully converting the schema yet,
-				// so we'll only check the Name and Description in the tests
-				// Once you implement the full conversion, you can uncomment this
 				assert.Equal(t, tt.wantTool.InputSchema, gotTool.InputSchema)
 			}
 		})

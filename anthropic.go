@@ -56,8 +56,9 @@ func convertToolToAnthropic(tool Tool) a.ToolParam {
 func convertPropertyToAnthropicMap(prop Property) map[string]interface{} {
 	result := map[string]interface{}{}
 
-	// Only add type if AnyOf is not present
-	if len(prop.AnyOf) == 0 {
+	// Only add type if AnyOf is not present and type is not Any
+	// (as per JSON Schema, they shouldn't coexist, and Any means omit type field)
+	if len(prop.AnyOf) == 0 && prop.Type != Any {
 		result["type"] = prop.Type.String()
 	}
 
@@ -75,12 +76,12 @@ func convertPropertyToAnthropicMap(prop Property) map[string]interface{} {
 		result["anyOf"] = anyOf
 	}
 
-	// Add enum if present
-	if len(prop.Enum) > 0 {
+	// Add enum if present (only if not Any type)
+	if len(prop.Enum) > 0 && prop.Type != Any {
 		result["enum"] = prop.Enum
 	}
 
-	// Add properties for object types
+	// Add properties for object types (only if not Any type)
 	if prop.Type == Object && prop.Properties != nil {
 		properties := make(map[string]interface{})
 		for name, p := range prop.Properties {
@@ -94,7 +95,7 @@ func convertPropertyToAnthropicMap(prop Property) map[string]interface{} {
 		}
 	}
 
-	// Add items for array types
+	// Add items for array types (only if not Any type)
 	if prop.Type == Array && prop.Items != nil {
 		result["items"] = convertPropertyToAnthropicMap(*prop.Items)
 	}

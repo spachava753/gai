@@ -114,8 +114,9 @@ func convertToolToOpenAI(tool Tool) oai.ChatCompletionToolParam {
 func convertPropertyToMap(prop Property) map[string]interface{} {
 	result := map[string]interface{}{}
 
-	// Only add type if AnyOf is not present (as per JSON Schema, they shouldn't coexist)
-	if len(prop.AnyOf) == 0 {
+	// Only add type if AnyOf is not present and type is not Any
+	// (as per JSON Schema, they shouldn't coexist, and Any means omit type field)
+	if len(prop.AnyOf) == 0 && prop.Type != Any {
 		result["type"] = prop.Type.String()
 	}
 
@@ -133,17 +134,17 @@ func convertPropertyToMap(prop Property) map[string]interface{} {
 		result["anyOf"] = anyOf
 	}
 
-	// Handle string enums
+	// Handle string enums (only if not Any type)
 	if prop.Type == String && len(prop.Enum) > 0 {
 		result["enum"] = prop.Enum
 	}
 
-	// Handle array items
+	// Handle array items (only if not Any type)
 	if prop.Type == Array && prop.Items != nil {
 		result["items"] = convertPropertyToMap(*prop.Items)
 	}
 
-	// Handle object properties and required fields
+	// Handle object properties and required fields (only if not Any type)
 	if prop.Type == Object && prop.Properties != nil {
 		properties := make(map[string]interface{})
 		for name, p := range prop.Properties {

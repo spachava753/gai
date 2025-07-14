@@ -195,6 +195,9 @@ func convertSinglePropertyToGeminiSchema(prop Property) (*genai.Schema, error) {
 			Properties:  propsSchema,
 			Required:    prop.Required,
 		}, nil
+	case Any:
+		return nil, fmt.Errorf("Gemini does not support 'any' type properties. " +
+			"Consider using anyOf with specific types or a more specific type")
 	default:
 		return nil, fmt.Errorf("unsupported property type: %v", prop.Type)
 	}

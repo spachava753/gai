@@ -17,10 +17,6 @@ func convertMCPToolToGAITool(mcpTool tool) (gai.Tool, error) {
 		Description: mcpTool.Description,
 	}
 
-	if len(mcpTool.InputSchema.Properties) == 0 {
-		return gaiTool, nil
-	}
-
 	// Validate input schema type
 	if mcpTool.InputSchema.Type != "object" {
 		return gai.Tool{}, fmt.Errorf("unsupported schema type: %s (only 'object' is supported)", mcpTool.InputSchema.Type)
@@ -30,6 +26,10 @@ func convertMCPToolToGAITool(mcpTool tool) (gai.Tool, error) {
 	gaiTool.InputSchema.Required = mcpTool.InputSchema.Required
 	gaiTool.InputSchema = gai.InputSchema{
 		Type: gai.Object,
+	}
+
+	if mcpTool.InputSchema.Required != nil {
+		gaiTool.InputSchema.Required = mcpTool.InputSchema.Required
 	}
 
 	// Convert properties
@@ -99,20 +99,20 @@ func convertProperty(propMap map[string]interface{}) (gai.Property, error) {
 		return property, nil
 	}
 
-	// If no anyOf, proceed with normal type-based conversion
-	// Extract the type
-	typeStr, ok := propMap["type"].(string)
-	if !ok {
-		return gai.Property{}, fmt.Errorf("property type is missing or not a string")
-	}
+	// Check if type field exists
+	typeStr, hasType := propMap["type"].(string)
 
-	// Create a new property
 	property := gai.Property{}
 
-	// Convert the property type
-	property.Type = stringToGAIType(typeStr)
-	if property.Type == gai.Null && typeStr != "null" {
-		return gai.Property{}, fmt.Errorf("unsupported property type: %s", typeStr)
+	if !hasType {
+		// No type specified - means any type is allowed
+		property.Type = gai.Any
+	} else {
+		// Convert the specified type
+		property.Type = stringToGAIType(typeStr)
+		if property.Type == gai.Null && typeStr != "null" {
+			return gai.Property{}, fmt.Errorf("unsupported property type: %s", typeStr)
+		}
 	}
 
 	// Add description if present
@@ -120,80 +120,83 @@ func convertProperty(propMap map[string]interface{}) (gai.Property, error) {
 		property.Description = descStr
 	}
 
-	// Handle enumerations for string properties
-	if property.Type == gai.String && propMap["enum"] != nil {
-		switch enumValues := propMap["enum"].(type) {
-		case []string:
-			property.Enum = make([]string, len(enumValues))
-			for i, val := range enumValues {
-				property.Enum[i] = val
-			}
-		case []interface{}:
-			property.Enum = make([]string, len(enumValues))
-			for i, val := range enumValues {
-				strVal, isString := val.(string)
-				if !isString {
-					return gai.Property{}, fmt.Errorf("unexpected enum value type: %T %v", val, val)
+	// Handle type-specific processing only if not Any type
+	if property.Type != gai.Any {
+		// Handle enumerations for string properties
+		if property.Type == gai.String && propMap["enum"] != nil {
+			switch enumValues := propMap["enum"].(type) {
+			case []string:
+				property.Enum = make([]string, len(enumValues))
+				for i, val := range enumValues {
+					property.Enum[i] = val
 				}
-				property.Enum[i] = strVal
-			}
-		default:
-			return gai.Property{}, fmt.Errorf("enum value is not a []string")
-		}
-	}
-
-	// Handle nested objects
-	if property.Type == gai.Object {
-		propProperties, ok := propMap["properties"].(map[string]interface{})
-		if ok {
-			property.Properties = make(map[string]gai.Property)
-			for subPropName, subPropValue := range propProperties {
-				subPropMap, ok := subPropValue.(map[string]interface{})
-				if !ok {
-					return gai.Property{}, fmt.Errorf("sub-property '%s' is not a valid object", subPropName)
+			case []interface{}:
+				property.Enum = make([]string, len(enumValues))
+				for i, val := range enumValues {
+					strVal, isString := val.(string)
+					if !isString {
+						return gai.Property{}, fmt.Errorf("unexpected enum value type: %T %v", val, val)
+					}
+					property.Enum[i] = strVal
 				}
-
-				subProp, err := convertProperty(subPropMap)
-				if err != nil {
-					return gai.Property{}, fmt.Errorf("failed to convert sub-property '%s': %w", subPropName, err)
-				}
-
-				property.Properties[subPropName] = subProp
+			default:
+				return gai.Property{}, fmt.Errorf("enum value is not a []string")
 			}
 		}
 
-		// Handle required fields for objects
-		if required, ok := propMap["required"]; ok {
-			// Try as []string first
-			if requiredStrings, ok := required.([]string); ok && len(requiredStrings) > 0 {
-				property.Required = requiredStrings
-			} else if requiredValues, ok := required.([]interface{}); ok && len(requiredValues) > 0 {
-				// If not []string, try as []interface{} and convert to []string
-				property.Required = make([]string, len(requiredValues))
-				for i, val := range requiredValues {
-					if strVal, ok := val.(string); ok {
-						property.Required[i] = strVal
-					} else {
-						return gai.Property{}, fmt.Errorf("required field is not a string")
+		// Handle nested objects
+		if property.Type == gai.Object {
+			propProperties, ok := propMap["properties"].(map[string]interface{})
+			if ok {
+				property.Properties = make(map[string]gai.Property)
+				for subPropName, subPropValue := range propProperties {
+					subPropMap, ok := subPropValue.(map[string]interface{})
+					if !ok {
+						return gai.Property{}, fmt.Errorf("sub-property '%s' is not a valid object", subPropName)
+					}
+
+					subProp, err := convertProperty(subPropMap)
+					if err != nil {
+						return gai.Property{}, fmt.Errorf("failed to convert sub-property '%s': %w", subPropName, err)
+					}
+
+					property.Properties[subPropName] = subProp
+				}
+			}
+
+			// Handle required fields for objects
+			if required, ok := propMap["required"]; ok {
+				// Try as []string first
+				if requiredStrings, ok := required.([]string); ok && len(requiredStrings) > 0 {
+					property.Required = requiredStrings
+				} else if requiredValues, ok := required.([]interface{}); ok && len(requiredValues) > 0 {
+					// If not []string, try as []interface{} and convert to []string
+					property.Required = make([]string, len(requiredValues))
+					for i, val := range requiredValues {
+						if strVal, ok := val.(string); ok {
+							property.Required[i] = strVal
+						} else {
+							return gai.Property{}, fmt.Errorf("required field is not a string")
+						}
 					}
 				}
 			}
 		}
-	}
 
-	// Handle arrays
-	if property.Type == gai.Array {
-		itemsMap, ok := propMap["items"].(map[string]interface{})
-		if !ok {
-			return gai.Property{}, fmt.Errorf("array items schema is missing or invalid")
+		// Handle arrays
+		if property.Type == gai.Array {
+			itemsMap, ok := propMap["items"].(map[string]interface{})
+			if !ok {
+				return gai.Property{}, fmt.Errorf("array items schema is missing or invalid")
+			}
+
+			itemsProp, err := convertProperty(itemsMap)
+			if err != nil {
+				return gai.Property{}, fmt.Errorf("failed to convert array items: %w", err)
+			}
+
+			property.Items = &itemsProp
 		}
-
-		itemsProp, err := convertProperty(itemsMap)
-		if err != nil {
-			return gai.Property{}, fmt.Errorf("failed to convert array items: %w", err)
-		}
-
-		property.Items = &itemsProp
 	}
 
 	return property, nil
@@ -216,9 +219,11 @@ func stringToGAIType(typeStr string) gai.PropertyType {
 		return gai.Array
 	case "null":
 		return gai.Null
+	case "any":
+		return gai.Any
 	default:
-		// Default to Null for unknown types
-		return gai.Null
+		// Default to Any for unknown types instead of Null
+		return gai.Any
 	}
 }
 
