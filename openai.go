@@ -905,7 +905,6 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		// Start the stream
 		stream := g.client.NewStreaming(ctx, params)
 		defer stream.Close()
-		acc := oai.ChatCompletionAccumulator{}
 		for stream.Next() {
 			chunk := stream.Current()
 
@@ -957,13 +956,6 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 				}, nil) {
 					return
 				}
-			}
-
-			acc.AddChunk(chunk)
-
-			// When this fires, the current chunk value will not contain content data
-			if _, ok := acc.JustFinishedContent(); ok {
-				return
 			}
 		}
 
