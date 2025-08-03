@@ -86,16 +86,9 @@ func Example_mixGenerators() {
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: InputSchema{
-			Type: Object,
-			Properties: map[string]Property{
-				"ticker": {
-					Type:        String,
-					Description: "The stock ticker symbol, e.g. AAPL for Apple Inc.",
-				},
-			},
-			Required: []string{"ticker"},
-		},
+		InputSchema: GenerateSchema[struct {
+			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+		}](),
 	}
 
 	if err := anthropicGen.Register(stockTool); err != nil {

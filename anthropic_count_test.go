@@ -55,16 +55,6 @@ func TestAnthropicGenerator_Count_IncludesTools(t *testing.T) {
 	tool := Tool{
 		Name:        "test_tool",
 		Description: "A test tool",
-		InputSchema: InputSchema{
-			Type: Object,
-			Properties: map[string]Property{
-				"arg1": {
-					Type:        String,
-					Description: "Argument 1",
-				},
-			},
-			Required: []string{"arg1"},
-		},
 	}
 	gen.Register(tool)
 

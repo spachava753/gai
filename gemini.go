@@ -11,6 +11,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/invopop/jsonschema"
 )
 
 // MarshalJSONToolUseInput marshals a ToolCallInput, never panics.
@@ -61,15 +63,15 @@ func (g *GeminiGenerator) Register(tool Tool) error {
 
 // convertToolToGemini converts gai.Tool to *[genai.FunctionDeclaration]
 func convertToolToGemini(tool Tool) (*genai.FunctionDeclaration, error) {
-	if tool.InputSchema.Type != Object && tool.InputSchema.Type != Null {
+	if tool.InputSchema != nil && tool.InputSchema.Type != "object" && tool.InputSchema.Type != "" {
 		return nil, fmt.Errorf("gemini only supports object/null as root input schema")
 	}
 	decl := &genai.FunctionDeclaration{
 		Name:        tool.Name,
 		Description: tool.Description,
 	}
-	if tool.InputSchema.Type == Object {
-		jschema, err := convertPropertyToGeminiSchema(tool.InputSchema.Properties, tool.InputSchema.Required)
+	if tool.InputSchema != nil && tool.InputSchema.Type == "object" {
+		jschema, err := convertJSONSchemaToGemini(tool.InputSchema)
 		if err != nil {
 			return nil, err
 		}
@@ -78,129 +80,24 @@ func convertToolToGemini(tool Tool) (*genai.FunctionDeclaration, error) {
 	return decl, nil
 }
 
-// convertPropertyToGeminiSchema is a helper to convert map of properties to *[genai.Schema]
-func convertPropertyToGeminiSchema(props map[string]Property, required []string) (*genai.Schema, error) {
-	if props == nil {
+// convertJSONSchemaToGemini converts a jsonschema.Schema to a genai.Schema
+func convertJSONSchemaToGemini(schema *jsonschema.Schema) (*genai.Schema, error) {
+	if schema == nil {
 		return &genai.Schema{Type: genai.TypeObject}, nil
 	}
-	properties := map[string]*genai.Schema{}
-	for name, prop := range props {
-		schema, err := convertSinglePropertyToGeminiSchema(prop)
-		if err != nil {
-			return nil, fmt.Errorf("property %s: %w", name, err)
-		}
-		properties[name] = schema
-	}
-	return &genai.Schema{
-		Type:       genai.TypeObject,
-		Properties: properties,
-		Required:   required,
-	}, nil
-}
 
-func convertSinglePropertyToGeminiSchema(prop Property) (*genai.Schema, error) {
-	// Handle AnyOf property
-	if len(prop.AnyOf) > 0 {
-		// Count non-null types and track if we have a null type
-		var nonNullProps []Property
-		hasNull := false
-		for i := range prop.AnyOf {
-			if prop.AnyOf[i].Type == Null {
-				hasNull = true
-			} else {
-				nonNullProps = append(nonNullProps, prop.AnyOf[i])
-			}
-		}
-
-		// Error if we have multiple non-null types - Gemini can't properly represent this
-		if len(nonNullProps) > 1 {
-			return nil, fmt.Errorf("gemini does not support anyOf with multiple non-null types")
-		}
-
-		// If we have exactly one non-null type + null, use that non-null type with nullable=true
-		if len(nonNullProps) == 1 && hasNull {
-			schema, err := convertSinglePropertyToGeminiSchema(nonNullProps[0])
-			if err != nil {
-				return nil, err
-			}
-
-			// Set nullable
-			schema.Nullable = genai.Ptr(true)
-			return schema, nil
-		}
-
-		// If we just have one type (not null + something), just use that type
-		if len(nonNullProps) == 1 {
-			return convertSinglePropertyToGeminiSchema(nonNullProps[0])
-		}
-
-		// Handle the case of just null type
-		if hasNull && len(nonNullProps) == 0 {
-			return nil, fmt.Errorf("gemini does not support a property that is only null type")
-		}
-
-		// Should not reach here given the above conditions
-		return nil, fmt.Errorf("unsupported anyOf pattern")
+	// Serialize the schema to JSON then unmarshal into interface{} for OpenAI
+	schemaJSON, err := json.Marshal(schema.Properties)
+	if err != nil {
+		return nil, err
 	}
 
-	// Regular property handling (not anyOf)
-	switch prop.Type {
-	case String:
-		return &genai.Schema{
-			Type:        genai.TypeString,
-			Description: prop.Description,
-			Enum:        prop.Enum,
-		}, nil
-	case Integer:
-		return &genai.Schema{
-			Type:        genai.TypeInteger,
-			Description: prop.Description,
-		}, nil
-	case Number:
-		return &genai.Schema{
-			Type:        genai.TypeNumber,
-			Description: prop.Description,
-		}, nil
-	case Boolean:
-		return &genai.Schema{
-			Type:        genai.TypeBoolean,
-			Description: prop.Description,
-		}, nil
-	case Array:
-		var itemsSchema *genai.Schema
-		if prop.Items != nil {
-			var err error
-			itemsSchema, err = convertSinglePropertyToGeminiSchema(*prop.Items)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return &genai.Schema{
-			Type:        genai.TypeArray,
-			Description: prop.Description,
-			Items:       itemsSchema,
-		}, nil
-	case Object:
-		propsSchema := make(map[string]*genai.Schema)
-		for name, subprop := range prop.Properties {
-			s, err := convertSinglePropertyToGeminiSchema(subprop)
-			if err != nil {
-				return nil, err
-			}
-			propsSchema[name] = s
-		}
-		return &genai.Schema{
-			Type:        genai.TypeObject,
-			Description: prop.Description,
-			Properties:  propsSchema,
-			Required:    prop.Required,
-		}, nil
-	case Any:
-		return nil, fmt.Errorf("Gemini does not support 'any' type properties. " +
-			"Consider using anyOf with specific types or a more specific type")
-	default:
-		return nil, fmt.Errorf("unsupported property type: %v", prop.Type)
+	var genSchema genai.Schema
+	if err := json.Unmarshal(schemaJSON, &genSchema); err != nil {
+		return nil, err
 	}
+
+	return &genSchema, nil
 }
 
 var _ ToolRegister = (*GeminiGenerator)(nil)

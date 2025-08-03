@@ -79,15 +79,15 @@
 //	type Tool struct {
 //		Name        string
 //		Description string
-//		InputSchema InputSchema
+//		InputSchema *jsonschema.Schema
 //	}
 //
 // The InputSchema defines the parameters the tool accepts using JSON Schema conventions:
 //
-//	type InputSchema struct {
-//		Type       PropertyType
-//		Properties map[string]Property
-//		Required   []string
+//	&jsonschema.Schema{
+//		Type:       "object",
+//		Properties: map[string]*jsonschema.Schema{...},
+//		Required:   []string{...},
 //	}
 //
 // # Basic Usage Examples

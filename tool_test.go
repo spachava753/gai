@@ -451,12 +451,9 @@ func TestToolGenerator_Generate(t *testing.T) {
 				tg.Register(Tool{
 					Name:        "get_weather",
 					Description: "Get the current weather",
-					InputSchema: InputSchema{
-						Type: Object,
-						Properties: map[string]Property{
-							"location": {Type: String},
-						},
-					},
+					InputSchema: GenerateSchema[struct {
+						Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state"`
+					}](),
 				}, &mockToolCallback{
 					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 						return Message{}, errors.New("API connection failed")
@@ -504,12 +501,9 @@ func TestToolGenerator_Generate(t *testing.T) {
 				tg.Register(Tool{
 					Name:        "get_weather",
 					Description: "Get weather by location",
-					InputSchema: InputSchema{
-						Type: Object,
-						Properties: map[string]Property{
-							"location": {Type: String},
-						},
-					},
+					InputSchema: GenerateSchema[struct {
+						Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state"`
+					}](),
 				}, &mockToolCallback{
 					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 						var params struct {
@@ -670,12 +664,9 @@ func TestToolGenerator_Generate(t *testing.T) {
 				tg.Register(Tool{
 					Name:        "get_weather",
 					Description: "Get weather for a location",
-					InputSchema: InputSchema{
-						Type: Object,
-						Properties: map[string]Property{
-							"location": {Type: String},
-						},
-					},
+					InputSchema: GenerateSchema[struct {
+						Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state"`
+					}](),
 				}, &mockToolCallback{
 					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 						var params struct {

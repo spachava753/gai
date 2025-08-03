@@ -83,22 +83,24 @@ type OpenAiGenerator struct {
 }
 
 // convertToolToOpenAI converts our tool definition to OpenAI's format
-func convertToolToOpenAI(tool Tool) oai.ChatCompletionToolParam {
-	// Convert our tool schema to OpenAI's JSON schema format
-	parameters := make(map[string]interface{})
-	parameters["type"] = tool.InputSchema.Type.String()
-
-	// Only include properties and required fields if we have an object type
-	if tool.InputSchema.Type == Object && tool.InputSchema.Properties != nil {
-		properties := make(map[string]interface{})
-		for name, prop := range tool.InputSchema.Properties {
-			properties[name] = convertPropertyToMap(prop)
+func convertToolToOpenAI(tool Tool) (oai.ChatCompletionToolParam, error) {
+	// Convert tool schema to OpenAI's JSON schema format
+	var parameters map[string]interface{}
+	if tool.InputSchema != nil {
+		// Serialize the schema to JSON then unmarshal into interface{} for OpenAI
+		schemaJSON, err := json.Marshal(tool.InputSchema.Properties)
+		if err != nil {
+			return oai.ChatCompletionToolParam{}, err
+		} else {
+			if err := json.Unmarshal(schemaJSON, &parameters); err != nil {
+				return oai.ChatCompletionToolParam{}, err
+			}
 		}
-		parameters["properties"] = properties
-		if tool.InputSchema.Required == nil {
-			tool.InputSchema.Required = []string{}
+	} else {
+		// No parameters - empty object schema
+		parameters = map[string]interface{}{
+			"type": "object",
 		}
-		parameters["required"] = tool.InputSchema.Required
 	}
 
 	return oai.ChatCompletionToolParam{
@@ -107,56 +109,7 @@ func convertToolToOpenAI(tool Tool) oai.ChatCompletionToolParam {
 			Description: oai.String(tool.Description),
 			Parameters:  parameters,
 		},
-	}
-}
-
-// convertPropertyToMap converts a Property to a map[string]interface{} suitable for OpenAI's format
-func convertPropertyToMap(prop Property) map[string]interface{} {
-	result := map[string]interface{}{}
-
-	// Only add type if AnyOf is not present and type is not Any
-	// (as per JSON Schema, they shouldn't coexist, and Any means omit type field)
-	if len(prop.AnyOf) == 0 && prop.Type != Any {
-		result["type"] = prop.Type.String()
-	}
-
-	// Always add description if present
-	if prop.Description != "" {
-		result["description"] = prop.Description
-	}
-
-	// Handle AnyOf property
-	if len(prop.AnyOf) > 0 {
-		anyOf := make([]interface{}, len(prop.AnyOf))
-		for i, p := range prop.AnyOf {
-			anyOf[i] = convertPropertyToMap(p)
-		}
-		result["anyOf"] = anyOf
-	}
-
-	// Handle string enums (only if not Any type)
-	if prop.Type == String && len(prop.Enum) > 0 {
-		result["enum"] = prop.Enum
-	}
-
-	// Handle array items (only if not Any type)
-	if prop.Type == Array && prop.Items != nil {
-		result["items"] = convertPropertyToMap(*prop.Items)
-	}
-
-	// Handle object properties and required fields (only if not Any type)
-	if prop.Type == Object && prop.Properties != nil {
-		properties := make(map[string]interface{})
-		for name, p := range prop.Properties {
-			properties[name] = convertPropertyToMap(p)
-		}
-		result["properties"] = properties
-		if len(prop.Required) > 0 {
-			result["required"] = prop.Required
-		}
-	}
-
-	return result
+	}, nil
 }
 
 // toOpenAIMessage converts a gai.Message to an OpenAI chat message.
@@ -406,9 +359,10 @@ func (g *OpenAiGenerator) Register(tool Tool) error {
 	}
 
 	// Convert our tool definition to OpenAI's format and store it
-	g.tools[tool.Name] = convertToolToOpenAI(tool)
+	var err error
+	g.tools[tool.Name], err = convertToolToOpenAI(tool)
 
-	return nil
+	return err
 }
 
 // Generate implements gai.Generator

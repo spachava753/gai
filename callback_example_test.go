@@ -49,21 +49,10 @@ func ExampleToolCallBackFunc() {
 	weatherTool := gai.Tool{
 		Name:        "get_weather",
 		Description: "Get the current weather for a location",
-		InputSchema: gai.InputSchema{
-			Type: gai.Object,
-			Properties: map[string]gai.Property{
-				"location": {
-					Type:        gai.String,
-					Description: "The city and state, e.g. San Francisco, CA",
-				},
-				"unit": {
-					Type:        gai.String,
-					Enum:        []string{"celsius", "fahrenheit"},
-					Description: "The unit of temperature, either 'celsius' or 'fahrenheit'",
-				},
-			},
-			Required: []string{"location"},
-		},
+		InputSchema: gai.GenerateSchema[struct {
+			Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state, e.g. San Francisco, CA"`
+			Unit     string `json:"unit" jsonschema:"enum=celsius,enum=fahrenheit" jsonschema_description:"The unit of temperature"`
+		}](),
 	}
 
 	// Create an instance of the ToolGenerator

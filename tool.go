@@ -5,122 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/invopop/jsonschema"
 )
 
-// PropertyType represents the type of a property in a JSON Schema.
-// The zero value is Null.
-type PropertyType uint8
-
-const (
-	// Null represents JSON Schema's 'null' type
-	Null PropertyType = iota
-
-	// Boolean represents JSON Schema's 'boolean' type
-	Boolean
-
-	// Object represents JSON Schema's 'object' type
-	Object
-
-	// Array represents JSON Schema's 'array' type
-	Array
-
-	// Number represents JSON Schema's 'number' type
-	Number
-
-	// String represents JSON Schema's 'string' type
-	String
-
-	// Integer represents JSON Schema's 'integer' type
-	Integer
-
-	// Any represents a property that can be of any JSON type
-	// This corresponds to JSON Schema properties without a "type" field
-	Any
-)
-
-// String implements fmt.Stringer and returns the JSON Schema type name
-func (p PropertyType) String() string {
-	switch p {
-	case Null:
-		return "null"
-	case Boolean:
-		return "boolean"
-	case Object:
-		return "object"
-	case Array:
-		return "array"
-	case Number:
-		return "number"
-	case String:
-		return "string"
-	case Integer:
-		return "integer"
-	case Any:
-		return "any"
-	default:
-		return fmt.Sprintf("PropertyType(%d)", p)
+// GenerateSchema is a helper function to help generate the schema definition for Tool.InputSchema
+func GenerateSchema[T any]() *jsonschema.Schema {
+	reflector := jsonschema.Reflector{
+		AllowAdditionalProperties: false,
+		DoNotReference:            true,
 	}
-}
-
-// Property represents a JSON Schema property definition.
-// It can describe simple types like strings and numbers,
-// as well as complex types like objects and arrays.
-type Property struct {
-	// Type specifies the JSON Schema type of the property
-	Type PropertyType
-
-	// AnyOf allows a property to be any of the defined type properties in the slice.
-	// When AnyOf is used, Type is ignored (as per JSON Schema spec).
-	//
-	// Note on AnyOf support across generators:
-	// - OpenAI: Fully supports anyOf for all combinations of types
-	// - Anthropic: Fully supports anyOf for all combinations of types
-	// - Gemini: Limited support - only supports anyOf with exactly one non-null type + null (like [number, null]),
-	//   which is implemented as a nullable field. Will produce errors for multiple non-null types or null-only anyOf.
-	//
-	// The most portable way to use anyOf is for nullable fields: a property that can be either null or a specific type.
-	AnyOf []Property
-
-	// Enum specifies a list of valid values for the property.
-	// If non-nil and non-empty, the property value must be one of these values.
-	// Most commonly used with String type properties.
-	Enum []string
-
-	// Description provides a human-readable explanation of the property
-	Description string
-
-	// Properties defines the properties of an Object type.
-	// Only valid when Type is Object.
-	Properties map[string]Property
-
-	// Required lists which properties are required in an Object type.
-	// Only valid when Type is Object.
-	Required []string
-
-	// Items defines the type of elements in an Array type.
-	// Only valid when Type is Array.
-	// If nil when Type is Array, it means the array can contain elements of any type.
-	Items *Property
-}
-
-// InputSchema represents the JSON Schema that defines the input parameters
-// for a tool. It is always an object type schema at the root level,
-// containing zero or more properties.
-//
-// When no parameters are needed, the zero value (Type: Null, nil maps and slices)
-// can be used to indicate a parameterless schema.
-type InputSchema struct {
-	// Type specifies the schema type, typically Object for parameter schemas.
-	// Using Null (zero value) indicates no parameters are accepted.
-	Type PropertyType
-
-	// Properties defines the available input parameters when Type is Object.
-	// A nil value indicates no parameters are accepted.
-	Properties map[string]Property
-
-	// Required lists which properties are required.
-	// Only valid when Type is Object.
-	Required []string
+	var v T
+	schema := reflector.Reflect(v)
+	return schema
 }
 
 // Tool represents a tool that can be called by a Generator during generation.
@@ -133,11 +30,11 @@ type InputSchema struct {
 //	{
 //	    Name:        "get_stock_price",
 //	    Description: "Get the current stock price for a given ticker symbol.",
-//	    InputSchema: InputSchema{
-//	        Type: Object,
-//	        Properties: map[string]Property{
+//	    InputSchema: &jsonschema.Schema{
+//	        Type: "object",
+//	        Properties: map[string]*jsonschema.Schema{
 //	            "ticker": {
-//	                Type:        String,
+//	                Type:        "string",
 //	                Description: "The stock ticker symbol, e.g. AAPL for Apple Inc.",
 //	            },
 //	        },
@@ -150,16 +47,16 @@ type InputSchema struct {
 //	{
 //	    Name:        "get_weather",
 //	    Description: "Get the current weather in a given location",
-//	    InputSchema: InputSchema{
-//	        Type: Object,
-//	        Properties: map[string]Property{
+//	    InputSchema: &jsonschema.Schema{
+//	        Type: "object",
+//	        Properties: map[string]*jsonschema.Schema{
 //	            "location": {
-//	                Type:        String,
+//	                Type:        "string",
 //	                Description: "The city and state, e.g. San Francisco, CA",
 //	            },
 //	            "unit": {
-//	                Type:        String,
-//	                Enum:        []string{"celsius", "fahrenheit"},
+//	                Type:        "string",
+//	                Enum:        []interface{}{"celsius", "fahrenheit"},
 //	                Description: "The unit of temperature, either 'celsius' or 'fahrenheit'",
 //	            },
 //	        },
@@ -172,14 +69,14 @@ type InputSchema struct {
 //	{
 //	    Name:        "get_batch_stock_prices",
 //	    Description: "Get the current stock prices for a list of ticker symbols.",
-//	    InputSchema: InputSchema{
-//	        Type: Object,
-//	        Properties: map[string]Property{
+//	    InputSchema: &jsonschema.Schema{
+//	        Type: "object",
+//	        Properties: map[string]*jsonschema.Schema{
 //	            "tickers": {
-//	                Type:        Array,
+//	                Type:        "array",
 //	                Description: "List of stock ticker symbols, e.g. ['AAPL', 'GOOGL', 'MSFT']",
-//	                Items: &Property{
-//	                    Type:        String,
+//	                Items: &jsonschema.Schema{
+//	                    Type:        "string",
 //	                    Description: "A stock ticker symbol",
 //	                },
 //	            },
@@ -193,6 +90,7 @@ type InputSchema struct {
 //	{
 //	    Name:        "get_server_time",
 //	    Description: "Get the current server time in UTC.",
+//	    InputSchema: nil, // or omit the field entirely
 //	}
 type Tool struct {
 	// Name is the identifier used to reference this tool.
@@ -203,9 +101,10 @@ type Tool struct {
 	// This helps the Generator understand when and how to use the tool.
 	Description string
 
-	// InputSchema defines the parameters this tool accepts.
-	// A zero value (Type: Null, nil maps and slices) indicates no parameters are accepted.
-	InputSchema InputSchema
+	// InputSchema defines the parameters this tool accepts using JSON Schema.
+	// A nil value indicates no parameters are accepted.
+	// The schema should typically be of type "object" for parameter definitions.
+	InputSchema *jsonschema.Schema
 }
 
 // ToolCallback represents a function that can be automatically executed by a ToolGenerator

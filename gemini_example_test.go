@@ -108,13 +108,9 @@ When a user asks for the server time, always call the server time tool, don't us
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: InputSchema{
-			Type: Object,
-			Properties: map[string]Property{
-				"ticker": {Type: String, Description: "Stock ticker symbol (e.g. AAPL)"},
-			},
-			Required: []string{"ticker"},
-		},
+		InputSchema: GenerateSchema[struct {
+			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+		}](),
 	}
 	getServerTimeTool := Tool{
 		Name:        "get_server_time",
@@ -415,13 +411,9 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: InputSchema{
-			Type: Object,
-			Properties: map[string]Property{
-				"ticker": {Type: String, Description: "Stock ticker symbol (e.g. AAPL)"},
-			},
-			Required: []string{"ticker"},
-		},
+		InputSchema: GenerateSchema[struct {
+			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+		}](),
 	}
 	_ = g.Register(stockTool)
 	dialog := Dialog{
@@ -468,13 +460,9 @@ func ExampleGeminiGenerator_Stream_parallelToolUse() {
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: InputSchema{
-			Type: Object,
-			Properties: map[string]Property{
-				"ticker": {Type: String, Description: "Stock ticker symbol (e.g. AAPL)"},
-			},
-			Required: []string{"ticker"},
-		},
+		InputSchema: GenerateSchema[struct {
+			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+		}](),
 	}
 	_ = g.Register(stockTool)
 	dialog := Dialog{

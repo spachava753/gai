@@ -72,21 +72,10 @@ func ExampleStreamingAdapter_withTools() {
 	weatherTool := Tool{
 		Name:        "get_weather",
 		Description: "Get the current weather in a given location",
-		InputSchema: InputSchema{
-			Type: Object,
-			Properties: map[string]Property{
-				"location": {
-					Type:        String,
-					Description: "The city and state, e.g. San Francisco, CA",
-				},
-				"unit": {
-					Type:        String,
-					Enum:        []string{"celsius", "fahrenheit"},
-					Description: "The unit of temperature",
-				},
-			},
-			Required: []string{"location"},
-		},
+		InputSchema: GenerateSchema[struct {
+			Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state, e.g. San Francisco, CA"`
+			Unit     string `json:"unit" jsonschema:"enum=celsius,enum=fahrenheit" jsonschema_description:"The unit of temperature"`
+		}](),
 	}
 
 	if err := gen.Register(weatherTool); err != nil {
@@ -244,16 +233,9 @@ func ExampleStreamingAdapter_parallelToolCalls() {
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol",
-		InputSchema: InputSchema{
-			Type: Object,
-			Properties: map[string]Property{
-				"ticker": {
-					Type:        String,
-					Description: "The stock ticker symbol, e.g. AAPL",
-				},
-			},
-			Required: []string{"ticker"},
-		},
+		InputSchema: GenerateSchema[struct {
+			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+		}](),
 	}
 
 	if err := gen.Register(stockTool); err != nil {
@@ -400,16 +382,9 @@ func ExampleStreamingAdapter_withToolGenerator() {
 	weatherTool := Tool{
 		Name:        "get_weather",
 		Description: "Get the current weather in a location",
-		InputSchema: InputSchema{
-			Type: Object,
-			Properties: map[string]Property{
-				"location": {
-					Type:        String,
-					Description: "The city and state",
-				},
-			},
-			Required: []string{"location"},
-		},
+		InputSchema: GenerateSchema[struct {
+			Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state, e.g. San Francisco, CA"`
+		}](),
 	}
 
 	// Simple weather callback

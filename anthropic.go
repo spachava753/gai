@@ -22,85 +22,17 @@ type AnthropicGenerator struct {
 
 // convertToolToAnthropic converts our tool definition to Anthropic's format
 func convertToolToAnthropic(tool Tool) a.ToolParam {
-	if tool.InputSchema.Type != Object {
-		panic("invalid tool type")
+	var toolProperties any
+	if tool.InputSchema != nil {
+		toolProperties = tool.InputSchema.Properties
 	}
-
-	// Convert our tool schema to JSON schema format
-	parameters := make(map[string]interface{})
-
-	// Convert each property to Anthropic's format
-	for name, prop := range tool.InputSchema.Properties {
-		parameters[name] = convertPropertyToAnthropicMap(prop)
-	}
-
-	// Create the input schema with the properties
-	inputSchema := a.ToolInputSchemaParam{
-		Properties:  parameters,
-		ExtraFields: make(map[string]interface{}),
-	}
-
-	// Add required properties if any
-	if len(tool.InputSchema.Required) > 0 {
-		inputSchema.ExtraFields["required"] = tool.InputSchema.Required
-	}
-
 	return a.ToolParam{
 		Name:        tool.Name,
 		Description: a.String(tool.Description),
-		InputSchema: inputSchema,
+		InputSchema: a.ToolInputSchemaParam{
+			Properties: toolProperties,
+		},
 	}
-}
-
-// convertPropertyToAnthropicMap converts a Property to a map[string]interface{} suitable for Anthropic's format
-func convertPropertyToAnthropicMap(prop Property) map[string]interface{} {
-	result := map[string]interface{}{}
-
-	// Only add type if AnyOf is not present and type is not Any
-	// (as per JSON Schema, they shouldn't coexist, and Any means omit type field)
-	if len(prop.AnyOf) == 0 && prop.Type != Any {
-		result["type"] = prop.Type.String()
-	}
-
-	// Always add description if present
-	if prop.Description != "" {
-		result["description"] = prop.Description
-	}
-
-	// Handle AnyOf property
-	if len(prop.AnyOf) > 0 {
-		anyOf := make([]interface{}, len(prop.AnyOf))
-		for i, p := range prop.AnyOf {
-			anyOf[i] = convertPropertyToAnthropicMap(p)
-		}
-		result["anyOf"] = anyOf
-	}
-
-	// Add enum if present (only if not Any type)
-	if len(prop.Enum) > 0 && prop.Type != Any {
-		result["enum"] = prop.Enum
-	}
-
-	// Add properties for object types (only if not Any type)
-	if prop.Type == Object && prop.Properties != nil {
-		properties := make(map[string]interface{})
-		for name, p := range prop.Properties {
-			properties[name] = convertPropertyToAnthropicMap(p)
-		}
-		result["properties"] = properties
-
-		// Add required fields for object types
-		if len(prop.Required) > 0 {
-			result["required"] = prop.Required
-		}
-	}
-
-	// Add items for array types (only if not Any type)
-	if prop.Type == Array && prop.Items != nil {
-		result["items"] = convertPropertyToAnthropicMap(*prop.Items)
-	}
-
-	return result
 }
 
 const generatorPrefix = "anthropic_"
