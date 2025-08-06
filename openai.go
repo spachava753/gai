@@ -588,6 +588,8 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		}
 	}
 
+	var hasToolCalls bool
+
 	// Convert all choices to our Message type
 	for _, choice := range resp.Choices {
 		// Convert the message content
@@ -627,6 +629,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 		// Handle tool calls
 		if toolCalls := choice.Message.ToolCalls; len(toolCalls) > 0 {
+			hasToolCalls = true
 			for _, toolCall := range toolCalls {
 				// Create a ToolCallInput with standardized format
 				toolUse := ToolCallInput{
@@ -684,6 +687,11 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		default:
 			result.FinishReason = Unknown
 		}
+	}
+
+	// some OpenAI providers return an EndTurn stop reason, despite being a tool call
+	if hasToolCalls && result.FinishReason == EndTurn {
+		result.FinishReason = ToolUse
 	}
 
 	return result, nil
