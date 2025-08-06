@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"google.golang.org/genai"
 	"os"
 	"strings"
 	"time"
+
+	"google.golang.org/genai"
 )
 
 func ExampleGeminiGenerator_Generate() {
@@ -116,8 +117,16 @@ When a user asks for the server time, always call the server time tool, don't us
 		Name:        "get_server_time",
 		Description: "Get the current server time in UTC.",
 	}
-	_ = g.Register(stockTool)
-	_ = g.Register(getServerTimeTool)
+	err = g.Register(stockTool)
+	if err != nil {
+		fmt.Println("Error registering tool:", err)
+		return
+	}
+	err = g.Register(getServerTimeTool)
+	if err != nil {
+		fmt.Println("Error registering tool:", err)
+		return
+	}
 	dialog := Dialog{
 		{
 			Role: User,
@@ -415,7 +424,12 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 		}](),
 	}
-	_ = g.Register(stockTool)
+	err = g.Register(stockTool)
+	if err != nil {
+		fmt.Println("Error registering tool:", err)
+		return
+	}
+
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Give me the current prices for AAPL, MSFT, and TSLA.")}}},
 	}
@@ -464,7 +478,12 @@ func ExampleGeminiGenerator_Stream_parallelToolUse() {
 			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 		}](),
 	}
-	_ = g.Register(stockTool)
+	err = g.Register(stockTool)
+	if err != nil {
+		fmt.Println("Error registering tool:", err)
+		return
+	}
+
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Give me the current prices for AAPL, MSFT, and TSLA.")}}},
 	}

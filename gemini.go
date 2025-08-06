@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"google.golang.org/genai"
 	"iter"
 	"maps"
 	"slices"
 	"strings"
+
+	"google.golang.org/genai"
 
 	"github.com/invopop/jsonschema"
 )
@@ -87,7 +88,7 @@ func convertJSONSchemaToGemini(schema *jsonschema.Schema) (*genai.Schema, error)
 	}
 
 	// Serialize the schema to JSON then unmarshal into interface{} for OpenAI
-	schemaJSON, err := json.Marshal(schema.Properties)
+	schemaJSON, err := json.Marshal(schema)
 	if err != nil {
 		return nil, err
 	}
