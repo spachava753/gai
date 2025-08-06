@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
+	"strconv"
+
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
-	"iter"
-	"strconv"
 )
 
 // AnthropicGenerator implements the gai.Generator interface using OpenAI's API
@@ -22,16 +23,17 @@ type AnthropicGenerator struct {
 
 // convertToolToAnthropic converts our tool definition to Anthropic's format
 func convertToolToAnthropic(tool Tool) a.ToolParam {
-	var toolProperties any
+	var inputSchema a.ToolInputSchemaParam
 	if tool.InputSchema != nil {
-		toolProperties = tool.InputSchema.Properties
+		inputSchema = a.ToolInputSchemaParam{
+			Properties: tool.InputSchema.Properties,
+			Required:   tool.InputSchema.Required,
+		}
 	}
 	return a.ToolParam{
 		Name:        tool.Name,
 		Description: a.String(tool.Description),
-		InputSchema: a.ToolInputSchemaParam{
-			Properties: toolProperties,
-		},
+		InputSchema: inputSchema,
 	}
 }
 

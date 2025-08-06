@@ -5,10 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	a "github.com/anthropics/anthropic-sdk-go"
 	"maps"
 	"os"
 	"strings"
+
+	a "github.com/anthropics/anthropic-sdk-go"
 )
 
 func ExampleAnthropicGenerator_Generate() {
