@@ -7,9 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/openai/openai-go/option"
-	oaissestream "github.com/openai/openai-go/packages/ssestream"
-	"github.com/pkoukk/tiktoken-go" // Added for token counting
 	"image"
 	_ "image/gif"  // Register GIF format
 	_ "image/jpeg" // Register JPEG format
@@ -18,6 +15,10 @@ import (
 	"math"
 	"slices"
 	"strings"
+
+	"github.com/openai/openai-go/option"
+	oaissestream "github.com/openai/openai-go/packages/ssestream"
+	"github.com/pkoukk/tiktoken-go" // Added for token counting
 
 	oai "github.com/openai/openai-go"
 )
@@ -88,7 +89,7 @@ func convertToolToOpenAI(tool Tool) (oai.ChatCompletionToolParam, error) {
 	var parameters map[string]interface{}
 	if tool.InputSchema != nil {
 		// Serialize the schema to JSON then unmarshal into interface{} for OpenAI
-		schemaJSON, err := json.Marshal(tool.InputSchema.Properties)
+		schemaJSON, err := json.Marshal(tool.InputSchema)
 		if err != nil {
 			return oai.ChatCompletionToolParam{}, err
 		} else {
