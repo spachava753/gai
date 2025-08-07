@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	a "github.com/anthropics/anthropic-sdk-go"
-	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/v2"
 )
 
 // ExampleMixGenerators demonstrates how to mix different AI model providers

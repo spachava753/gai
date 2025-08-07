@@ -99,7 +99,7 @@
 //	import (
 //		"context"
 //		"fmt"
-//		"github.com/openai/openai-go"
+//		"github.com/openai/openai-go/v2"
 //		"github.com/spachava753/gai"
 //	)
 //
@@ -162,7 +162,7 @@
 //		"encoding/json"
 //		"fmt"
 //		"time"
-//		"github.com/openai/openai-go"
+//		"github.com/openai/openai-go/v2"
 //		"github.com/spachava753/gai"
 //	)
 //
@@ -242,7 +242,7 @@
 //		"context"
 //		"fmt"
 //		"github.com/anthropics/anthropic-sdk-go"
-//		"github.com/openai/openai-go"
+//		"github.com/openai/openai-go/v2"
 //		"github.com/spachava753/gai"
 //	)
 //
@@ -317,7 +317,7 @@
 //		"context"
 //		"fmt"
 //		"os"
-//		"github.com/openai/openai-go"
+//		"github.com/openai/openai-go/v2"
 //		"github.com/spachava753/gai"
 //	)
 //
@@ -374,7 +374,7 @@
 // audio inputs, and tool calling.
 //
 //	import (
-//		"github.com/openai/openai-go"
+//		"github.com/openai/openai-go/v2"
 //		"github.com/spachava753/gai"
 //	)
 //

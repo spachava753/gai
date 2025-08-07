@@ -3,7 +3,7 @@ package gai
 import (
 	"testing"
 
-	oai "github.com/openai/openai-go"
+	oai "github.com/openai/openai-go/v2"
 )
 
 func TestToOpenAIMessage(t *testing.T) {
@@ -76,12 +76,14 @@ func TestToOpenAIMessage(t *testing.T) {
 			},
 			want: oai.ChatCompletionMessageParamUnion{
 				OfAssistant: &oai.ChatCompletionAssistantMessageParam{
-					ToolCalls: []oai.ChatCompletionMessageToolCallParam{
+					ToolCalls: []oai.ChatCompletionMessageToolCallUnionParam{
 						{
-							ID: "call_123",
-							Function: oai.ChatCompletionMessageToolCallFunctionParam{
-								Name:      "get_weather",
-								Arguments: `{"location":"London"}`,
+							OfFunction: &oai.ChatCompletionMessageFunctionToolCallParam{
+								ID: "call_123",
+								Function: oai.ChatCompletionMessageFunctionToolCallFunctionParam{
+									Name:      "get_weather",
+									Arguments: `{"location":"London"}`,
+								},
 							},
 						},
 					},
@@ -128,12 +130,14 @@ func TestToOpenAIMessage(t *testing.T) {
 					Content: oai.ChatCompletionAssistantMessageParamContentUnion{
 						OfString: oai.String("Let me get the weather for you:"),
 					},
-					ToolCalls: []oai.ChatCompletionMessageToolCallParam{
+					ToolCalls: []oai.ChatCompletionMessageToolCallUnionParam{
 						{
-							ID: "call_123",
-							Function: oai.ChatCompletionMessageToolCallFunctionParam{
-								Name:      "get_weather",
-								Arguments: `{"location":"London"}`,
+							OfFunction: &oai.ChatCompletionMessageFunctionToolCallParam{
+								ID: "call_123",
+								Function: oai.ChatCompletionMessageFunctionToolCallFunctionParam{
+									Name:      "get_weather",
+									Arguments: `{"location":"London"}`,
+								},
 							},
 						},
 					},
@@ -344,8 +348,8 @@ func TestToOpenAIMessage(t *testing.T) {
 
 					// If they have tool calls, verify basic properties
 					if len(got.OfAssistant.ToolCalls) > 0 && len(tt.want.OfAssistant.ToolCalls) > 0 {
-						if got.OfAssistant.ToolCalls[0].ID != tt.want.OfAssistant.ToolCalls[0].ID ||
-							got.OfAssistant.ToolCalls[0].Function.Name != tt.want.OfAssistant.ToolCalls[0].Function.Name {
+						if got.OfAssistant.ToolCalls[0].OfFunction.ID != tt.want.OfAssistant.ToolCalls[0].OfFunction.ID ||
+							got.OfAssistant.ToolCalls[0].OfFunction.Function.Name != tt.want.OfAssistant.ToolCalls[0].OfFunction.Function.Name {
 							t.Errorf("Tool call details mismatch")
 						}
 					}

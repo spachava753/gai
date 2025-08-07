@@ -7,7 +7,7 @@ import (
 	"iter"
 	"strings"
 
-	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/v2"
 )
 
 // ExampleStreamingAdapter demonstrates how to use StreamingAdapter to convert

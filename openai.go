@@ -16,11 +16,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/openai/openai-go/option"
-	oaissestream "github.com/openai/openai-go/packages/ssestream"
+	"github.com/openai/openai-go/v2/option"
+	oaissestream "github.com/openai/openai-go/v2/packages/ssestream"
 	"github.com/pkoukk/tiktoken-go" // Added for token counting
 
-	oai "github.com/openai/openai-go"
+	oai "github.com/openai/openai-go/v2"
 )
 
 func init() {
@@ -79,22 +79,22 @@ func init() {
 type OpenAiGenerator struct {
 	client             OpenAICompletionService
 	model              string
-	tools              map[string]oai.ChatCompletionToolParam
+	tools              map[string]oai.ChatCompletionToolUnionParam
 	systemInstructions string
 }
 
 // convertToolToOpenAI converts our tool definition to OpenAI's format
-func convertToolToOpenAI(tool Tool) (oai.ChatCompletionToolParam, error) {
+func convertToolToOpenAI(tool Tool) (oai.ChatCompletionToolUnionParam, error) {
 	// Convert tool schema to OpenAI's JSON schema format
 	var parameters map[string]interface{}
 	if tool.InputSchema != nil {
 		// Serialize the schema to JSON then unmarshal into interface{} for OpenAI
 		schemaJSON, err := json.Marshal(tool.InputSchema)
 		if err != nil {
-			return oai.ChatCompletionToolParam{}, err
+			return oai.ChatCompletionFunctionTool(oai.FunctionDefinitionParam{}), err
 		} else {
 			if err := json.Unmarshal(schemaJSON, &parameters); err != nil {
-				return oai.ChatCompletionToolParam{}, err
+				return oai.ChatCompletionFunctionTool(oai.FunctionDefinitionParam{}), err
 			}
 		}
 	} else {
@@ -104,13 +104,11 @@ func convertToolToOpenAI(tool Tool) (oai.ChatCompletionToolParam, error) {
 		}
 	}
 
-	return oai.ChatCompletionToolParam{
-		Function: oai.FunctionDefinitionParam{
-			Name:        tool.Name,
-			Description: oai.String(tool.Description),
-			Parameters:  parameters,
-		},
-	}, nil
+	return oai.ChatCompletionFunctionTool(oai.FunctionDefinitionParam{
+		Name:        tool.Name,
+		Description: oai.String(tool.Description),
+		Parameters:  parameters,
+	}), nil
 }
 
 // toOpenAIMessage converts a gai.Message to an OpenAI chat message.
@@ -205,7 +203,7 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 	case Assistant:
 		// Handle multiple blocks
 		var contentParts oai.ChatCompletionAssistantMessageParamContentUnion
-		var toolCalls []oai.ChatCompletionMessageToolCallParam
+		var toolCalls []oai.ChatCompletionMessageToolCallUnionParam
 		var audioID string
 
 		for _, block := range msg.Blocks {
@@ -242,11 +240,13 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("failed to marshal tool parameters: %w", err)
 				}
 
-				toolCalls = append(toolCalls, oai.ChatCompletionMessageToolCallParam{
-					ID: block.ID,
-					Function: oai.ChatCompletionMessageToolCallFunctionParam{
-						Name:      toolUse.Name,
-						Arguments: string(argsJSON),
+				toolCalls = append(toolCalls, oai.ChatCompletionMessageToolCallUnionParam{
+					OfFunction: &oai.ChatCompletionMessageFunctionToolCallParam{
+						ID: block.ID,
+						Function: oai.ChatCompletionMessageFunctionToolCallFunctionParam{
+							Name:      toolUse.Name,
+							Arguments: string(argsJSON),
+						},
 					},
 				})
 			default:
@@ -348,7 +348,7 @@ func (g *OpenAiGenerator) Register(tool Tool) error {
 
 	// Initialize tools map if needed
 	if g.tools == nil {
-		g.tools = make(map[string]oai.ChatCompletionToolParam)
+		g.tools = make(map[string]oai.ChatCompletionToolUnionParam)
 	}
 
 	// Check for conflicts with existing tools
@@ -451,7 +451,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceToolsRequired)}
 			default:
 				// Specific tool name
-				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfChatCompletionNamedToolChoice: &oai.ChatCompletionNamedToolChoiceParam{
+				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfFunctionToolChoice: &oai.ChatCompletionNamedToolChoiceParam{
 					Function: oai.ChatCompletionNamedToolChoiceFunctionParam{
 						Name: options.ToolChoice,
 					},
@@ -519,7 +519,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 	// Add tools if any are registered
 	if len(g.tools) > 0 {
-		var tools []oai.ChatCompletionToolParam
+		var tools []oai.ChatCompletionToolUnionParam
 		for _, tool := range g.tools {
 			tools = append(tools, tool)
 		}
@@ -786,7 +786,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceToolsRequired)}
 				default:
 					// Specific tool name
-					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfChatCompletionNamedToolChoice: &oai.ChatCompletionNamedToolChoiceParam{
+					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfFunctionToolChoice: &oai.ChatCompletionNamedToolChoiceParam{
 						Function: oai.ChatCompletionNamedToolChoiceFunctionParam{
 							Name: options.ToolChoice,
 						},
@@ -858,7 +858,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 		// Add tools if any are registered
 		if len(g.tools) > 0 {
-			var tools []oai.ChatCompletionToolParam
+			var tools []oai.ChatCompletionToolUnionParam
 			for _, tool := range g.tools {
 				tools = append(tools, tool)
 			}
@@ -959,7 +959,7 @@ func NewOpenAiGenerator(client OpenAICompletionService, model, systemInstruction
 		client:             client,
 		systemInstructions: systemInstructions,
 		model:              model,
-		tools:              make(map[string]oai.ChatCompletionToolParam),
+		tools:              make(map[string]oai.ChatCompletionToolUnionParam),
 	}
 }
 
@@ -1275,9 +1275,9 @@ func (g *OpenAiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 
 	for _, tool := range g.tools {
 		var toolDefStr string
-		toolDefStr += tool.Function.Name + "\n"
-		toolDefStr += tool.Function.Description.String() + "\n"
-		paramsJSON, err := json.Marshal(tool.Function.Parameters)
+		toolDefStr += tool.OfFunction.Function.Name + "\n"
+		toolDefStr += tool.OfFunction.Function.Description.String() + "\n"
+		paramsJSON, err := json.Marshal(tool.OfFunction.Function.Parameters)
 		if err == nil {
 			toolDefStr += string(paramsJSON) + "\n"
 		}

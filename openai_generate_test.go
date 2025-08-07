@@ -3,11 +3,12 @@ package gai
 import (
 	"context"
 	"errors"
-	oaissestream "github.com/openai/openai-go/packages/ssestream"
 	"testing"
 
-	oai "github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
+	oaissestream "github.com/openai/openai-go/v2/packages/ssestream"
+
+	oai "github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/option"
 )
 
 // mockChatCompletionService is a mock implementation of OpenAICompletionService
@@ -166,11 +167,11 @@ func TestGenerate(t *testing.T) {
 				Message: oai.ChatCompletionMessage{
 					Role:    "assistant",
 					Content: "",
-					ToolCalls: []oai.ChatCompletionMessageToolCall{
+					ToolCalls: []oai.ChatCompletionMessageToolCallUnion{
 						{
 							ID:   "call_123",
 							Type: "function",
-							Function: oai.ChatCompletionMessageToolCallFunction{
+							Function: oai.ChatCompletionMessageFunctionToolCallFunction{
 								Name:      "get_weather",
 								Arguments: `{"location": "London"}`,
 							},
@@ -198,11 +199,11 @@ func TestGenerate(t *testing.T) {
 				Message: oai.ChatCompletionMessage{
 					Role:    "assistant",
 					Content: "",
-					ToolCalls: []oai.ChatCompletionMessageToolCall{
+					ToolCalls: []oai.ChatCompletionMessageToolCallUnion{
 						{
 							ID:   "call_456",
 							Type: "function",
-							Function: oai.ChatCompletionMessageToolCallFunction{
+							Function: oai.ChatCompletionMessageFunctionToolCallFunction{
 								Name:      "get_weather",
 								Arguments: `{"location": "London"}`,
 							},
@@ -210,7 +211,7 @@ func TestGenerate(t *testing.T) {
 						{
 							ID:   "call_457",
 							Type: "function",
-							Function: oai.ChatCompletionMessageToolCallFunction{
+							Function: oai.ChatCompletionMessageFunctionToolCallFunction{
 								Name:      "get_time",
 								Arguments: `{"timezone": "UTC"}`,
 							},
