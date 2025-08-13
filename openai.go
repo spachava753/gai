@@ -503,7 +503,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 		if options.ThinkingBudget != "" {
 			switch options.ThinkingBudget {
-			case "low", "medium", "high":
+			case "minimal", "low", "medium", "high":
 				params.ReasoningEffort = oai.ReasoningEffort(options.ThinkingBudget)
 			default:
 				return Response{}, &InvalidParameterErr{
