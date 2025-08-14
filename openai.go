@@ -86,7 +86,7 @@ type OpenAiGenerator struct {
 // convertToolToOpenAI converts our tool definition to OpenAI's format
 func convertToolToOpenAI(tool Tool) (oai.ChatCompletionToolUnionParam, error) {
 	// Convert tool schema to OpenAI's JSON schema format
-	var parameters map[string]interface{}
+	parameters := make(map[string]interface{})
 	if tool.InputSchema != nil {
 		// Serialize the schema to JSON then unmarshal into interface{} for OpenAI
 		schemaJSON, err := json.Marshal(tool.InputSchema)
@@ -97,11 +97,12 @@ func convertToolToOpenAI(tool Tool) (oai.ChatCompletionToolUnionParam, error) {
 				return oai.ChatCompletionFunctionTool(oai.FunctionDefinitionParam{}), err
 			}
 		}
-	} else {
-		// No parameters - empty object schema
-		parameters = map[string]interface{}{
-			"type": "object",
-		}
+	}
+
+	// if the input schema doesn't contain anything but the type, treat as no schema
+	// example: {"type": "object"}
+	if len(parameters) == 1 && parameters["type"].(string) == "object" {
+		parameters = make(map[string]interface{})
 	}
 
 	return oai.ChatCompletionFunctionTool(oai.FunctionDefinitionParam{
