@@ -893,6 +893,22 @@ func (g *AnthropicGenerator) Count(ctx context.Context, dialog Dialog) (uint, er
 		Messages: messages,
 		Model:    a.Model(g.model),
 	}
+
+	hasThinking := false
+	for _, msg := range dialog {
+		for _, b := range msg.Blocks {
+			if b.BlockType == Thinking {
+				hasThinking = true
+			}
+		}
+	}
+	if hasThinking {
+		// the value here doesn't really matter, since generation is not happening, so we set to an arbitrary value
+		params.Thinking.OfEnabled = &a.ThinkingConfigEnabledParam{
+			BudgetTokens: 10000,
+		}
+	}
+
 	// Add system instructions if present
 	if g.systemInstructions != "" {
 		params.System = a.MessageCountTokensParamsSystemUnion{

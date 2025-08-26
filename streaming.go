@@ -346,7 +346,7 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 	return result, nil
 }
 
-func (s StreamingAdapter) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (s *StreamingAdapter) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
 	// Stream and accumulate blocks
 	var blocks []Block
 	for chunk, err := range s.S.Stream(ctx, dialog, options) {
@@ -380,12 +380,20 @@ func (s StreamingAdapter) Generate(ctx context.Context, dialog Dialog, options *
 	}, nil
 }
 
-func (s StreamingAdapter) Register(tool Tool) error {
+func (s *StreamingAdapter) Register(tool Tool) error {
 	i, ok := s.S.(ToolRegister)
 	if !ok {
 		return fmt.Errorf("inner generator does not implement ToolRegister")
 	}
 	return i.Register(tool)
+}
+
+func (s *StreamingAdapter) Count(ctx context.Context, dialog Dialog) (uint, error) {
+	i, ok := s.S.(TokenCounter)
+	if !ok {
+		return 0, fmt.Errorf("inner generator does not implement TokenCounter")
+	}
+	return i.Count(ctx, dialog)
 }
 
 var _ ToolCapableGenerator = (*StreamingAdapter)(nil)
