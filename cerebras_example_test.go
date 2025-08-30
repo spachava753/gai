@@ -36,7 +36,7 @@ func ExampleCerebrasGenerator_Register() {
 		fmt.Println("[Skipped: set CEREBRAS_API_KEY env]")
 		return
 	}
-	cgen := NewCerebrasGenerator(nil, "", "qwen-3-32b", `You are a helpful assistant that returns the price of a stock and nothing else.
+	cgen := NewCerebrasGenerator(nil, "", "qwen-3-235b-a22b-instruct-2507", `You are a helpful assistant that returns the price of a stock and nothing else.
 
 Only output the price, like
 <example>
