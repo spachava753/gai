@@ -510,7 +510,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 				return Response{}, &InvalidParameterErr{
 					Parameter: "thinking budget",
 					Reason: fmt.Sprintf(
-						"invalid thinking budget, expected 'low', 'medium', or 'high': %s",
+						"invalid thinking budget, expected 'minimal', 'low', 'medium', or 'high': %s",
 						options.ThinkingBudget,
 					),
 				}
@@ -842,13 +842,13 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 			if options.ThinkingBudget != "" {
 				switch options.ThinkingBudget {
-				case "low", "medium", "high":
+				case "minimal", "low", "medium", "high":
 					params.ReasoningEffort = oai.ReasoningEffort(options.ThinkingBudget)
 				default:
 					yield(StreamChunk{}, InvalidParameterErr{
 						Parameter: "thinking budget",
 						Reason: fmt.Sprintf(
-							"invalid thinking budget, expected 'low', 'medium', or 'high': %s",
+							"invalid thinking budget, expected 'minimal', 'low', 'medium', or 'high': %s",
 							options.ThinkingBudget,
 						),
 					})
