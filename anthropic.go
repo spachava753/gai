@@ -458,13 +458,13 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 	// Convert OpenAI response to our Response type
 	result := Response{
-		UsageMetrics: make(Metrics),
+		UsageMetadata: make(Metadata),
 	}
 
 	// Add usage metrics if available
 	inputTokens := resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens
-	result.UsageMetrics[UsageMetricInputTokens] = int(inputTokens)
-	result.UsageMetrics[UsageMetricGenerationTokens] = int(resp.Usage.OutputTokens)
+	result.UsageMetadata[UsageMetricInputTokens] = int(inputTokens)
+	result.UsageMetadata[UsageMetricGenerationTokens] = int(resp.Usage.OutputTokens)
 
 	// Convert the message content
 	var blocks []Block

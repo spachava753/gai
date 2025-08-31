@@ -332,16 +332,16 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 		return Response{}, fmt.Errorf("responses: generation failed: %w", err)
 	}
 
-	result := Response{UsageMetrics: make(Metrics)}
+	result := Response{UsageMetadata: make(Metadata)}
 	if usage := res.Usage; usage.InputTokens > 0 || usage.OutputTokens > 0 {
 		if usage.InputTokens > 0 {
-			result.UsageMetrics[UsageMetricInputTokens] = int(usage.InputTokens)
+			result.UsageMetadata[UsageMetricInputTokens] = int(usage.InputTokens)
 		}
 		if usage.OutputTokens > 0 {
-			result.UsageMetrics[UsageMetricGenerationTokens] = int(usage.OutputTokens)
+			result.UsageMetadata[UsageMetricGenerationTokens] = int(usage.OutputTokens)
 		}
 	}
-	result.UsageMetrics[ResponsesPrevRespId] = res.ID
+	result.UsageMetadata[ResponsesPrevRespId] = res.ID
 
 	var blocks []Block
 	var hasToolCalls bool

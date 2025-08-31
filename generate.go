@@ -140,12 +140,13 @@ type Response struct {
 	// FinishReason represents the reason why a Generator stopped generating
 	FinishReason FinishReason
 
-	// UsageMetrics represents some arbitrary metrics that a Generator can return.
+	// UsageMetadata represents some arbitrary metrics and values that a Generator can return.
 	// The metric UsageMetricInputTokens and UsageMetricGenerationTokens is most commonly returned by an
 	// implementation of a Generator, representing the total input tokens and output tokens consumed, however
 	// it is not guaranteed to have those metrics be present. In addition, a Generator may return additional metrics
-	// specific to the implementation. An example might be cached input tokens used, or perhaps the cost of a request
-	UsageMetrics Metrics
+	// specific to the implementation. For example, ResponsesGenerator.Generate returns the response id, stored using
+	// the key ResponsesPrevRespId
+	UsageMetadata Metadata
 }
 
 // A Generator takes a Dialog and optional GenOpts and generates a Response or an error.

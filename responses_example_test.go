@@ -132,7 +132,7 @@ func ExampleResponsesGenerator_Generate_thinking() {
 	}
 	fmt.Println("Response received")
 	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("What can you do?")}})
-	opts.ExtraArgs[ResponsesPrevRespId] = resp.UsageMetrics[ResponsesPrevRespId]
+	opts.ExtraArgs[ResponsesPrevRespId] = resp.UsageMetadata[ResponsesPrevRespId]
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
 		panic(err.Error())
@@ -178,7 +178,7 @@ Only output the price, like
 	fmt.Println(resp.Candidates[0].Blocks[0].Content)
 	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: resp.Candidates[0].Blocks[0].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}})
 	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{ExtraArgs: map[string]any{
-		ResponsesPrevRespId: resp.UsageMetrics[ResponsesPrevRespId],
+		ResponsesPrevRespId: resp.UsageMetadata[ResponsesPrevRespId],
 	}})
 	if err != nil {
 		panic(err.Error())
@@ -226,7 +226,7 @@ Assistant: Nvidia
 	fmt.Println(blocks[len(blocks)-1].Content)
 	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: blocks[len(blocks)-2].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}}, Message{Role: ToolResult, Blocks: []Block{{ID: blocks[len(blocks)-1].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("678.45")}}})
 	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{ExtraArgs: map[string]any{
-		ResponsesPrevRespId: resp.UsageMetrics[ResponsesPrevRespId],
+		ResponsesPrevRespId: resp.UsageMetadata[ResponsesPrevRespId],
 	}})
 	if err != nil {
 		panic(err.Error())

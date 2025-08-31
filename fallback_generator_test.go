@@ -77,7 +77,7 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 			},
 		},
 		FinishReason: EndTurn,
-		UsageMetrics: Metrics{
+		UsageMetadata: Metadata{
 			UsageMetricInputTokens:      10,
 			UsageMetricGenerationTokens: 5,
 		},
@@ -98,7 +98,7 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 			},
 		},
 		FinishReason: EndTurn,
-		UsageMetrics: Metrics{
+		UsageMetadata: Metadata{
 			UsageMetricInputTokens:      10,
 			UsageMetricGenerationTokens: 7,
 		},

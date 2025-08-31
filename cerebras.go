@@ -389,12 +389,12 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 		return Response{}, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	result := Response{UsageMetrics: make(Metrics)}
+	result := Response{UsageMetadata: make(Metadata)}
 	if cr.Usage.PromptTokens > 0 {
-		result.UsageMetrics[UsageMetricInputTokens] = cr.Usage.PromptTokens
+		result.UsageMetadata[UsageMetricInputTokens] = cr.Usage.PromptTokens
 	}
 	if cr.Usage.CompletionTokens > 0 {
-		result.UsageMetrics[UsageMetricGenerationTokens] = cr.Usage.CompletionTokens
+		result.UsageMetadata[UsageMetricGenerationTokens] = cr.Usage.CompletionTokens
 	}
 
 	var hasToolCalls bool

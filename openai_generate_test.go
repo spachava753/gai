@@ -304,7 +304,7 @@ func TestGenerate(t *testing.T) {
 					},
 				},
 				FinishReason: EndTurn,
-				UsageMetrics: Metrics{
+				UsageMetadata: Metadata{
 					UsageMetricInputTokens:      10,
 					UsageMetricGenerationTokens: 9,
 				},
@@ -334,7 +334,7 @@ func TestGenerate(t *testing.T) {
 					},
 				},
 				FinishReason: ToolUse,
-				UsageMetrics: Metrics{
+				UsageMetadata: Metadata{
 					UsageMetricInputTokens:      12,
 					UsageMetricGenerationTokens: 15,
 				},
@@ -370,7 +370,7 @@ func TestGenerate(t *testing.T) {
 					},
 				},
 				FinishReason: ToolUse,
-				UsageMetrics: Metrics{
+				UsageMetadata: Metadata{
 					UsageMetricInputTokens:      12,
 					UsageMetricGenerationTokens: 25,
 				},
@@ -399,7 +399,7 @@ func TestGenerate(t *testing.T) {
 					},
 				},
 				FinishReason: EndTurn,
-				UsageMetrics: Metrics{
+				UsageMetadata: Metadata{
 					UsageMetricInputTokens:      10,
 					UsageMetricGenerationTokens: 9,
 				},
@@ -428,7 +428,7 @@ func TestGenerate(t *testing.T) {
 					},
 				},
 				FinishReason: EndTurn,
-				UsageMetrics: Metrics{
+				UsageMetadata: Metadata{
 					UsageMetricInputTokens:      10,
 					UsageMetricGenerationTokens: 9,
 				},
@@ -457,7 +457,7 @@ func TestGenerate(t *testing.T) {
 					},
 				},
 				FinishReason: EndTurn,
-				UsageMetrics: Metrics{
+				UsageMetadata: Metadata{
 					UsageMetricInputTokens:      25,
 					UsageMetricGenerationTokens: 20,
 				},
@@ -486,7 +486,7 @@ func TestGenerate(t *testing.T) {
 					},
 				},
 				FinishReason: EndTurn,
-				UsageMetrics: Metrics{
+				UsageMetadata: Metadata{
 					UsageMetricInputTokens:      10,
 					UsageMetricGenerationTokens: 9,
 				},
@@ -555,8 +555,8 @@ func TestGenerate(t *testing.T) {
 				}
 
 				// Check usage metrics
-				inputTokens, hasInputTokens := InputTokens(got.UsageMetrics)
-				wantInputTokens, wantHasInputTokens := InputTokens(tt.want.UsageMetrics)
+				inputTokens, hasInputTokens := InputTokens(got.UsageMetadata)
+				wantInputTokens, wantHasInputTokens := InputTokens(tt.want.UsageMetadata)
 
 				if hasInputTokens != wantHasInputTokens {
 					t.Errorf("Generate() has input tokens = %v, want %v",
@@ -568,8 +568,8 @@ func TestGenerate(t *testing.T) {
 						inputTokens, wantInputTokens)
 				}
 
-				outputTokens, hasOutputTokens := OutputTokens(got.UsageMetrics)
-				wantOutputTokens, wantHasOutputTokens := OutputTokens(tt.want.UsageMetrics)
+				outputTokens, hasOutputTokens := OutputTokens(got.UsageMetadata)
+				wantOutputTokens, wantHasOutputTokens := OutputTokens(tt.want.UsageMetadata)
 
 				if hasOutputTokens != wantHasOutputTokens {
 					t.Errorf("Generate() has output tokens = %v, want %v",

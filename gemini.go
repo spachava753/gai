@@ -276,16 +276,16 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	}
 
 	result := Response{
-		UsageMetrics: make(Metrics),
+		UsageMetadata: make(Metadata),
 	}
 
 	// Usage metadata if available
 	if resp.UsageMetadata != nil {
 		if resp.UsageMetadata.PromptTokenCount > 0 {
-			result.UsageMetrics[UsageMetricInputTokens] = int(resp.UsageMetadata.PromptTokenCount)
+			result.UsageMetadata[UsageMetricInputTokens] = int(resp.UsageMetadata.PromptTokenCount)
 		}
 		if resp.UsageMetadata.TotalTokenCount > 0 {
-			result.UsageMetrics[UsageMetricGenerationTokens] = int(resp.UsageMetadata.TotalTokenCount - resp.UsageMetadata.PromptTokenCount)
+			result.UsageMetadata[UsageMetricGenerationTokens] = int(resp.UsageMetadata.TotalTokenCount - resp.UsageMetadata.PromptTokenCount)
 		}
 	}
 

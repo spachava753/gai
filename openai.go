@@ -577,16 +577,16 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 	// Convert OpenAI response to our Response type
 	result := Response{
-		UsageMetrics: make(Metrics),
+		UsageMetadata: make(Metadata),
 	}
 
 	// Add usage metrics if available
 	if usage := resp.Usage; usage.PromptTokens > 0 || usage.CompletionTokens > 0 {
 		if promptTokens := usage.PromptTokens; promptTokens > 0 {
-			result.UsageMetrics[UsageMetricInputTokens] = int(promptTokens)
+			result.UsageMetadata[UsageMetricInputTokens] = int(promptTokens)
 		}
 		if completionTokens := usage.CompletionTokens; completionTokens > 0 {
-			result.UsageMetrics[UsageMetricGenerationTokens] = int(completionTokens)
+			result.UsageMetadata[UsageMetricGenerationTokens] = int(completionTokens)
 		}
 	}
 

@@ -143,10 +143,10 @@
 //		}
 //
 //		// Get usage metrics
-//		if inputTokens, ok := gai.InputTokens(response.UsageMetrics); ok {
+//		if inputTokens, ok := gai.InputTokens(response.UsageMetadata); ok {
 //			fmt.Printf("Input tokens: %d\n", inputTokens)
 //		}
-//		if outputTokens, ok := gai.OutputTokens(response.UsageMetrics); ok {
+//		if outputTokens, ok := gai.OutputTokens(response.UsageMetadata); ok {
 //			fmt.Printf("Output tokens: %d\n", outputTokens)
 //		}
 //	}

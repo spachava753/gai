@@ -1,6 +1,6 @@
 package gai
 
-// Metrics represents a collection of metrics returned by a Generator in a Response.
+// Metadata represents a collection of metrics returned by a Generator in a Response.
 // The map's keys are metric names, and values can be of any type, though typically
 // they are numeric types like int or float64.
 //
@@ -9,7 +9,7 @@ package gai
 //   - [UsageMetricGenerationTokens]: The number of tokens generated in the Response
 //
 // A Generator may return additional implementation-specific metrics.
-type Metrics map[string]any
+type Metadata map[string]any
 
 const (
 	// UsageMetricInputTokens is a metric key representing the number of tokens in the input Dialog.
@@ -29,7 +29,7 @@ const (
 // If the metric is present, returns (tokens, true).
 //
 // Panics if the value in the metrics map cannot be type asserted to int.
-func InputTokens(m Metrics) (int, bool) {
+func InputTokens(m Metadata) (int, bool) {
 	return GetMetric[int](m, UsageMetricInputTokens)
 }
 
@@ -41,7 +41,7 @@ func InputTokens(m Metrics) (int, bool) {
 // If the metric is present, returns (tokens, true).
 //
 // Panics if the value in the metrics map cannot be type asserted to int.
-func OutputTokens(m Metrics) (int, bool) {
+func OutputTokens(m Metadata) (int, bool) {
 	return GetMetric[int](m, UsageMetricGenerationTokens)
 }
 
@@ -65,7 +65,7 @@ func OutputTokens(m Metrics) (int, bool) {
 //	if model, ok := GetMetric[string](metrics, "model"); ok {
 //	    fmt.Printf("Model used: %s\n", model)
 //	}
-func GetMetric[T any](m Metrics, key string) (T, bool) {
+func GetMetric[T any](m Metadata, key string) (T, bool) {
 	var metric T
 	metricVal, ok := m[key]
 	if !ok {
