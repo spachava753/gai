@@ -222,7 +222,7 @@ func ExampleOpenAiGenerator_Generate_openRouter() {
 	// Create an OpenAI client for open router
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1/"),
-		option.WithAPIKey(os.Getenv("OPEN_ROUTER_API_KEY")),
+		option.WithAPIKey(os.Getenv("OPENROUTER_API_KEY")),
 	)
 
 	// Instantiate a OpenAI Generator
@@ -645,7 +645,7 @@ func ExampleOpenAiGenerator_Register_openRouter() {
 	// Create an OpenAI client for open router
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1/"),
-		option.WithAPIKey(os.Getenv("OPEN_ROUTER_API_KEY")),
+		option.WithAPIKey(os.Getenv("OPENROUTER_API_KEY")),
 	)
 
 	// Instantiate a OpenAI Generator
@@ -717,7 +717,7 @@ func ExampleOpenAiGenerator_Register_openRouterParallelToolUse() {
 	// Create an OpenAI client
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1/"),
-		option.WithAPIKey(os.Getenv("OPEN_ROUTER_API_KEY")),
+		option.WithAPIKey(os.Getenv("OPENROUTER_API_KEY")),
 	)
 
 	// Register tools
