@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/openai/openai-go/v2"
 )
 
@@ -107,6 +108,78 @@ Only output the price, like
 
 	tg := ToolGenerator{
 		G: &gen,
+	}
+
+	// Register tools
+	if err := tg.Register(
+		tickerTool,
+		&TickerTool{
+			ticketPrices: map[string]float64{
+				"AAPL": 435.56,
+			},
+		},
+	); err != nil {
+		panic(err.Error())
+	}
+
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("What is the price of Apple stock?"),
+				},
+			},
+		},
+	}
+
+	// Generate a response
+	newDialog, err := tg.Generate(context.Background(), dialog, func(d Dialog) *GenOpts {
+		return nil
+	})
+	if err != nil {
+		panic(err.Error())
+	}
+	fmt.Printf("len of the new dialog: %d\n", len(newDialog))
+	fmt.Printf("%s\n", newDialog[len(newDialog)-1].Blocks[0].Content)
+
+	// Output: len of the new dialog: 4
+	// 435.56
+}
+
+func ExampleToolGenerator_Generate_responses() {
+	tickerTool := Tool{
+		Name:        "get_stock_price",
+		Description: "Get the current stock price for a given ticker symbol.",
+		InputSchema: GenerateSchema[struct {
+			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+		}](),
+	}
+
+	client := openai.NewClient()
+
+	// Instantiate a OpenAI Generator
+	responsesGen := NewResponsesGenerator(
+		&client.Responses,
+		openai.ChatModelGPT5Mini,
+		`You are a helpful assistant that returns the price of a stock and nothing else.
+
+Only output the price, like
+<example>
+435.56
+</example>
+<example>
+3235.55
+</example>
+`,
+	)
+
+	gen := NewResponsesToolGeneratorAdapter(responsesGen, "")
+
+	tg := ToolGenerator{
+		G: gen,
 	}
 
 	// Register tools
