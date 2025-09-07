@@ -107,7 +107,6 @@ func (r *ResponsesGenerator) Register(tool Tool) error {
 		Name:        tool.Name,
 		Description: openai.Opt(tool.Description),
 		Parameters:  params,
-		Strict:      openai.Opt(true),
 	}
 	r.tools[tool.Name] = responses.ToolParamOfFunction(fn.Name, fn.Parameters, true)
 	return nil
