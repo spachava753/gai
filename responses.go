@@ -103,12 +103,9 @@ func (r *ResponsesGenerator) Register(tool Tool) error {
 		}
 	}
 
-	fn := responses.FunctionToolParam{
-		Name:        tool.Name,
-		Description: openai.Opt(tool.Description),
-		Parameters:  params,
-	}
-	r.tools[tool.Name] = responses.ToolParamOfFunction(fn.Name, fn.Parameters, true)
+	fn := responses.ToolParamOfFunction(tool.Name, params, false)
+	fn.OfFunction.Description = openai.String(tool.Description)
+	r.tools[tool.Name] = fn
 	return nil
 }
 
