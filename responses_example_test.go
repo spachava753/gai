@@ -383,9 +383,14 @@ func ExampleResponsesGenerator_Stream_parallelToolUse() {
 		fmt.Println("Response received")
 	}
 
+	if blocks[len(blocks)-1].BlockType == ResponseCompletedBlockType {
+		fmt.Println("Received response_completed")
+	}
+
 	// Output: Response received
 	// 2
 	// Response received
+	// Received response_completed
 }
 
 func ExampleResponsesGenerator_Stream_thoughtSummary() {
@@ -441,6 +446,11 @@ func ExampleResponsesGenerator_Stream_thoughtSummary() {
 		fmt.Println("Response received")
 	}
 
+	if blocks[len(blocks)-1].BlockType == ResponseCompletedBlockType {
+		fmt.Println("Received response_completed")
+	}
+
 	// Output: Has thought summary blocks
 	// Response received
+	// Received response_completed
 }
