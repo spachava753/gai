@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -235,4 +236,154 @@ Assistant: Nvidia
 	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
 	// {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
 	// MSFT
+}
+
+func ExampleResponsesGenerator_Stream_parallelToolUse() {
+	// Create an OpenAI client
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
+		return
+	}
+	client := openai.NewClient(
+		option.WithAPIKey(apiKey),
+	)
+
+	// Register tools
+	tickerTool := Tool{
+		Name:        "get_stock_price",
+		Description: "Get the current stock price for a given ticker symbol.",
+		InputSchema: GenerateSchema[struct {
+			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+		}](),
+	}
+
+	// Instantiate a Responses Generator
+	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, "You are a helpful assistant")
+
+	// Register tools
+	tickerTool.Description += "\nYou can call this tool in parallel"
+	if err := gen.Register(tickerTool); err != nil {
+		panic(err.Error())
+	}
+
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("Which stock, Apple vs. Microsoft, is more expensive?"),
+				},
+			},
+		},
+	}
+
+	// Stream a response
+	var blocks []Block
+	for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		blocks = append(blocks, chunk.Block)
+	}
+
+	if len(blocks) > 1 {
+		fmt.Println("Response received")
+	}
+
+	// collect the blocks
+	var prevToolCallId string
+	var toolCalls []Block
+	var toolcallArgs string
+	var toolCallInput ToolCallInput
+	for _, block := range blocks[:len(blocks)-1] {
+		if block.ID != "" && block.ID != prevToolCallId {
+			if toolcallArgs != "" {
+				// Parse the arguments string into a map
+				if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
+					panic(err.Error())
+				}
+
+				// Marshal back to JSON for consistent representation
+				toolUseJSON, err := json.Marshal(toolCallInput)
+				if err != nil {
+					panic(err.Error())
+				}
+				toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
+				toolCallInput = ToolCallInput{}
+				toolcallArgs = ""
+			}
+			prevToolCallId = block.ID
+			toolCalls = append(toolCalls, Block{
+				ID:           block.ID,
+				BlockType:    ToolCall,
+				ModalityType: Text,
+				MimeType:     "text/plain",
+			})
+			toolCallInput.Name = block.Content.String()
+		} else {
+			toolcallArgs += block.Content.String()
+		}
+	}
+
+	if toolcallArgs != "" {
+		// Parse the arguments string into a map
+		if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
+			panic(err.Error())
+		}
+
+		// Marshal back to JSON for consistent representation
+		toolUseJSON, err := json.Marshal(toolCallInput)
+		if err != nil {
+			panic(err.Error())
+		}
+		toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
+		toolCallInput = ToolCallInput{}
+	}
+
+	fmt.Println(len(toolCalls))
+
+	dialog = append(dialog, Message{
+		Role:   Assistant,
+		Blocks: toolCalls,
+	}, Message{
+		Role: ToolResult,
+		Blocks: []Block{
+			{
+				ID:           toolCalls[0].ID,
+				ModalityType: Text,
+				Content:      Str("123.45"),
+			},
+		},
+	}, Message{
+		Role: ToolResult,
+		Blocks: []Block{
+			{
+				ID:           toolCalls[1].ID,
+				ModalityType: Text,
+				Content:      Str("678.45"),
+			},
+		},
+	})
+
+	// Stream a response with previous response ID
+	blocks = nil
+	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{}) {
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		blocks = append(blocks, chunk.Block)
+	}
+
+	if len(blocks) > 1 {
+		fmt.Println("Response received")
+	}
+
+	// Output: Response received
+	// 2
+	// Response received
 }

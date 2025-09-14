@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"strings"
 
 	"github.com/openai/openai-go/v2"
@@ -16,6 +17,10 @@ import (
 // ThoughtSummaryBlockType is a Block.BlockType that the ResponsesGenerator specifically returns.
 // It is meant to represent a thought summary from the OpenAI Responses API
 const ThoughtSummaryBlockType = "thought_summary"
+
+// ResponseCompletedBlockType is a Block.BlockType that the ResponsesGenerator specifically returns.
+// It is meant to return the response id
+const ResponseCompletedBlockType = "response_completed"
 
 // ResponsesThoughtSummaryDetailParam is a key used for storing the thought summary detail level
 // in GenOpts.ExtraArgs. Setting parameter will set the level of detail of thought summaries that
@@ -72,6 +77,7 @@ func NewResponsesGenerator(client ResponsesService, model, systemInstructions st
 
 var _ ToolRegister = (*ResponsesGenerator)(nil)
 var _ Generator = (*ResponsesGenerator)(nil)
+var _ StreamingGenerator = (*ResponsesGenerator)(nil)
 
 func (r *ResponsesGenerator) Register(tool Tool) error {
 	if tool.Name == "" {
@@ -400,4 +406,380 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 		result.FinishReason = EndTurn
 	}
 	return result, nil
+}
+
+func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
+	return func(yield func(StreamChunk, error) bool) {
+		if r.client == nil {
+			yield(StreamChunk{}, fmt.Errorf("responses: client not initialized"))
+			return
+		}
+		if len(dialog) == 0 {
+			yield(StreamChunk{}, EmptyDialogErr)
+			return
+		}
+
+		var inputItems []responses.ResponseInputItemUnionParam
+		for _, msg := range dialog {
+			switch msg.Role {
+			case User:
+				var contents responses.ResponseInputMessageContentListParam
+
+				for _, blk := range msg.Blocks {
+					switch blk.BlockType {
+					case Content:
+						switch blk.ModalityType {
+						case Text:
+							contents = append(contents, responses.ResponseInputContentParamOfInputText(blk.Content.String()))
+						case Image:
+							if blk.MimeType == "" {
+								yield(StreamChunk{}, fmt.Errorf("image block missing mimetype"))
+								return
+							}
+							dataURL := fmt.Sprintf("data:%s;base64,%s", blk.MimeType, blk.Content.String())
+							if blk.MimeType == "application/pdf" {
+								val, ok := blk.ExtraFields[BlockFieldFilenameKey]
+								if !ok {
+									yield(StreamChunk{}, fmt.Errorf("filename field missing in extra fields"))
+									return
+								}
+								filename, ok := val.(string)
+								if !ok {
+									yield(StreamChunk{}, fmt.Errorf("filename field is not a string"))
+									return
+								}
+								file := responses.ResponseInputContentUnionParam{OfInputFile: &responses.ResponseInputFileParam{}}
+								file.OfInputFile.FileData = openai.Opt(dataURL)
+								file.OfInputFile.Filename = openai.Opt(filename)
+								contents = append(contents, file)
+							} else {
+								img := responses.ResponseInputContentParamOfInputImage(responses.ResponseInputImageDetailAuto)
+								img.OfInputImage.ImageURL = openai.Opt(dataURL)
+								contents = append(contents, img)
+							}
+						default:
+							yield(StreamChunk{}, UnsupportedInputModalityErr(blk.ModalityType.String()))
+							return
+						}
+					default:
+						yield(StreamChunk{}, fmt.Errorf("unsupported block type in message: %s", blk.BlockType))
+						return
+					}
+				}
+
+				if len(contents) > 0 {
+					role := responses.EasyInputMessageRoleUser
+					inputItems = append(inputItems, responses.ResponseInputItemParamOfMessage(contents, role))
+				}
+
+			case Assistant:
+				var contents []responses.ResponseOutputMessageContentUnionParam
+				var toolCalls []responses.ResponseInputItemUnionParam
+
+				for _, blk := range msg.Blocks {
+					switch blk.BlockType {
+					case Content:
+						switch blk.ModalityType {
+						case Text:
+							contents = append(contents, responses.ResponseOutputMessageContentUnionParam{
+								OfOutputText: &responses.ResponseOutputTextParam{
+									Text: blk.Content.String(),
+								},
+							})
+						default:
+							yield(StreamChunk{}, UnsupportedInputModalityErr(blk.ModalityType.String()))
+							return
+						}
+					case Thinking, ThoughtSummaryBlockType:
+						// ignore thinking type blocks, responses API does not support injected thinking traces
+					case ToolCall:
+						if blk.ID == "" {
+							yield(StreamChunk{}, fmt.Errorf("tool call block missing ID"))
+							return
+						}
+						var tci ToolCallInput
+						if err := json.Unmarshal([]byte(blk.Content.String()), &tci); err != nil {
+							yield(StreamChunk{}, fmt.Errorf("invalid tool call content: %w", err))
+							return
+						}
+						argsJSON, err := json.Marshal(tci.Parameters)
+						if err != nil {
+							yield(StreamChunk{}, fmt.Errorf("failed to marshal tool parameters: %w", err))
+							return
+						}
+						toolCalls = append(toolCalls, responses.ResponseInputItemParamOfFunctionCall(string(argsJSON), blk.ID, tci.Name))
+					default:
+						yield(StreamChunk{}, fmt.Errorf("unsupported block type in message: %s", blk.BlockType))
+						return
+					}
+				}
+
+				if len(contents) > 0 {
+					inputItems = append(inputItems, responses.ResponseInputItemUnionParam{
+						OfOutputMessage: &responses.ResponseOutputMessageParam{
+							ID:      "",
+							Content: contents,
+						},
+					})
+				}
+				if len(toolCalls) > 0 {
+					inputItems = append(inputItems, toolCalls...)
+				}
+
+			case ToolResult:
+				if len(msg.Blocks) == 0 {
+					yield(StreamChunk{}, fmt.Errorf("tool result message must have at least one block"))
+					return
+				}
+				toolID := msg.Blocks[0].ID
+				if toolID == "" {
+					yield(StreamChunk{}, fmt.Errorf("tool result message block must have an ID"))
+					return
+				}
+				var sb strings.Builder
+				for _, blk := range msg.Blocks {
+					if blk.ID != toolID {
+						yield(StreamChunk{}, fmt.Errorf("all blocks in tool result must share the same ID"))
+						return
+					}
+					if blk.ModalityType != Text {
+						yield(StreamChunk{}, UnsupportedInputModalityErr(blk.ModalityType.String()))
+						return
+					}
+					sb.WriteString(blk.Content.String())
+				}
+				inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCallOutput(toolID, sb.String()))
+			default:
+				yield(StreamChunk{}, fmt.Errorf("unsupported message role: %s", msg.Role.String()))
+				return
+			}
+		}
+
+		params := responses.ResponseNewParams{
+			Model: r.model,
+			Input: responses.ResponseNewParamsInputUnion{OfInputItemList: inputItems},
+		}
+
+		if r.systemInstructions != "" {
+			params.Instructions = openai.Opt(r.systemInstructions)
+		}
+
+		if len(r.tools) > 0 {
+			var tools []responses.ToolUnionParam
+			for _, t := range r.tools {
+				tools = append(tools, t)
+			}
+			params.Tools = tools
+		}
+
+		if options != nil {
+			if options.Temperature != 0 {
+				params.Temperature = openai.Opt(options.Temperature)
+			}
+			if options.TopP != 0 {
+				params.TopP = openai.Opt(options.TopP)
+			}
+			if options.MaxGenerationTokens > 0 {
+				params.MaxOutputTokens = openai.Opt(int64(options.MaxGenerationTokens))
+			}
+			if options.ToolChoice != "" {
+				switch options.ToolChoice {
+				case ToolChoiceAuto:
+					params.ToolChoice.OfToolChoiceMode = openai.Opt(responses.ToolChoiceOptionsAuto)
+				case ToolChoiceToolsRequired:
+					params.ToolChoice.OfToolChoiceMode = openai.Opt(responses.ToolChoiceOptionsRequired)
+				default:
+					params.ToolChoice.OfFunctionTool = &responses.ToolChoiceFunctionParam{Name: options.ToolChoice}
+				}
+			}
+			if options.ThinkingBudget != "" {
+				switch options.ThinkingBudget {
+				case "minimal", "low", "medium", "high":
+					params.Reasoning = responses.ReasoningParam{Effort: responses.ReasoningEffort(options.ThinkingBudget)}
+				default:
+					yield(StreamChunk{}, InvalidParameterErr{Parameter: "thinking budget", Reason: fmt.Sprintf("invalid thinking budget: %s", options.ThinkingBudget)})
+					return
+				}
+				if options.ExtraArgs != nil {
+					if val, ok := options.ExtraArgs[ResponsesThoughtSummaryDetailParam]; ok {
+						params.Reasoning.Summary = val.(responses.ReasoningSummary)
+					}
+				}
+			}
+
+			if len(options.OutputModalities) > 0 {
+				for _, m := range options.OutputModalities {
+					if m != Text {
+						yield(StreamChunk{}, UnsupportedOutputModalityErr(m.String()))
+						return
+					}
+				}
+			}
+			if val, ok := options.ExtraArgs[ResponsesPrevRespId]; ok {
+				prevId := val.(string)
+				if prevId != "" {
+					params.PreviousResponseID = openai.Opt[string](prevId)
+				}
+			}
+		}
+
+		// Start the stream
+		stream := r.client.NewStreaming(ctx, params)
+		defer stream.Close()
+
+		for stream.Next() {
+			event := stream.Current()
+
+			switch event.Type {
+			case "response.output_item.added":
+				item := event.AsResponseOutputItemAdded().Item
+				switch item.Type {
+				case "message":
+					msg := item.AsMessage()
+					for _, c := range msg.Content {
+						switch c.Type {
+						case "output_text":
+							if !yield(StreamChunk{
+								Block: Block{
+									BlockType:    Content,
+									ModalityType: Text,
+									MimeType:     "text/plain",
+									Content:      Str(c.Text),
+								},
+								CandidatesIndex: 0,
+							}, nil) {
+								return
+							}
+						case "refusal":
+							if c.Refusal != "" {
+								yield(StreamChunk{}, ContentPolicyErr(c.Refusal))
+								return
+							}
+						}
+					}
+				case "function_call":
+					fc := item.AsFunctionCall()
+					if !yield(StreamChunk{
+						Block: Block{
+							ID:           fc.CallID,
+							BlockType:    ToolCall,
+							ModalityType: Text,
+							MimeType:     "application/json",
+							Content:      Str(fc.Name),
+						},
+						CandidatesIndex: 0,
+					}, nil) {
+						return
+					}
+				case "reasoning":
+					reas := item.AsReasoning()
+					for _, rc := range reas.Summary {
+						if !yield(StreamChunk{
+							Block: Block{
+								BlockType:    ThoughtSummaryBlockType,
+								ModalityType: Text,
+								MimeType:     "text/plain",
+								Content:      Str(rc.Text),
+							},
+							CandidatesIndex: 0,
+						}, nil) {
+							return
+						}
+					}
+				}
+			case "response.output_text.delta":
+				textDelta := event.AsResponseOutputTextDelta()
+				if textDelta.Delta != "" {
+					if !yield(StreamChunk{
+						Block: Block{
+							BlockType:    Content,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(textDelta.Delta),
+						},
+						CandidatesIndex: 0,
+					}, nil) {
+						return
+					}
+				}
+			case "response.function_call_arguments.delta":
+				fcDelta := event.AsResponseFunctionCallArgumentsDelta()
+				if fcDelta.Delta != "" {
+					if !yield(StreamChunk{
+						Block: Block{
+							BlockType:    ToolCall,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(fcDelta.Delta),
+						},
+						CandidatesIndex: 0,
+					}, nil) {
+						return
+					}
+				}
+			case "response.reasoning_text.delta":
+				reasoningDelta := event.AsResponseReasoningTextDelta()
+				if reasoningDelta.Delta != "" {
+					if !yield(StreamChunk{
+						Block: Block{
+							BlockType:    Thinking,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(reasoningDelta.Delta),
+						},
+						CandidatesIndex: 0,
+					}, nil) {
+						return
+					}
+				}
+			case "response.reasoning_summary_text.delta":
+				summaryDelta := event.AsResponseReasoningSummaryTextDelta()
+				if summaryDelta.Delta != "" {
+					if !yield(StreamChunk{
+						Block: Block{
+							BlockType:    ThoughtSummaryBlockType,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(summaryDelta.Delta),
+						},
+						CandidatesIndex: 0,
+					}, nil) {
+						return
+					}
+				}
+			case "response.refusal.delta":
+				refusalDelta := event.AsResponseRefusalDelta()
+				if refusalDelta.Delta != "" {
+					yield(StreamChunk{}, ContentPolicyErr(refusalDelta.Delta))
+					return
+				}
+			case "response.completed":
+				completed := event.AsResponseCompleted()
+				yield(StreamChunk{
+					Block: Block{
+						BlockType:    ResponseCompletedBlockType,
+						ModalityType: Text,
+						MimeType:     "text/plain",
+						Content:      Str(completed.Response.ID),
+					},
+					CandidatesIndex: 0,
+				}, nil)
+				return
+			case "response.failed":
+				yield(StreamChunk{}, fmt.Errorf("response failed"))
+				return
+			case "response.incomplete":
+				yield(StreamChunk{}, MaxGenerationLimitErr)
+				return
+			case "error":
+				errorEvent := event.AsError()
+				yield(StreamChunk{}, fmt.Errorf("stream error: %s", errorEvent.Message))
+				return
+			}
+		}
+
+		if stream.Err() != nil {
+			yield(StreamChunk{}, stream.Err())
+		}
+	}
 }

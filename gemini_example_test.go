@@ -75,7 +75,7 @@ func ExampleGeminiGenerator_Stream() {
 			fmt.Println("Error:", err)
 			return
 		}
-		fmt.Printf(chunk.Block.Content.String())
+		fmt.Println(chunk.Block.Content.String())
 	}
 	// Output: The capital of France is Paris.
 }
