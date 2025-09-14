@@ -24,7 +24,7 @@ const ResponseCompletedBlockType = "response_completed"
 
 // ResponsesThoughtSummaryDetailParam is a key used for storing the thought summary detail level
 // in GenOpts.ExtraArgs. Setting parameter will set the level of detail of thought summaries that
-// are returned from the OpenAI Responses API.
+// are returned from the OpenAI Responses API. One of `auto`, `concise`, or `detailed`.
 const ResponsesThoughtSummaryDetailParam = "responses_thought_summary_detail"
 
 // ResponsesPrevRespId is a key used for storing the previous response id in GenOpts.ExtraArgs.

@@ -387,3 +387,60 @@ func ExampleResponsesGenerator_Stream_parallelToolUse() {
 	// 2
 	// Response received
 }
+
+func ExampleResponsesGenerator_Stream_thoughtSummary() {
+	// Create an OpenAI client
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
+		return
+	}
+	client := openai.NewClient(
+		option.WithAPIKey(apiKey),
+	)
+
+	// Instantiate a Responses Generator
+	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
+
+	dialog := Dialog{
+		{
+			Role: User,
+			Blocks: []Block{
+				{
+					BlockType:    Content,
+					ModalityType: Text,
+					Content:      Str("Do LLMs have a soul, according to any definition of soul given by famous historical philosophers?"),
+				},
+			},
+		},
+	}
+
+	// Stream a response
+	var blocks []Block
+	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{
+		ThinkingBudget: "medium",
+		ExtraArgs: map[string]any{
+			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
+		},
+	}) {
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		blocks = append(blocks, chunk.Block)
+	}
+
+	for _, block := range blocks {
+		if block.BlockType == ThoughtSummaryBlockType {
+			fmt.Println("Has thought summary blocks")
+			break
+		}
+	}
+
+	if len(blocks) > 1 {
+		fmt.Println("Response received")
+	}
+
+	// Output: Has thought summary blocks
+	// Response received
+}
