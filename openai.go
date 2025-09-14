@@ -908,17 +908,32 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 			if len(chunk.Choices[0].Delta.ToolCalls) == 1 {
 				toolCall := chunk.Choices[0].Delta.ToolCalls[0]
-				if !yield(StreamChunk{
-					Block: Block{
-						ID:           toolCall.ID,
-						BlockType:    ToolCall,
-						ModalityType: Text,
-						MimeType:     "text/plain",
-						Content:      Str(toolCall.Function.Name + toolCall.Function.Arguments),
-					},
-					CandidatesIndex: int(chunk.Choices[0].Index),
-				}, nil) {
-					return
+				if toolCall.Function.Name != "" {
+					if !yield(StreamChunk{
+						Block: Block{
+							ID:           toolCall.ID,
+							BlockType:    ToolCall,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(toolCall.Function.Name),
+						},
+						CandidatesIndex: int(chunk.Choices[0].Index),
+					}, nil) {
+						return
+					}
+				}
+				if toolCall.Function.Arguments != "" {
+					if !yield(StreamChunk{
+						Block: Block{
+							BlockType:    ToolCall,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(toolCall.Function.Arguments),
+						},
+						CandidatesIndex: int(chunk.Choices[0].Index),
+					}, nil) {
+						return
+					}
 				}
 			}
 		}
