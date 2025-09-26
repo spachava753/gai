@@ -6,7 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.7.0
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/invopop/jsonschema v0.13.0
-	github.com/modelcontextprotocol/go-sdk v0.6.0
+	github.com/modelcontextprotocol/go-sdk v0.7.0
 	github.com/openai/openai-go/v2 v2.0.0
 	github.com/pkoukk/tiktoken-go v0.1.7
 	golang.org/x/oauth2 v0.30.0
@@ -24,7 +24,7 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/jsonschema-go v0.2.3 // indirect
+	github.com/google/jsonschema-go v0.3.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
