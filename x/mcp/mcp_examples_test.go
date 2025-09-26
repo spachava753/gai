@@ -3,11 +3,12 @@ package mcp_test
 import (
 	"context"
 	"fmt"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/spachava753/gai/x/mcp/auth"
 	"net/http"
 	"os"
 	"os/exec"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/spachava753/gai/x/mcp/auth"
 )
 
 func Example_stdio() {
@@ -29,13 +30,13 @@ func Example_stdio() {
 
 	ctx := context.Background()
 
-	cmdTransport := mcp.NewCommandTransport(cmd)
+	cmdTransport := &mcp.CommandTransport{Command: cmd}
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "test-client",
 		Version: "test",
 	}, nil)
 
-	cs, err := client.Connect(ctx, cmdTransport)
+	cs, err := client.Connect(ctx, cmdTransport, nil)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -62,13 +63,13 @@ func Example_stdio() {
 func Example_sse() {
 	ctx := context.Background()
 
-	sseTransport := mcp.NewSSEClientTransport("https://docs.mcp.cloudflare.com/sse", nil)
+	sseTransport := &mcp.SSEClientTransport{Endpoint: "https://docs.mcp.cloudflare.com/sse"}
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "test-client",
 		Version: "test",
 	}, nil)
 
-	cs, err := client.Connect(ctx, sseTransport)
+	cs, err := client.Connect(ctx, sseTransport, nil)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -130,13 +131,13 @@ func Example_sse() {
 func Example_streamable() {
 	ctx := context.Background()
 
-	streamableTransport := mcp.NewStreamableClientTransport("https://mcp.deepwiki.com/mcp", nil)
+	streamableTransport := &mcp.StreamableClientTransport{Endpoint: "https://mcp.deepwiki.com/mcp"}
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "test-client",
 		Version: "test",
 	}, nil)
 
-	cs, err := client.Connect(ctx, streamableTransport)
+	cs, err := client.Connect(ctx, streamableTransport, nil)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -191,7 +192,8 @@ func Example_sseAuth() {
 
 	redirectPort := "18456"
 
-	sseTransport := mcp.NewSSEClientTransport(serverUrl, &mcp.SSEClientTransportOptions{
+	sseTransport := &mcp.SSEClientTransport{
+		Endpoint: serverUrl,
 		HTTPClient: &http.Client{
 			Transport: &auth.Transport{
 				Base:         http.DefaultTransport,
@@ -200,13 +202,13 @@ func Example_sseAuth() {
 				RedirectPort: redirectPort,
 			},
 		},
-	})
+	}
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "test-client",
 		Version: "test",
 	}, nil)
 
-	cs, err := client.Connect(ctx, sseTransport)
+	cs, err := client.Connect(ctx, sseTransport, nil)
 	if err != nil {
 		fmt.Println(err)
 		return
