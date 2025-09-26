@@ -15,6 +15,7 @@
 !go.*
 
 !README.md
+!AGENT.md
 !LICENSE
 
 !sample.pdf
