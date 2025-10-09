@@ -67,9 +67,10 @@ func (m Modality) String() string {
 }
 
 const (
-	Content  = "content"
-	Thinking = "thinking"
-	ToolCall = "tool_call"
+	Content          = "content"
+	Thinking         = "thinking"
+	ToolCall         = "tool_call"
+	MetadataBlockType = "metadata"
 )
 
 // Block represents a self-contained piece of a Message, meant to represent a "part" of a message.
@@ -145,6 +146,26 @@ func TextBlock(text string) Block {
 		ModalityType: Text,
 		MimeType:     "text/plain",
 		Content:      Str(text),
+	}
+}
+
+// MetadataBlock creates a Block containing usage metadata.
+// The metadata parameter should contain metric information such as token counts,
+// typically using keys like UsageMetricInputTokens and UsageMetricGenerationTokens.
+//
+// This block type is primarily used internally by streaming generators to emit
+// usage information as the final block in a stream.
+func MetadataBlock(metadata Metadata) Block {
+	jsonData, err := json.Marshal(metadata)
+	if err != nil {
+		jsonData = []byte("{}")
+	}
+
+	return Block{
+		BlockType:    MetadataBlockType,
+		ModalityType: Text,
+		MimeType:     "application/json",
+		Content:      Str(jsonData),
 	}
 }
 

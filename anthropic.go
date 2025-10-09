@@ -693,10 +693,19 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 		// Start the stream
 		stream := g.client.NewStreaming(ctx, params)
 		defer stream.Close()
+
+		// Track cumulative usage throughout the stream
+		var finalUsage *a.MessageDeltaUsage
+
 		for stream.Next() {
 			chunk := stream.Current()
 
 			switch event := chunk.AsAny().(type) {
+			case a.MessageDeltaEvent:
+				// Capture usage from message delta event
+				finalUsage = &event.Usage
+				continue
+
 			case a.ContentBlockStartEvent:
 				// if a content block start type event and tool call, then extract the tool call details
 				// all types of content block deltas are automatically handled in the `case a.ContentBlockDeltaEvent`
@@ -790,8 +799,33 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 
 		}
 
+		// Check for stream errors
 		if stream.Err() != nil {
 			yield(StreamChunk{}, stream.Err())
+			return
+		}
+
+		// Emit metadata block as final block if we have usage data
+		if finalUsage != nil {
+			metadata := make(Metadata)
+
+			// Calculate total input tokens
+			inputTokens := finalUsage.InputTokens +
+				finalUsage.CacheReadInputTokens +
+				finalUsage.CacheCreationInputTokens
+			if inputTokens > 0 {
+				metadata[UsageMetricInputTokens] = int(inputTokens)
+			}
+			if finalUsage.OutputTokens > 0 {
+				metadata[UsageMetricGenerationTokens] = int(finalUsage.OutputTokens)
+			}
+
+			if len(metadata) > 0 {
+				yield(StreamChunk{
+					Block:           MetadataBlock(metadata),
+					CandidatesIndex: 0,
+				}, nil)
+			}
 		}
 	}
 

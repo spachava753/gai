@@ -866,11 +866,29 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			params.Tools = tools
 		}
 
+		// Enable usage in streaming response
+		params.StreamOptions = oai.ChatCompletionStreamOptionsParam{
+			IncludeUsage: oai.Bool(true),
+		}
+
 		// Start the stream
 		stream := g.client.NewStreaming(ctx, params)
 		defer stream.Close()
+
+		var finalUsage *oai.CompletionUsage
+
 		for stream.Next() {
 			chunk := stream.Current()
+
+			// Capture usage if present (only in final chunk)
+			if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+				finalUsage = &chunk.Usage
+			}
+
+			// Final chunk may have usage but no choices
+			if len(chunk.Choices) == 0 {
+				continue
+			}
 
 			if len(chunk.Choices) > 1 {
 				panic("choices > 1 not supported")
@@ -938,8 +956,29 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			}
 		}
 
+		// Check for stream errors
 		if stream.Err() != nil {
 			yield(StreamChunk{}, stream.Err())
+			return
+		}
+
+		// Emit metadata block as final block if we have usage data
+		if finalUsage != nil {
+			metadata := make(Metadata)
+
+			if finalUsage.PromptTokens > 0 {
+				metadata[UsageMetricInputTokens] = int(finalUsage.PromptTokens)
+			}
+			if finalUsage.CompletionTokens > 0 {
+				metadata[UsageMetricGenerationTokens] = int(finalUsage.CompletionTokens)
+			}
+
+			if len(metadata) > 0 {
+				yield(StreamChunk{
+					Block:           MetadataBlock(metadata),
+					CandidatesIndex: 0,
+				}, nil)
+			}
 		}
 	}
 }

@@ -457,6 +457,9 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			return
 		}
 
+		// Track cumulative usage
+		var totalInputTokens, totalOutputTokens int32
+
 		for resp, err := range g.client.Models.GenerateContentStream(ctx, g.modelName, allContents, genContentConfig) {
 			if err != nil {
 				var apierr genai.APIError
@@ -510,6 +513,18 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 				yield(StreamChunk{}, fmt.Errorf("gemini: generation failed: %w", err))
 				return
 			}
+
+			// Update cumulative usage if available
+			if resp.UsageMetadata != nil {
+				if resp.UsageMetadata.PromptTokenCount > 0 {
+					totalInputTokens = resp.UsageMetadata.PromptTokenCount
+				}
+				// CandidatesTokenCount is the output tokens in each response
+				if resp.UsageMetadata.CandidatesTokenCount > 0 {
+					totalOutputTokens += resp.UsageMetadata.CandidatesTokenCount
+				}
+			}
+
 			if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
 				if !yield(StreamChunk{
 					Block:           TextBlock(""),
@@ -598,6 +613,23 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 					}
 				}
 			}
+		}
+
+		// Emit metadata block as final block
+		if totalInputTokens > 0 || totalOutputTokens > 0 {
+			metadata := make(Metadata)
+
+			if totalInputTokens > 0 {
+				metadata[UsageMetricInputTokens] = int(totalInputTokens)
+			}
+			if totalOutputTokens > 0 {
+				metadata[UsageMetricGenerationTokens] = int(totalOutputTokens)
+			}
+
+			yield(StreamChunk{
+				Block:           MetadataBlock(metadata),
+				CandidatesIndex: 0,
+			}, nil)
 		}
 	}
 }

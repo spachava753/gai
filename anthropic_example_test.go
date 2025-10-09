@@ -478,6 +478,10 @@ Assistant: MSFT
 			maps.Copy(thinking.ExtraFields, block.ExtraFields)
 			continue
 		}
+		// Skip metadata blocks
+		if block.BlockType == MetadataBlockType {
+			continue
+		}
 		if block.ID != "" && block.ID != prevToolCallId {
 			if toolcallArgs != "" {
 				// Parse the arguments string into a map

@@ -18,10 +18,6 @@ import (
 // It is meant to represent a thought summary from the OpenAI Responses API
 const ThoughtSummaryBlockType = "thought_summary"
 
-// ResponseCompletedBlockType is a Block.BlockType that the ResponsesGenerator specifically returns.
-// It is meant to return the response id
-const ResponseCompletedBlockType = "response_completed"
-
 // ResponsesThoughtSummaryDetailParam is a key used for storing the thought summary detail level
 // in GenOpts.ExtraArgs. Setting parameter will set the level of detail of thought summaries that
 // are returned from the OpenAI Responses API. One of `auto`, `concise`, or `detailed`.
@@ -755,13 +751,21 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				}
 			case "response.completed":
 				completed := event.AsResponseCompleted()
+
+				// Emit usage metadata as final block with response ID included
+				metadata := make(Metadata)
+
+				if usage := completed.Response.Usage; usage.InputTokens > 0 {
+					metadata[UsageMetricInputTokens] = int(usage.InputTokens)
+				}
+				if usage := completed.Response.Usage; usage.OutputTokens > 0 {
+					metadata[UsageMetricGenerationTokens] = int(usage.OutputTokens)
+				}
+				// Store the response ID in metadata for multi-turn support
+				metadata[ResponsesPrevRespId] = completed.Response.ID
+
 				yield(StreamChunk{
-					Block: Block{
-						BlockType:    ResponseCompletedBlockType,
-						ModalityType: Text,
-						MimeType:     "text/plain",
-						Content:      Str(completed.Response.ID),
-					},
+					Block:           MetadataBlock(metadata),
 					CandidatesIndex: 0,
 				}, nil)
 				return

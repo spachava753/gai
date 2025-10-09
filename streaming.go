@@ -17,23 +17,10 @@ import (
 //   - For "content" blocks: partial text fragments
 //   - For "thinking" blocks: partial reasoning fragments
 //   - For "tool_call" blocks: either a header (with ID and tool name) or parameter fragments
+//   - For MetadataBlockType blocks: usage metrics (always the last chunk)
 //
 // CandidatesIndex indicates which candidate this chunk belongs to when N>1 is used.
 // Currently only CandidatesIndex=0 is supported by the StreamingAdapter.
-//
-// # Usage Metadata Not Supported
-//
-// StreamChunk does not include usage metrics (token counts, costs, etc.) for several reasons:
-//
-//   - OpenAI and Anthropic streaming APIs do not provide per-chunk usage metrics
-//   - Gemini streaming can provide chunk-level metrics, but when a single chunk contains
-//     multiple tool use blocks, it's impossible to determine how many tokens each individual
-//     tool call consumed
-//   - Partial metrics during streaming would be misleading since they don't represent
-//     the final total usage
-//   - Different providers handle usage metrics differently in streaming contexts
-//
-// Usage metrics are available in the final Response returned by non-streaming generators
 type StreamChunk struct {
 	Block           Block
 	CandidatesIndex int
@@ -45,20 +32,17 @@ type StreamChunk struct {
 //
 // # Usage Metadata in Streaming
 //
-// StreamingGenerator does not provide usage metrics (token counts, costs, etc.) on individual
-// StreamChunk instances for the following reasons:
+// StreamingGenerator provides usage metrics as the final block in the stream. The last
+// StreamChunk emitted will have a Block with BlockType MetadataBlockType containing token usage
+// information in the Metadata map.
 //
-//   - Provider Limitations: OpenAI and Anthropic streaming APIs do not expose per-chunk
-//     usage metrics. Only final totals are available at the end of the stream.
-//   - Metric Granularity: Gemini can provide some chunk-level metrics, but when multiple
-//     tool calls are present in a single chunk, it's impossible to attribute token usage
-//     to individual tool calls accurately.
-//   - Misleading Partials: Partial usage metrics during streaming would be misleading
-//     since they don't represent the complete picture of resource consumption.
-//   - Provider Inconsistency: Different providers handle usage reporting differently
-//     in streaming contexts, making a unified approach impractical.
+// When using StreamingAdapter.Generate(), the metadata block is automatically extracted and
+// populated into Response.UsageMetadata, providing the same experience as non-streaming
+// generators.
 //
-// To obtain usage metrics, use non-streaming generator methods that provide complete metrics in the Response.
+// If consuming the stream directly without StreamingAdapter, you can identify metadata
+// blocks by checking BlockType == MetadataBlockType, then parsing the JSON content to extract
+// usage metrics.
 //
 // # Streaming Chunk Patterns
 //
@@ -339,6 +323,13 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 			})
 			i = j
 			continue
+
+		case MetadataBlockType:
+			// Metadata blocks are passed through as-is, should only appear at the end
+			result = append(result, blk)
+			i++
+			continue
+
 		default:
 			return nil, fmt.Errorf("unsupported block type %q in streaming generator compression", blk.BlockType)
 		}
@@ -358,13 +349,39 @@ func (s *StreamingAdapter) Generate(ctx context.Context, dialog Dialog, options 
 		}
 		blocks = append(blocks, chunk.Block)
 	}
+
 	comp, err := compressStreamingBlocks(blocks)
 	if err != nil {
 		return Response{}, err
 	}
 
-	finishReason := EndTurn
+	// Extract metadata blocks and remaining content blocks
+	var contentBlocks []Block
+	usageMetadata := make(Metadata)
+
 	for _, blk := range comp {
+		if blk.BlockType == MetadataBlockType {
+			// Parse metadata from JSON content
+			var metadata Metadata
+			if err := json.Unmarshal([]byte(blk.Content.String()), &metadata); err != nil {
+				return Response{}, fmt.Errorf("failed to parse metadata block: %w", err)
+			}
+			// Merge metadata (in case there are multiple metadata blocks, though there shouldn't be)
+			// JSON unmarshalling converts numbers to float64, so we need to convert them back to int
+			for k, v := range metadata {
+				if f, ok := v.(float64); ok {
+					usageMetadata[k] = int(f)
+				} else {
+					usageMetadata[k] = v
+				}
+			}
+		} else {
+			contentBlocks = append(contentBlocks, blk)
+		}
+	}
+
+	finishReason := EndTurn
+	for _, blk := range contentBlocks {
 		if blk.BlockType == ToolCall {
 			finishReason = ToolUse
 			break
@@ -374,9 +391,10 @@ func (s *StreamingAdapter) Generate(ctx context.Context, dialog Dialog, options 
 	return Response{
 		Candidates: []Message{{
 			Role:   Assistant,
-			Blocks: comp,
+			Blocks: contentBlocks,
 		}},
-		FinishReason: finishReason,
+		FinishReason:  finishReason,
+		UsageMetadata: usageMetadata,
 	}, nil
 }
 

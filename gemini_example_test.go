@@ -75,6 +75,10 @@ func ExampleGeminiGenerator_Stream() {
 			fmt.Println("Error:", err)
 			return
 		}
+		// Skip metadata blocks
+		if chunk.Block.BlockType == MetadataBlockType {
+			continue
+		}
 		fmt.Println(chunk.Block.Content.String())
 	}
 	// Output: The capital of France is Paris.
@@ -491,6 +495,10 @@ func ExampleGeminiGenerator_Stream_parallelToolUse() {
 		if err != nil {
 			fmt.Println("Error:", err)
 			return
+		}
+		// Skip metadata blocks
+		if chunk.Block.BlockType == MetadataBlockType {
+			continue
 		}
 		fmt.Printf("Block type: %s | ID: %s | Content: %s\n", chunk.Block.BlockType, chunk.Block.ID, chunk.Block.Content)
 	}

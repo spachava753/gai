@@ -456,6 +456,10 @@ func ExampleOpenAiGenerator_Stream_parallelToolUse() {
 	var toolcallArgs string
 	var toolCallInput ToolCallInput
 	for _, block := range blocks {
+		// Skip metadata blocks
+		if block.BlockType == MetadataBlockType {
+			continue
+		}
 		if block.ID != "" && block.ID != prevToolCallId {
 			if toolcallArgs != "" {
 				// Parse the arguments string into a map

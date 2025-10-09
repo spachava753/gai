@@ -299,7 +299,11 @@ func ExampleResponsesGenerator_Stream_parallelToolUse() {
 	var toolCalls []Block
 	var toolcallArgs string
 	var toolCallInput ToolCallInput
-	for _, block := range blocks[:len(blocks)-1] {
+	for _, block := range blocks {
+		// Skip metadata blocks
+		if block.BlockType == MetadataBlockType {
+			continue
+		}
 		if block.ID != "" && block.ID != prevToolCallId {
 			if toolcallArgs != "" {
 				// Parse the arguments string into a map
@@ -383,8 +387,18 @@ func ExampleResponsesGenerator_Stream_parallelToolUse() {
 		fmt.Println("Response received")
 	}
 
-	if blocks[len(blocks)-1].BlockType == ResponseCompletedBlockType {
-		fmt.Println("Received response_completed")
+	// Check if metadata block with response ID is present
+	for _, blk := range blocks {
+		if blk.BlockType == MetadataBlockType {
+			// Parse metadata to check for response ID
+			var metadata Metadata
+			if err := json.Unmarshal([]byte(blk.Content.String()), &metadata); err == nil {
+				if _, hasRespID := metadata[ResponsesPrevRespId]; hasRespID {
+					fmt.Println("Received response_completed")
+					break
+				}
+			}
+		}
 	}
 
 	// Output: Response received
@@ -446,8 +460,14 @@ func ExampleResponsesGenerator_Stream_thoughtSummary() {
 		fmt.Println("Response received")
 	}
 
-	if blocks[len(blocks)-1].BlockType == ResponseCompletedBlockType {
-		fmt.Println("Received response_completed")
+	// Check if metadata block with response ID is present
+	if blocks[len(blocks)-1].BlockType == MetadataBlockType {
+		var metadata Metadata
+		if err := json.Unmarshal([]byte(blocks[len(blocks)-1].Content.String()), &metadata); err == nil {
+			if _, hasRespID := metadata[ResponsesPrevRespId]; hasRespID {
+				fmt.Println("Received response_completed")
+			}
+		}
 	}
 
 	// Output: Has thought summary blocks
