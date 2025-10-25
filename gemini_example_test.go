@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"google.golang.org/genai"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 func ExampleGeminiGenerator_Generate() {
@@ -113,9 +115,15 @@ When a user asks for the server time, always call the server time tool, don't us
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: GenerateSchema[struct {
-			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 	getServerTimeTool := Tool{
 		Name:        "get_server_time",
@@ -424,9 +432,15 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: GenerateSchema[struct {
-			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 	err = g.Register(stockTool)
 	if err != nil {
@@ -478,9 +492,15 @@ func ExampleGeminiGenerator_Stream_parallelToolUse() {
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: GenerateSchema[struct {
-			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 	err = g.Register(stockTool)
 	if err != nil {

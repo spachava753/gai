@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 func ExampleCerebrasGenerator_Generate() {
@@ -51,9 +53,15 @@ Only output the price, like
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: GenerateSchema[struct {
-			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 	if err := cgen.Register(tickerTool); err != nil {
 		fmt.Println("Error:", err)

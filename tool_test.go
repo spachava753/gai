@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // mockToolCapableGenerator implements ToolCapableGenerator for testing
@@ -451,9 +453,15 @@ func TestToolGenerator_Generate(t *testing.T) {
 				tg.Register(Tool{
 					Name:        "get_weather",
 					Description: "Get the current weather",
-					InputSchema: GenerateSchema[struct {
-						Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state"`
-					}](),
+					InputSchema: func() *jsonschema.Schema {
+						schema, err := GenerateSchema[struct {
+							Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state"`
+						}]()
+						if err != nil {
+							panic(err)
+						}
+						return schema
+					}(),
 				}, &mockToolCallback{
 					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 						return Message{}, errors.New("API connection failed")
@@ -501,9 +509,15 @@ func TestToolGenerator_Generate(t *testing.T) {
 				tg.Register(Tool{
 					Name:        "get_weather",
 					Description: "Get weather by location",
-					InputSchema: GenerateSchema[struct {
-						Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state"`
-					}](),
+					InputSchema: func() *jsonschema.Schema {
+						schema, err := GenerateSchema[struct {
+							Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state"`
+						}]()
+						if err != nil {
+							panic(err)
+						}
+						return schema
+					}(),
 				}, &mockToolCallback{
 					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 						var params struct {
@@ -664,9 +678,15 @@ func TestToolGenerator_Generate(t *testing.T) {
 				tg.Register(Tool{
 					Name:        "get_weather",
 					Description: "Get weather for a location",
-					InputSchema: GenerateSchema[struct {
-						Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state"`
-					}](),
+					InputSchema: func() *jsonschema.Schema {
+						schema, err := GenerateSchema[struct {
+							Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state"`
+						}]()
+						if err != nil {
+							panic(err)
+						}
+						return schema
+					}(),
 				}, &mockToolCallback{
 					callFunc: func(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 						var params struct {

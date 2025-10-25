@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go/v2"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // ExampleStreamingAdapter demonstrates how to use StreamingAdapter to convert
@@ -72,10 +74,16 @@ func ExampleStreamingAdapter_withTools() {
 	weatherTool := Tool{
 		Name:        "get_weather",
 		Description: "Get the current weather in a given location",
-		InputSchema: GenerateSchema[struct {
-			Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state, e.g. San Francisco, CA"`
-			Unit     string `json:"unit" jsonschema:"enum=celsius,enum=fahrenheit" jsonschema_description:"The unit of temperature"`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				Location string `json:"location" jsonschema:"The city and state, e.g. San Francisco, CA"`
+				Unit     string `json:"unit,omitempty" jsonschema:"The unit of temperature"`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 
 	if err := gen.Register(weatherTool); err != nil {
@@ -233,9 +241,15 @@ func ExampleStreamingAdapter_parallelToolCalls() {
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol",
-		InputSchema: GenerateSchema[struct {
-			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 
 	if err := gen.Register(stockTool); err != nil {
@@ -382,9 +396,15 @@ func ExampleStreamingAdapter_withToolGenerator() {
 	weatherTool := Tool{
 		Name:        "get_weather",
 		Description: "Get the current weather in a location",
-		InputSchema: GenerateSchema[struct {
-			Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state, e.g. San Francisco, CA"`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state, e.g. San Francisco, CA"`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 
 	// Simple weather callback

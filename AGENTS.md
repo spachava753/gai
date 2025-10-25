@@ -135,7 +135,26 @@ When adding new configuration
 - Keep commits small, focused, and with descriptive messages
 - Ensure `go fmt`, `go vet`, and `go test ./...` pass before pushing
 - Avoid force pushes on `main`; use `--force-with-lease` only on feature branches
-- **Use conventional commit style for all commits**: `feat:`, `fix:`, `docs:`, `style:`, `refactor:`, `test:`, `chore:`
+
+### Commit message conventions
+
+Use Conventional Commits format:
+
+```text
+type(scope)!: short summary
+
+Commit body. Write a detailed breakdown and use full sentences in short paragraphs over lists
+
+...
+
+BREAKING CHANGE: footer describing breaking change if necessary  
+```
+
+- Common types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+- Imperative, present tense; no trailing period or whitespace; scope optional; add ! for breaking changes
+- Describe what changed and why, not how. Avoid describing surface level code changes; can just view the code diff. Should instead detail the reason for this commit and feature wise what changed.
+- Include body/footer when helpful; use BREAKING CHANGE: and issue refs (e.g., Closes #123)
+- Always include the body of the commit, never skip it
 
 ## Development environment
 

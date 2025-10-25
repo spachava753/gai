@@ -6,18 +6,20 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/invopop/jsonschema"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // GenerateSchema is a helper function to help generate the schema definition for Tool.InputSchema
-func GenerateSchema[T any]() *jsonschema.Schema {
-	reflector := jsonschema.Reflector{
-		AllowAdditionalProperties: false,
-		DoNotReference:            true,
+func GenerateSchema[T any]() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[T](&jsonschema.ForOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate schema for type: %w", err)
 	}
-	var v T
-	schema := reflector.Reflect(v)
-	return schema
+	// Set additionalProperties to false (disallow additional properties)
+	if schema.AdditionalProperties == nil {
+		schema.AdditionalProperties = &jsonschema.Schema{Not: &jsonschema.Schema{}}
+	}
+	return schema, nil
 }
 
 // Tool represents a tool that can be called by a Generator during generation.

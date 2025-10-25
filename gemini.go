@@ -13,7 +13,7 @@ import (
 
 	"google.golang.org/genai"
 
-	"github.com/invopop/jsonschema"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // MarshalJSONToolUseInput marshals a ToolCallInput, never panics.
@@ -87,7 +87,7 @@ func convertJSONSchemaToGemini(schema *jsonschema.Schema) (*genai.Schema, error)
 		return &genai.Schema{Type: genai.TypeObject}, nil
 	}
 
-	// Serialize the schema to JSON then unmarshal into interface{} for OpenAI
+	// Serialize the schema to JSON then unmarshal into genai.Schema
 	schemaJSON, err := json.Marshal(schema)
 	if err != nil {
 		return nil, err

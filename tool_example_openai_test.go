@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/openai/openai-go/v2"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 type TickerTool struct {
@@ -83,9 +85,15 @@ func ExampleToolGenerator_Generate() {
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: GenerateSchema[struct {
-			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 
 	client := openai.NewClient()
@@ -153,9 +161,15 @@ func ExampleToolGenerator_Generate_responses() {
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: GenerateSchema[struct {
-			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 
 	client := openai.NewClient()

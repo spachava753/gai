@@ -67,9 +67,9 @@ func (m Modality) String() string {
 }
 
 const (
-	Content          = "content"
-	Thinking         = "thinking"
-	ToolCall         = "tool_call"
+	Content           = "content"
+	Thinking          = "thinking"
+	ToolCall          = "tool_call"
 	MetadataBlockType = "metadata"
 )
 

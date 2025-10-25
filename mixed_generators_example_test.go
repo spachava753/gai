@@ -3,8 +3,11 @@ package gai
 import (
 	"context"
 	"fmt"
+
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/openai/openai-go/v2"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // ExampleMixGenerators demonstrates how to mix different AI model providers
@@ -86,9 +89,15 @@ func Example_mixGenerators() {
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: GenerateSchema[struct {
-			Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 
 	if err := anthropicGen.Register(stockTool); err != nil {

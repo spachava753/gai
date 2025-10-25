@@ -3,8 +3,10 @@ package gai_test
 import (
 	"context"
 	"fmt"
-	"github.com/spachava753/gai"
 	"slices"
+
+	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/spachava753/gai"
 )
 
 // Define a parameter struct for our weather tool
@@ -49,10 +51,16 @@ func ExampleToolCallBackFunc() {
 	weatherTool := gai.Tool{
 		Name:        "get_weather",
 		Description: "Get the current weather for a location",
-		InputSchema: gai.GenerateSchema[struct {
-			Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state, e.g. San Francisco, CA"`
-			Unit     string `json:"unit" jsonschema:"enum=celsius,enum=fahrenheit" jsonschema_description:"The unit of temperature"`
-		}](),
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := gai.GenerateSchema[struct {
+				Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state, e.g. San Francisco, CA"`
+				Unit     string `json:"unit" jsonschema:"enum=celsius,enum=fahrenheit" jsonschema_description:"The unit of temperature"`
+			}]()
+			if err != nil {
+				panic(err)
+			}
+			return schema
+		}(),
 	}
 
 	// Create an instance of the ToolGenerator
