@@ -10,6 +10,28 @@ import (
 	"github.com/openai/openai-go/v2/option"
 )
 
+const (
+	// OpenRouterExtraFieldReasoningType stores the reasoning detail type (e.g., "reasoning.summary", "reasoning.text", "reasoning.encrypted").
+	// Present in Block.ExtraFields for Thinking blocks from OpenRouter responses.
+	OpenRouterExtraFieldReasoningType = "reasoning_type"
+
+	// OpenRouterExtraFieldReasoningFormat stores the reasoning detail format (e.g., "anthropic-claude-v1").
+	// Present in Block.ExtraFields for Thinking blocks from OpenRouter responses.
+	OpenRouterExtraFieldReasoningFormat = "reasoning_format"
+
+	// OpenRouterExtraFieldReasoningIndex stores the zero-based index of the reasoning detail in the response.
+	// Present in Block.ExtraFields for Thinking blocks from OpenRouter responses.
+	OpenRouterExtraFieldReasoningIndex = "reasoning_index"
+
+	// OpenRouterExtraFieldReasoningSignature stores the signature for encrypted reasoning details.
+	// Present in Block.ExtraFields for Thinking blocks with type "reasoning.text" when a signature is provided.
+	OpenRouterExtraFieldReasoningSignature = "reasoning_signature"
+
+	// OpenRouterUsageMetricReasoningDetailsAvailable indicates whether reasoning_details were present in the response.
+	// Stored in Response.UsageMetadata as a boolean value.
+	OpenRouterUsageMetricReasoningDetailsAvailable = "reasoning_details_available"
+)
+
 // OpenRouterGenerator implements the Generator interface using OpenRouter's API,
 // which is largely compatible with OpenAI's API but includes additional features
 // like reasoning tokens and extended error information.
@@ -23,8 +45,13 @@ import (
 // OpenRouter supports reasoning tokens via the "reasoning" parameter with effort
 // levels ("low", "medium", "high") or max_tokens (as string). This generator:
 // 1. Sets reasoning config in requests via ThinkingBudget in GenOpts
-// 2. Extracts reasoning_details from responses as Thinking blocks
+// 2. Extracts reasoning_details from responses as Thinking blocks with extra fields:
+//    - OpenRouterExtraFieldReasoningType
+//    - OpenRouterExtraFieldReasoningFormat
+//    - OpenRouterExtraFieldReasoningIndex
+//    - OpenRouterExtraFieldReasoningSignature (when applicable)
 // 3. Passes reasoning_details back in assistant messages (recommended by OpenRouter)
+// 4. Sets OpenRouterUsageMetricReasoningDetailsAvailable in Response.UsageMetadata when reasoning_details are present
 //
 // Note: Streaming is not yet implemented for this generator.
 type OpenRouterGenerator struct {
@@ -138,19 +165,19 @@ func buildReasoningDetailsForRequest(thinkingBlocks []Block) []openRouterReasoni
 		}
 
 		// Extract reasoning type from extra fields
-		if reasoningType, ok := block.ExtraFields["reasoning_type"].(string); ok {
+		if reasoningType, ok := block.ExtraFields[OpenRouterExtraFieldReasoningType].(string); ok {
 			detail.Type = reasoningType
 		} else {
 			detail.Type = "reasoning.text" // Default type
 		}
 
 		// Extract format from extra fields if available
-		if format, ok := block.ExtraFields["reasoning_format"].(string); ok {
+		if format, ok := block.ExtraFields[OpenRouterExtraFieldReasoningFormat].(string); ok {
 			detail.Format = format
 		}
 
 		// Extract index from extra fields if available
-		if index, ok := block.ExtraFields["reasoning_index"].(int); ok {
+		if index, ok := block.ExtraFields[OpenRouterExtraFieldReasoningIndex].(int); ok {
 			detail.Index = index
 		}
 
@@ -162,7 +189,7 @@ func buildReasoningDetailsForRequest(thinkingBlocks []Block) []openRouterReasoni
 			detail.Data = block.Content.String()
 		case "reasoning.text":
 			detail.Text = block.Content.String()
-			if sig, ok := block.ExtraFields["reasoning_signature"].(string); ok {
+			if sig, ok := block.ExtraFields[OpenRouterExtraFieldReasoningSignature].(string); ok {
 				detail.Signature = sig
 			}
 		default:
@@ -429,7 +456,7 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 		if err := json.Unmarshal([]byte(rawJSON), &rawResp); err == nil {
 			// Successfully parsed raw response, check for reasoning details
 			if len(rawResp.Choices) > 0 && len(rawResp.Choices[0].Message.ReasoningDetails) > 0 {
-				result.UsageMetadata["reasoning_details_available"] = true
+				result.UsageMetadata[OpenRouterUsageMetricReasoningDetailsAvailable] = true
 			}
 		}
 	}
@@ -448,9 +475,9 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 				// Add reasoning details as Thinking blocks
 				var reasoningContent string
 				extraFields := map[string]interface{}{
-					"reasoning_type":   detail.Type,
-					"reasoning_format": detail.Format,
-					"reasoning_index":  detail.Index,
+					OpenRouterExtraFieldReasoningType:   detail.Type,
+					OpenRouterExtraFieldReasoningFormat: detail.Format,
+					OpenRouterExtraFieldReasoningIndex:  detail.Index,
 				}
 
 				switch detail.Type {
@@ -459,7 +486,7 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 				case "reasoning.text":
 					reasoningContent = detail.Text
 					if detail.Signature != "" {
-						extraFields["reasoning_signature"] = detail.Signature
+						extraFields[OpenRouterExtraFieldReasoningSignature] = detail.Signature
 					}
 				case "reasoning.encrypted":
 					reasoningContent = detail.Data
