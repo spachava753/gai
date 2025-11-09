@@ -1,6 +1,6 @@
 # GAI (Go AI generation utilities)
 
-GAI is a Go library for interacting with LLM providers (OpenAI, Anthropic, Google Gemini) with consistent APIs, composable generators, streaming support, metrics, and robust testing. The core library is in the repository root as a standard Go module. Additional MCP (Model Context Protocol) helpers live under `x/mcp/`.
+GAI is a Go library for interacting with LLM providers (OpenAI, Anthropic, Google Gemini) with consistent APIs, composable generators, streaming support, metrics, and robust testing. The core library is in the repository root as a standard Go module.
 
 @README.md provides a general overview and quick start. See @ROADMAP.md for planned work.
 
@@ -15,7 +15,6 @@ GAI is a Go library for interacting with LLM providers (OpenAI, Anthropic, Googl
 - Tests: colocated `*_test.go` for each area, plus provider-specific tests
 - Samples: `sample.jpg`, `sample.pdf`, `sample.wav` for multimodal tests/examples
 - Scripts: `scripts/` includes docs-generation helper
-- Experimental/extended: `x/mcp/` includes MCP helpers and example tests
 
 Conventions
 - Single module, no internal/ submodules yet
@@ -135,26 +134,6 @@ When adding new configuration
 - Keep commits small, focused, and with descriptive messages
 - Ensure `go fmt`, `go vet`, and `go test ./...` pass before pushing
 - Avoid force pushes on `main`; use `--force-with-lease` only on feature branches
-
-### Commit message conventions
-
-Use Conventional Commits format:
-
-```text
-type(scope)!: short summary
-
-Commit body. Write a detailed breakdown and use full sentences in short paragraphs over lists
-
-...
-
-BREAKING CHANGE: footer describing breaking change if necessary  
-```
-
-- Common types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
-- Imperative, present tense; no trailing period or whitespace; scope optional; add ! for breaking changes
-- Describe what changed and why, not how. Avoid describing surface level code changes; can just view the code diff. Should instead detail the reason for this commit and feature wise what changed.
-- Include body/footer when helpful; use BREAKING CHANGE: and issue refs (e.g., Closes #123)
-- Always include the body of the commit, never skip it
 
 ## Development environment
 
