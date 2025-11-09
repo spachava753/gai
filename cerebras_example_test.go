@@ -180,9 +180,7 @@ func ExampleCerebrasGenerator_Generate_reasoning_zai() {
 	}
 
 	// Generate response with reasoning enabled (disable_reasoning: false)
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{
-		ThinkingBudget: "false", // false = enable reasoning, true = disable reasoning
-	})
+	resp, err := gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -227,9 +225,7 @@ func ExampleCerebrasGenerator_Generate_reasoning_zai() {
 	})
 
 	// Generate response with reasoning (the previous reasoning should be retained)
-	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{
-		ThinkingBudget: "false", // Enable reasoning
-	})
+	resp, err = gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
