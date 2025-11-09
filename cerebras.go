@@ -64,6 +64,7 @@ type cerebrasChatRequest struct {
 	Tools               []cerebrasTool         `json:"tools,omitempty"`
 	ToolChoice          any                    `json:"tool_choice,omitempty"`
 	ReasoningEffort     string                 `json:"reasoning_effort,omitempty"`
+	DisableReasoning    *bool                  `json:"disable_reasoning,omitempty"`
 	ResponseFormat      map[string]any         `json:"response_format,omitempty"`
 	User                string                 `json:"user,omitempty"`
 	Seed                *int                   `json:"seed,omitempty"`
@@ -86,6 +87,7 @@ type cerebrasChatResponse struct {
 			Content   string             `json:"content"`
 			ToolCalls []cerebrasToolCall `json:"tool_calls,omitempty"`
 			Refusal   string             `json:"refusal,omitempty"`
+			Reasoning *string            `json:"reasoning,omitempty"`
 		} `json:"message"`
 	} `json:"choices"`
 	Usage struct {
@@ -190,15 +192,22 @@ func (g *CerebrasGenerator) buildMessages(dialog Dialog) ([]cerebrasMessage, err
 			}
 			msgs = append(msgs, cerebrasMessage{Role: "user", Content: b.String()})
 		case Assistant:
-			var text strings.Builder
+			var text string
 			var toolCalls []cerebrasToolCall
+			var reasoningText string
 			for _, blk := range msg.Blocks {
 				switch blk.BlockType {
 				case Content:
 					if blk.ModalityType != Text {
 						return nil, UnsupportedInputModalityErr(blk.ModalityType.String())
 					}
-					text.WriteString(blk.Content.String())
+					text = blk.Content.String()
+				case Thinking:
+					// For Cerebras, reasoning content should be included in the content field
+					if blk.ModalityType != Text {
+						return nil, UnsupportedInputModalityErr(blk.ModalityType.String())
+					}
+					reasoningText = blk.Content.String()
 				case ToolCall:
 					var toolUse ToolCallInput
 					if err := json.Unmarshal([]byte(blk.Content.String()), &toolUse); err != nil {
@@ -220,7 +229,13 @@ func (g *CerebrasGenerator) buildMessages(dialog Dialog) ([]cerebrasMessage, err
 					return nil, fmt.Errorf("unsupported block type for assistant: %v", blk.BlockType)
 				}
 			}
-			cm := cerebrasMessage{Role: "assistant", Content: text.String()}
+
+			// Combine reasoning text with content if present
+			if reasoningText != "" {
+				text = fmt.Sprintf("<thinking>%s</thinking>\n%s", reasoningText, text)
+			}
+
+			cm := cerebrasMessage{Role: "assistant", Content: text}
 			if len(toolCalls) > 0 {
 				cm.ToolCalls = toolCalls
 			}
@@ -320,13 +335,22 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 				}
 			}
 		}
-		// ThinkingBudget: map low/medium/high to reasoning_effort
+		// ThinkingBudget: handle reasoning parameters based on model
 		if options.ThinkingBudget != "" {
-			switch options.ThinkingBudget {
-			case "low", "medium", "high":
-				req.ReasoningEffort = options.ThinkingBudget
-			default:
-				return Response{}, &InvalidParameterErr{Parameter: "thinking budget", Reason: fmt.Sprintf("invalid value: %s", options.ThinkingBudget)}
+			// For gpt-oss-120b model: use reasoning_effort with low/medium/high
+			if g.model == "gpt-oss-120b" {
+				switch options.ThinkingBudget {
+				case "low", "medium", "high":
+					req.ReasoningEffort = options.ThinkingBudget
+				default:
+					return Response{}, &InvalidParameterErr{Parameter: "thinking budget", Reason: fmt.Sprintf("invalid value for gpt-oss-120b: %s (must be low, medium, or high)", options.ThinkingBudget)}
+				}
+			} else if g.model == "zai-glm-4.6" {
+				// For zai-glm-4.6 model: if value is false, use disable_reasoning
+				if options.ThinkingBudget == "false" {
+					disable := false
+					req.DisableReasoning = &disable
+				}
 			}
 		}
 		// Unsupported output modalities
@@ -400,6 +424,17 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 	var hasToolCalls bool
 	for _, ch := range cr.Choices {
 		var blocks []Block
+
+		// Add reasoning block if present
+		if ch.Message.Reasoning != nil && *ch.Message.Reasoning != "" {
+			blocks = append(blocks, Block{
+				BlockType:    Thinking,
+				ModalityType: Text,
+				MimeType:     "text/plain",
+				Content:      Str(*ch.Message.Reasoning),
+			})
+		}
+
 		if s := ch.Message.Content; s != "" {
 			blocks = append(blocks, Block{BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str(s)})
 		}
