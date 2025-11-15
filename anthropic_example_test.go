@@ -169,7 +169,7 @@ func ExampleAnthropicGenerator_Generate_image() {
 
 	gen := NewAnthropicGenerator(
 		&client.Messages,
-		string(a.ModelClaude3_7SonnetLatest),
+		string(a.ModelClaudeHaiku4_5),
 		"You are a helpful assistant.",
 	)
 	dialog := Dialog{
@@ -215,7 +215,7 @@ func ExampleAnthropicGenerator_Register() {
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
 		svc,
-		string(a.ModelClaude_3_5_Sonnet_20240620),
+		string(a.ModelClaudeSonnet4_5),
 		`You are a helpful assistant that returns the price of a stock and nothing else.
 
 Only output the price, like
@@ -607,7 +607,7 @@ func ExampleAnthropicGenerator_Count() {
 	// Create a generator with system instructions
 	generator := NewAnthropicGenerator(
 		&client.Messages,
-		string(a.ModelClaude3_5SonnetLatest),
+		string(a.ModelClaudeHaiku4_5),
 		"You are a helpful assistant.",
 	)
 
