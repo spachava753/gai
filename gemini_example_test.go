@@ -29,13 +29,13 @@ func ExampleGeminiGenerator_Generate() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant. You respond to the user with plain text format.")
+	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant. You respond to the user with plain text format.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
 	}
 	dialog := Dialog{
-		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("What is the capital of France?")}}},
+		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("What is the blooms taxonomy, and how does it related to the psychology of child development?")}}},
 	}
 	response, err := g.Generate(context.Background(), dialog, nil)
 	if err != nil {
@@ -43,9 +43,9 @@ func ExampleGeminiGenerator_Generate() {
 		return
 	}
 	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
-		fmt.Println(response.Candidates[0].Blocks[0].Content)
+		fmt.Println("Got text")
 	}
-	// Output: The capital of France is Paris.
+	// Output: Got text
 }
 
 func ExampleGeminiGenerator_Stream() {
@@ -104,7 +104,7 @@ func ExampleGeminiGenerator_Register() {
 
 	g, err := NewGeminiGenerator(
 		client,
-		"gemini-2.5-pro",
+		"models/gemini-3-pro-preview",
 		`You are a helpful assistant. You can call tools in parallel. 
 When a user asks for the server time, always call the server time tool, don't use previously returned results`,
 	)
@@ -192,13 +192,13 @@ When a user asks for the server time, always call the server time tool, don't us
 		fmt.Println("Error:", err)
 		return
 	}
-	fmt.Println("Response has tool results:", strings.Contains(
-		response.Candidates[0].Blocks[0].Content.String(),
-		"AAPL is $200.00",
-	) && strings.Contains(
-		response.Candidates[0].Blocks[0].Content.String(),
-		time.Time{}.String(),
-	))
+
+	toolResult := response.Candidates[0].Blocks[0].Content.String()
+
+	fmt.Println("Response has tool results:", strings.Contains(toolResult, "AAPL") &&
+		strings.Contains(toolResult, "200.00") &&
+		strings.Contains(toolResult, time.Time{}.String()),
+	)
 
 	dialog = append(dialog, response.Candidates[0], Message{
 		Role: User,

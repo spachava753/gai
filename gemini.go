@@ -16,6 +16,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+const thoughtSigFieldKey = "gemini_thought_signature"
+
 // MarshalJSONToolUseInput marshals a ToolCallInput, never panics.
 func MarshalJSONToolUseInput(t ToolCallInput) ([]byte, error) {
 	data, err := json.Marshal(t)
@@ -164,7 +166,11 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	toolCallIDToFunc := make(map[string]string)
 	toolCallCount := 0
 
-	genContentConfig := &genai.GenerateContentConfig{}
+	genContentConfig := &genai.GenerateContentConfig{
+		ThinkingConfig: &genai.ThinkingConfig{
+			IncludeThoughts: true,
+		},
+	}
 	// Set system prompt if provided
 	if g.systemInstructions != "" {
 		genContentConfig.SystemInstruction = &genai.Content{
@@ -221,6 +227,14 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		}
 		if options.TopK > 0 {
 			genContentConfig.TopK = genai.Ptr(float32(options.TopK))
+		}
+		if options.ThinkingBudget != "" {
+			switch options.ThinkingBudget {
+			case "low", "medium", "high":
+				genContentConfig.ThinkingConfig.ThinkingLevel = genai.ThinkingLevel(options.ThinkingBudget)
+			default:
+				return Response{}, InvalidParameterErr{Parameter: "thinking budget", Reason: fmt.Sprintf("invalid thinking budget: %s", options.ThinkingBudget)}
+			}
 		}
 	}
 
@@ -300,12 +314,25 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		var blocks []Block
 		for _, part := range cand.Content.Parts {
 			if part.Text != "" {
-				blocks = append(blocks, Block{
-					BlockType:    Content,
+				blkType := Content
+				if part.Thought {
+					blkType = Thinking
+				}
+
+				block := Block{
+					BlockType:    blkType,
 					ModalityType: Text,
 					MimeType:     "text/plain",
 					Content:      Str(part.Text),
-				})
+				}
+
+				if part.ThoughtSignature != nil {
+					block.ExtraFields = map[string]interface{}{
+						thoughtSigFieldKey: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
+					}
+				}
+
+				blocks = append(blocks, block)
 			} else if part.InlineData != nil {
 				// Handle inline data (could be image, audio, video)
 				mimeType := part.InlineData.MIMEType
@@ -324,29 +351,47 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 					modality = Text
 				}
 
-				blocks = append(blocks, Block{
+				block := Block{
 					BlockType:    Content,
 					ModalityType: modality,
 					MimeType:     mimeType,
 					Content:      Str(data),
-				})
+				}
+
+				if part.ThoughtSignature != nil {
+					block.ExtraFields = map[string]interface{}{
+						thoughtSigFieldKey: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
+					}
+				}
+
+				blocks = append(blocks, block)
 			} else if part.FunctionCall != nil {
 				fc := part.FunctionCall
 				hasToolCalls = true
 				toolCallCount++
 				id := fmt.Sprintf("toolcall-%d", toolCallCount)
 				toolCallIDToFunc[id] = fc.Name
+
 				jsonData, _ := MarshalJSONToolUseInput(ToolCallInput{
 					Name:       fc.Name,
 					Parameters: fc.Args,
 				})
+
+				extraFields := map[string]interface{}{
+					"function_name": fc.Name,
+				}
+
+				if part.ThoughtSignature != nil {
+					extraFields[thoughtSigFieldKey] = base64.StdEncoding.EncodeToString(part.ThoughtSignature)
+				}
+
 				blocks = append(blocks, Block{
 					ID:           id,
 					BlockType:    ToolCall,
 					ModalityType: Text,
 					MimeType:     "application/json",
 					Content:      Str(jsonData),
-					ExtraFields:  map[string]interface{}{"function_name": fc.Name},
+					ExtraFields:  extraFields,
 				})
 			}
 		}
@@ -671,13 +716,29 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 			if block.BlockType == Content {
 				switch block.ModalityType {
 				case Text:
-					parts = append(parts, genai.NewPartFromText(block.Content.String()))
+					part := genai.NewPartFromText(block.Content.String())
+					if sigVal, ok := block.ExtraFields[thoughtSigFieldKey]; ok && sigVal != nil {
+						sig, err := base64.StdEncoding.DecodeString(sigVal.(string))
+						if err != nil {
+							return nil, fmt.Errorf("could not decode base64 thought signature: %w", err)
+						}
+						part.ThoughtSignature = sig
+					}
+					parts = append(parts, part)
 				case Audio:
 					fileContent, decodeErr := base64.StdEncoding.DecodeString(block.Content.String())
 					if decodeErr != nil {
 						return nil, fmt.Errorf("decoding audio content failed: %w", decodeErr)
 					}
-					parts = append(parts, genai.NewPartFromBytes(fileContent, block.MimeType))
+					part := genai.NewPartFromBytes(fileContent, block.MimeType)
+					if sigVal, ok := block.ExtraFields[thoughtSigFieldKey]; ok && sigVal != nil {
+						sig, err := base64.StdEncoding.DecodeString(sigVal.(string))
+						if err != nil {
+							return nil, fmt.Errorf("could not decode base64 thought signature: %w", err)
+						}
+						part.ThoughtSignature = sig
+					}
+					parts = append(parts, part)
 				default:
 					// Skip unsupported modalities for assistant messages
 				}
@@ -697,7 +758,15 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 					toolUse.Name = name
 				}
 				toolCallIDToFuncName[id] = toolUse.Name
-				parts = append(parts, genai.NewPartFromFunctionCall(toolUse.Name, toolUse.Parameters))
+				part := genai.NewPartFromFunctionCall(toolUse.Name, toolUse.Parameters)
+				if sigVal, ok := block.ExtraFields[thoughtSigFieldKey]; ok && sigVal != nil {
+					sig, err := base64.StdEncoding.DecodeString(sigVal.(string))
+					if err != nil {
+						return nil, fmt.Errorf("could not decode base64 thought signature: %w", err)
+					}
+					part.ThoughtSignature = sig
+				}
+				parts = append(parts, part)
 			}
 		}
 	case ToolResult:
