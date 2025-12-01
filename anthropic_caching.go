@@ -2,6 +2,8 @@ package gai
 
 import (
 	"context"
+	"strings"
+
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
@@ -132,6 +134,14 @@ func NewAnthropicServiceWrapper(wrapped AnthropicSvc, funcs ...AnthropicServiceP
 	}
 }
 
+// isOpus45OrLater checks if the model is Claude Opus 4.5 or a later version.
+// Claude Opus 4.5 introduced thinking block preservation, which means thinking blocks
+// from previous assistant turns are preserved in model context by default.
+// This enables cache optimization when using extended thinking with tool use.
+func isOpus45OrLater(model string) bool {
+	return strings.HasPrefix(model, "claude-opus-4-5")
+}
+
 // EnableSystemCaching modifies Anthropic API parameters to enable caching of system instructions.
 // This can improve performance and reduce costs when making multiple requests with the same
 // system instructions.
@@ -154,15 +164,10 @@ func NewAnthropicServiceWrapper(wrapped AnthropicSvc, funcs ...AnthropicServiceP
 //	    "You are a helpful assistant.",
 //	)
 //
-// Note: This has no effect if the request doesn't include system instructions or if extended thinking
-// is enabled.
+// Note: This has no effect if the request doesn't include system instructions.
+// System prompts remain cached even with extended thinking enabled.
 func EnableSystemCaching(_ context.Context, params *a.MessageNewParams) error {
 	if len(params.System) == 0 {
-		return nil
-	}
-
-	// If extended thinking is enabled, don't cache the system instruction
-	if params.Thinking.OfEnabled != nil && params.Thinking.OfEnabled.BudgetTokens > 0 {
 		return nil
 	}
 
@@ -193,8 +198,11 @@ func EnableSystemCaching(_ context.Context, params *a.MessageNewParams) error {
 //	    "You are a helpful assistant.",
 //	)
 //
-// Note: This has no effect if the request doesn't include any messages or if extended thinking
-// is enabled.
+// Note: This has no effect if the request doesn't include any messages.
+// For models prior to Claude Opus 4.5, caching is skipped when extended thinking is enabled
+// because thinking blocks are stripped from prior turns, invalidating the cache.
+// For Claude Opus 4.5 and later, thinking blocks are preserved by default, so caching
+// works normally even with extended thinking.
 //
 // It is particularly useful for applications with interactive, multi-turn conversations.
 func EnableMultiTurnCaching(_ context.Context, params *a.MessageNewParams) error {
@@ -202,8 +210,11 @@ func EnableMultiTurnCaching(_ context.Context, params *a.MessageNewParams) error
 		return nil
 	}
 
-	// If extended thinking is enabled, don't cache the messages
-	if params.Thinking.OfEnabled != nil && params.Thinking.OfEnabled.BudgetTokens > 0 {
+	// For pre-Opus 4.5 models with extended thinking, skip caching because thinking blocks
+	// are stripped from prior turns, which invalidates the cache.
+	// For Opus 4.5+, thinking blocks are preserved, so caching works normally.
+	thinkingEnabled := params.Thinking.OfEnabled != nil && params.Thinking.OfEnabled.BudgetTokens > 0
+	if thinkingEnabled && !isOpus45OrLater(string(params.Model)) {
 		return nil
 	}
 
