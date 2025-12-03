@@ -772,18 +772,29 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 	case ToolResult:
 		role = genai.RoleUser
 		for _, block := range msg.Blocks {
-			if block.ModalityType == Text {
-				id := block.ID
-				fn, ok := toolCallIDToFuncName[id]
-				if !ok || fn == "" {
-					return nil, fmt.Errorf("tool result references unknown tool call id: %q", id)
-				}
+			id := block.ID
+			fn, ok := toolCallIDToFuncName[id]
+			if !ok || fn == "" {
+				return nil, fmt.Errorf("tool result references unknown tool call id: %q", id)
+			}
+			
+			switch block.ModalityType {
+			case Text:
 				var respObj map[string]any
 				if err := json.Unmarshal([]byte(block.Content.String()), &respObj); err != nil {
 					respObj = make(map[string]any)
 					respObj["output"] = block.Content.String()
 				}
 				parts = append(parts, genai.NewPartFromFunctionResponse(fn, respObj))
+			case Image, Audio:
+				fileContent, decodeErr := base64.StdEncoding.DecodeString(block.Content.String())
+				if decodeErr != nil {
+					return nil, fmt.Errorf("decoding %s content failed: %w", block.ModalityType, decodeErr)
+				}
+				funcRespPart := genai.NewFunctionResponsePartFromBytes(fileContent, block.MimeType)
+				parts = append(parts, genai.NewPartFromFunctionResponseWithParts(fn, nil, []*genai.FunctionResponsePart{funcRespPart}))
+			default:
+				return nil, fmt.Errorf("unsupported modality type in tool result: %v", block.ModalityType)
 			}
 		}
 	default:

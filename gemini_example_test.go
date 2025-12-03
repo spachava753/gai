@@ -64,7 +64,7 @@ func ExampleGeminiGenerator_Stream() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant. You respond to the user with plain text format.")
+	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant. You respond to the user with plain text format.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -422,7 +422,7 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -482,7 +482,7 @@ func ExampleGeminiGenerator_Stream_parallelToolUse() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -635,7 +635,7 @@ func ExampleGeminiGenerator_Generate_pdf() {
 		},
 	)
 
-	g, err := NewGeminiGenerator(client, "gemini-2.5-flash", "You are a helpful assistant.")
+	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant.")
 	if err != nil {
 		fmt.Println("Error creating GeminiGenerator:", err)
 		return
@@ -671,4 +671,138 @@ func ExampleGeminiGenerator_Generate_pdf() {
 		fmt.Println(response.Candidates[0].Blocks[0].Content)
 	}
 	// Output: Attention Is All You Need
+}
+
+func ExampleGeminiGenerator_Register_parallelToolUse_multimedia() {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
+		return
+	}
+
+	ctx := context.Background()
+	client, err := genai.NewClient(
+		ctx,
+		&genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		},
+	)
+
+	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant that can view files.")
+	if err != nil {
+		fmt.Println("Error creating GeminiGenerator:", err)
+		return
+	}
+
+	// Register a tool to view files
+	viewFileTool := Tool{
+		Name:        "view_file",
+		Description: "View the contents of a file. Can handle text files, images, and other media types.",
+		InputSchema: func() *jsonschema.Schema {
+			schema, err := GenerateSchema[struct {
+				FilePath string `json:"file_path" jsonschema:"required" jsonschema_description:"The path to the file to view"`
+			}]()
+				if err != nil {
+					panic(err)
+				}
+				return schema
+			}(),
+	}
+	err = g.Register(viewFileTool)
+	if err != nil {
+		fmt.Println("Error registering tool:", err)
+		return
+	}
+
+	// User asks to view multiple files
+	dialog := Dialog{
+		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Please view sample.jpg and README.md, and tell me what character is in the image, and what is gai from the README")}}},
+	}
+	
+	// Model makes parallel tool calls
+	response, err := g.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	
+	fmt.Println("Tool calls made:")
+	for _, block := range response.Candidates[0].Blocks {
+		if block.BlockType == Thinking {
+			continue
+		}
+		fmt.Printf("Block type: %s | ID: %s | Content: %s\n", block.BlockType, block.ID, block.Content)
+	}
+
+	dialog = append(dialog, response.Candidates[0])
+	
+	// Find tool call blocks (skip thinking blocks)
+	toolCallBlocks := []Block{}
+	for _, block := range response.Candidates[0].Blocks {
+		if block.BlockType == ToolCall {
+			toolCallBlocks = append(toolCallBlocks, block)
+		}
+	}
+	
+	if len(toolCallBlocks) < 2 {
+		fmt.Println("Error: Expected at least 2 tool calls")
+		return
+	}
+	
+	// Simulate tool results - first for sample.jpg (image)
+	imgBytes, err := os.ReadFile("sample.jpg")
+	if err != nil {
+		fmt.Println("[Skipped: could not open sample.jpg]")
+		return
+	}
+	
+	// Simulate tool results - for README.md (text)
+	readmeBytes, err := os.ReadFile("README.md")
+	if err != nil {
+		fmt.Println("[Skipped: could not open README.md]")
+		return
+	}
+
+	// Add both tool results in parallel
+	dialog = append(dialog,
+		Message{
+			Role: ToolResult,
+			Blocks: []Block{{
+				ID:           toolCallBlocks[0].ID, // First tool call
+				BlockType:    Content,
+				ModalityType: Image,
+				MimeType:     "image/jpeg",
+				Content:      Str(base64.StdEncoding.EncodeToString(imgBytes)),
+			}},
+		},
+		Message{
+			Role: ToolResult,
+			Blocks: []Block{{
+				ID:           toolCallBlocks[1].ID, // Second tool call
+				BlockType:    Content,
+				ModalityType: Text,
+				MimeType:     "text/markdown",
+				Content:      Str(string(readmeBytes)),
+			}},
+		},
+	)
+
+	// Get final response with tool results
+	response, err = g.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	fmt.Println("Response received with tool results")
+	fmt.Println("Response contains image content:", strings.Contains(response.Candidates[0].Blocks[0].Content.String(), "Crood"))
+	fmt.Println("Response contains README content:", strings.Contains(response.Candidates[0].Blocks[0].Content.String(), "gai"))
+
+	// Output: Tool calls made:
+	// Block type: tool_call | ID: toolcall-1 | Content: {"name":"view_file","parameters":{"file_path":"sample.jpg"}}
+	// Block type: tool_call | ID: toolcall-2 | Content: {"name":"view_file","parameters":{"file_path":"README.md"}}
+	// Response received with tool results
+	// Response contains image content: true
+	// Response contains README content: true
 }
