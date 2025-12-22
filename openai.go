@@ -23,6 +23,23 @@ import (
 	oai "github.com/openai/openai-go/v2"
 )
 
+const (
+	// OpenAIExtraFieldImageWidth stores the image width in pixels.
+	// Can be set in Block.ExtraFields for Image blocks to specify dimensions
+	// when they cannot be determined from the image data.
+	OpenAIExtraFieldImageWidth = "width"
+
+	// OpenAIExtraFieldImageHeight stores the image height in pixels.
+	// Can be set in Block.ExtraFields for Image blocks to specify dimensions
+	// when they cannot be determined from the image data.
+	OpenAIExtraFieldImageHeight = "height"
+
+	// OpenAIExtraFieldImageDetail stores the detail level for image processing.
+	// Can be set in Block.ExtraFields for Image blocks to "low" or "high".
+	// Defaults to "high" if not specified.
+	OpenAIExtraFieldImageDetail = "detail"
+)
+
 func init() {
 	// The tiktoken library does not have the update-to-date mappings of model names to encodings,
 	// so we manually add them here.
@@ -1071,10 +1088,10 @@ func (g *OpenAiGenerator) calculateImageTokens(block Block) (int, error) {
 	// If we couldn't extract dimensions from the image, try the ExtraFields
 	if width == 0 || height == 0 {
 		if block.ExtraFields != nil {
-			if w, ok := block.ExtraFields["width"].(int); ok {
+			if w, ok := block.ExtraFields[OpenAIExtraFieldImageWidth].(int); ok {
 				width = w
 			}
-			if h, ok := block.ExtraFields["height"].(int); ok {
+			if h, ok := block.ExtraFields[OpenAIExtraFieldImageHeight].(int); ok {
 				height = h
 			}
 		}
@@ -1087,7 +1104,7 @@ func (g *OpenAiGenerator) calculateImageTokens(block Block) (int, error) {
 
 	// Get detail level from ExtraFields if specified
 	if block.ExtraFields != nil {
-		if d, ok := block.ExtraFields["detail"].(string); ok && (d == "low" || d == "high") {
+		if d, ok := block.ExtraFields[OpenAIExtraFieldImageDetail].(string); ok && (d == "low" || d == "high") {
 			detail = d
 		}
 	}

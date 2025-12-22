@@ -16,7 +16,16 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-const thoughtSigFieldKey = "gemini_thought_signature"
+const (
+	// GeminiExtraFieldThoughtSignature stores the thought signature for thinking blocks.
+	// Present in Block.ExtraFields for Thinking blocks from Gemini responses.
+	// This signature is required when sending thinking blocks back to the API.
+	GeminiExtraFieldThoughtSignature = "gemini_thought_signature"
+
+	// GeminiExtraFieldFunctionName stores the function name for tool call blocks.
+	// Present in Block.ExtraFields for ToolCall blocks from Gemini responses.
+	GeminiExtraFieldFunctionName = "function_name"
+)
 
 // MarshalJSONToolUseInput marshals a ToolCallInput, never panics.
 func MarshalJSONToolUseInput(t ToolCallInput) ([]byte, error) {
@@ -328,7 +337,7 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 				if part.ThoughtSignature != nil {
 					block.ExtraFields = map[string]interface{}{
-						thoughtSigFieldKey: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
+						GeminiExtraFieldThoughtSignature: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
 					}
 				}
 
@@ -360,7 +369,7 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 				if part.ThoughtSignature != nil {
 					block.ExtraFields = map[string]interface{}{
-						thoughtSigFieldKey: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
+						GeminiExtraFieldThoughtSignature: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
 					}
 				}
 
@@ -378,11 +387,11 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 				})
 
 				extraFields := map[string]interface{}{
-					"function_name": fc.Name,
+					GeminiExtraFieldFunctionName: fc.Name,
 				}
 
 				if part.ThoughtSignature != nil {
-					extraFields[thoughtSigFieldKey] = base64.StdEncoding.EncodeToString(part.ThoughtSignature)
+					extraFields[GeminiExtraFieldThoughtSignature] = base64.StdEncoding.EncodeToString(part.ThoughtSignature)
 				}
 
 				blocks = append(blocks, Block{
@@ -717,7 +726,7 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 				switch block.ModalityType {
 				case Text:
 					part := genai.NewPartFromText(block.Content.String())
-					if sigVal, ok := block.ExtraFields[thoughtSigFieldKey]; ok && sigVal != nil {
+					if sigVal, ok := block.ExtraFields[GeminiExtraFieldThoughtSignature]; ok && sigVal != nil {
 						sig, err := base64.StdEncoding.DecodeString(sigVal.(string))
 						if err != nil {
 							return nil, fmt.Errorf("could not decode base64 thought signature: %w", err)
@@ -731,7 +740,7 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 						return nil, fmt.Errorf("decoding audio content failed: %w", decodeErr)
 					}
 					part := genai.NewPartFromBytes(fileContent, block.MimeType)
-					if sigVal, ok := block.ExtraFields[thoughtSigFieldKey]; ok && sigVal != nil {
+					if sigVal, ok := block.ExtraFields[GeminiExtraFieldThoughtSignature]; ok && sigVal != nil {
 						sig, err := base64.StdEncoding.DecodeString(sigVal.(string))
 						if err != nil {
 							return nil, fmt.Errorf("could not decode base64 thought signature: %w", err)
@@ -751,7 +760,7 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 				}
 				id := block.ID
 				if toolUse.Name == "" {
-					name, ok := block.ExtraFields["function_name"].(string)
+					name, ok := block.ExtraFields[GeminiExtraFieldFunctionName].(string)
 					if !ok {
 						return nil, fmt.Errorf("missing function_name in tool call block extra fields for ID %s", id)
 					}
@@ -759,7 +768,7 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 				}
 				toolCallIDToFuncName[id] = toolUse.Name
 				part := genai.NewPartFromFunctionCall(toolUse.Name, toolUse.Parameters)
-				if sigVal, ok := block.ExtraFields[thoughtSigFieldKey]; ok && sigVal != nil {
+				if sigVal, ok := block.ExtraFields[GeminiExtraFieldThoughtSignature]; ok && sigVal != nil {
 					sig, err := base64.StdEncoding.DecodeString(sigVal.(string))
 					if err != nil {
 						return nil, fmt.Errorf("could not decode base64 thought signature: %w", err)

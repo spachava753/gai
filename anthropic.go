@@ -37,8 +37,12 @@ func convertToolToAnthropic(tool Tool) a.ToolParam {
 	}
 }
 
-const generatorPrefix = "anthropic_"
-const thinkingSignatureKey = "thinking_signature"
+const (
+	// AnthropicExtraFieldThinkingSignature stores the thinking signature for extended thinking blocks.
+	// Present in Block.ExtraFields for Thinking blocks from Anthropic responses.
+	// This signature is required when sending thinking blocks back to the API.
+	AnthropicExtraFieldThinkingSignature = "anthropic_thinking_signature"
+)
 
 // toAnthropicMessage converts a gai.Message to an Anthropic message.
 // It returns an error if the message contains unsupported modalities or block types.
@@ -135,8 +139,8 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 
 				var thinkingSig string
 				var ok bool
-				if block.ExtraFields[generatorPrefix+thinkingSignatureKey] != nil {
-					thinkingSig, ok = block.ExtraFields[generatorPrefix+thinkingSignatureKey].(string)
+				if block.ExtraFields[AnthropicExtraFieldThinkingSignature] != nil {
+					thinkingSig, ok = block.ExtraFields[AnthropicExtraFieldThinkingSignature].(string)
 					if !ok {
 						return a.MessageParam{}, fmt.Errorf("invalid thinking signature")
 					}
@@ -511,7 +515,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 				ModalityType: Text,
 				Content:      Str(contentPart.Thinking),
 				ExtraFields: map[string]interface{}{
-					generatorPrefix + thinkingSignatureKey: contentPart.Signature,
+					AnthropicExtraFieldThinkingSignature: contentPart.Signature,
 				},
 			})
 		case "redacted_thinking":
@@ -783,7 +787,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							MimeType:     "text/plain",
 							Content:      Str(""),
 							ExtraFields: map[string]interface{}{
-								generatorPrefix + thinkingSignatureKey: delta.Signature,
+								AnthropicExtraFieldThinkingSignature: delta.Signature,
 							},
 						},
 						CandidatesIndex: 0,
