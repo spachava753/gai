@@ -28,9 +28,16 @@ func ExampleZaiGenerator_Generate() {
 		fmt.Println("Error:", err)
 		return
 	}
-	if len(resp.Candidates) == 1 && len(resp.Candidates[0].Blocks) >= 1 {
-		fmt.Println("Response received")
+	if len(resp.Candidates) == 0 {
+		fmt.Println("Error: no candidates returned")
+		return
 	}
+	if len(resp.Candidates[0].Blocks) == 0 {
+		fmt.Println("Error: no blocks in response")
+		return
+	}
+	fmt.Println("Response received")
+
 	// Output: Response received
 }
 
@@ -41,7 +48,6 @@ func ExampleZaiGenerator_Generate_thinking() {
 		return
 	}
 
-	// Use glm-4.7 model which has thinking enabled by default
 	gen := NewZaiGenerator(
 		nil, "glm-4.7",
 		"You are a helpful assistant that explains your reasoning step by step.",
@@ -61,29 +67,37 @@ func ExampleZaiGenerator_Generate_thinking() {
 		return
 	}
 
-	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Blocks) > 0 {
-		hasThinking := false
-		for _, block := range resp.Candidates[0].Blocks {
-			if block.BlockType == Thinking {
-				hasThinking = true
-				fmt.Println("Thinking block found")
-			}
-		}
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Blocks) == 0 {
+		fmt.Println("Error: empty response")
+		return
+	}
 
-		if !hasThinking {
-			fmt.Println("Thinking block found")
-		}
-
-		for _, block := range resp.Candidates[0].Blocks {
-			if block.BlockType == Content {
-				content := block.Content.String()
-				if strings.Contains(content, "12") {
-					fmt.Println("Correct answer found")
-				}
-				break
-			}
+	// Check for thinking block
+	hasThinking := false
+	for _, block := range resp.Candidates[0].Blocks {
+		if block.BlockType == Thinking {
+			hasThinking = true
+			break
 		}
 	}
+	if !hasThinking {
+		fmt.Println("Error: no thinking block found")
+		return
+	}
+	fmt.Println("Thinking block found")
+
+	// Check for correct answer in content
+	for _, block := range resp.Candidates[0].Blocks {
+		if block.BlockType == Content {
+			if strings.Contains(block.Content.String(), "12") {
+				fmt.Println("Correct answer found")
+				return
+			}
+			fmt.Printf("Error: expected '12' in content, got: %s\n", block.Content.String())
+			return
+		}
+	}
+	fmt.Println("Error: no content block found")
 
 	// Output: Thinking block found
 	// Correct answer found
@@ -137,26 +151,19 @@ func ExampleZaiGenerator_Generate_interleavedThinking() {
 		return
 	}
 
-	// Check for thinking and tool call
-	var hasThinking, hasToolCall bool
+	// Print block types from first turn
+	fmt.Print("First turn:")
 	var toolCallBlock Block
 	for _, block := range resp.Candidates[0].Blocks {
-		if block.BlockType == Thinking {
-			hasThinking = true
-		}
+		fmt.Printf(" %s", block.BlockType)
 		if block.BlockType == ToolCall {
-			hasToolCall = true
 			toolCallBlock = block
 		}
 	}
+	fmt.Println()
 
-	if hasThinking || hasToolCall {
-		fmt.Println("First turn: thinking or tool call found")
-	}
-
-	if !hasToolCall {
-		fmt.Println("First turn: thinking or tool call found")
-		fmt.Println("Second turn: reasoning with tool result")
+	if toolCallBlock.BlockType != ToolCall {
+		fmt.Println("Error: no tool call found")
 		return
 	}
 
@@ -181,16 +188,15 @@ func ExampleZaiGenerator_Generate_interleavedThinking() {
 		return
 	}
 
-	// Check for content in response
+	// Print block types from second turn
+	fmt.Print("Second turn:")
 	for _, block := range resp.Candidates[0].Blocks {
-		if block.BlockType == Thinking || block.BlockType == Content {
-			fmt.Println("Second turn: reasoning with tool result")
-			break
-		}
+		fmt.Printf(" %s", block.BlockType)
 	}
+	fmt.Println()
 
-	// Output: First turn: thinking or tool call found
-	// Second turn: reasoning with tool result
+	// Output: First turn: thinking content tool_call
+	// Second turn: thinking content
 }
 
 func ExampleZaiGenerator_Generate_multiTurn() {
@@ -216,16 +222,18 @@ func ExampleZaiGenerator_Generate_multiTurn() {
 		return
 	}
 
-	hasAnswer := false
+	found := false
 	for _, block := range resp.Candidates[0].Blocks {
 		if block.BlockType == Content && strings.Contains(block.Content.String(), "8") {
-			hasAnswer = true
+			found = true
 			break
 		}
 	}
-	if hasAnswer {
-		fmt.Println("Turn 1: correct")
+	if !found {
+		fmt.Println("Error: Turn 1 expected '8' in response")
+		return
 	}
+	fmt.Println("Turn 1: correct")
 
 	// Second turn: continue conversation
 	dialog = append(dialog, resp.Candidates[0], Message{
@@ -239,16 +247,18 @@ func ExampleZaiGenerator_Generate_multiTurn() {
 		return
 	}
 
-	hasAnswer = false
+	found = false
 	for _, block := range resp.Candidates[0].Blocks {
 		if block.BlockType == Content && strings.Contains(block.Content.String(), "16") {
-			hasAnswer = true
+			found = true
 			break
 		}
 	}
-	if hasAnswer {
-		fmt.Println("Turn 2: correct")
+	if !found {
+		fmt.Println("Error: Turn 2 expected '16' in response")
+		return
 	}
+	fmt.Println("Turn 2: correct")
 
 	// Third turn
 	dialog = append(dialog, resp.Candidates[0], Message{
@@ -262,16 +272,18 @@ func ExampleZaiGenerator_Generate_multiTurn() {
 		return
 	}
 
-	hasAnswer = false
+	found = false
 	for _, block := range resp.Candidates[0].Blocks {
 		if block.BlockType == Content && strings.Contains(block.Content.String(), "4") {
-			hasAnswer = true
+			found = true
 			break
 		}
 	}
-	if hasAnswer {
-		fmt.Println("Turn 3: correct")
+	if !found {
+		fmt.Println("Error: Turn 3 expected '4' in response")
+		return
 	}
+	fmt.Println("Turn 3: correct")
 
 	// Output: Turn 1: correct
 	// Turn 2: correct
@@ -346,9 +358,11 @@ Only output the price, like:
 		return
 	}
 
-	if tc.Name == "get_stock_price" {
-		fmt.Println("Tool call received")
+	if tc.Name != "get_stock_price" {
+		fmt.Printf("Error: expected tool 'get_stock_price', got '%s'\n", tc.Name)
+		return
 	}
+	fmt.Println("Tool call received")
 
 	// Append tool result and continue
 	dialog = append(dialog, resp.Candidates[0], Message{
@@ -366,16 +380,13 @@ Only output the price, like:
 	}
 
 	// Check if we got any content response
-	hasContent := false
 	for _, block := range resp.Candidates[0].Blocks {
 		if block.BlockType == Content {
-			hasContent = true
-			break
+			fmt.Println("Final answer received")
+			return
 		}
 	}
-	if hasContent {
-		fmt.Println("Final answer received")
-	}
+	fmt.Println("Error: no content block in final response")
 
 	// Output: Tool call received
 	// Final answer received
@@ -414,14 +425,17 @@ func ExampleZaiGenerator_Stream() {
 		}
 	}
 
-	if contentChunks > 0 {
-		fmt.Println("Content chunks received")
+	if contentChunks == 0 {
+		fmt.Println("Error: no content chunks received")
+		return
 	}
-	if thinkingChunks > 0 {
-		fmt.Println("Thinking chunks received")
-	} else {
-		fmt.Println("Thinking chunks received")
+	fmt.Println("Content chunks received")
+
+	if thinkingChunks == 0 {
+		fmt.Println("Error: no thinking chunks received")
+		return
 	}
+	fmt.Println("Thinking chunks received")
 
 	// Output: Content chunks received
 	// Thinking chunks received
@@ -474,9 +488,11 @@ func ExampleZaiGenerator_Stream_toolCalling() {
 		}
 	}
 
-	if hasToolCall {
-		fmt.Println("Tool call streamed")
+	if !hasToolCall {
+		fmt.Println("Error: no tool call received in stream")
+		return
 	}
+	fmt.Println("Tool call streamed")
 
 	// Output: Tool call streamed
 }
@@ -509,21 +525,33 @@ func ExampleZaiGenerator_disableThinking() {
 		return
 	}
 
-	// With thinking disabled, we should get a direct response
-	hasContent := false
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Blocks) == 0 {
+		fmt.Println("Error: empty response")
+		return
+	}
+
+	// Verify no thinking blocks exist
 	for _, block := range resp.Candidates[0].Blocks {
-		if block.BlockType == Content {
-			hasContent = true
-			if strings.Contains(block.Content.String(), "4") {
-				fmt.Println("Direct answer received")
-			}
-			break
+		if block.BlockType == Thinking {
+			fmt.Println("Error: thinking block found when thinking is disabled")
+			return
 		}
 	}
+	fmt.Println("No thinking blocks")
 
-	if !hasContent {
-		fmt.Println("No content block found")
+	// Verify we got a content block with the answer
+	for _, block := range resp.Candidates[0].Blocks {
+		if block.BlockType == Content {
+			if strings.Contains(block.Content.String(), "4") {
+				fmt.Println("Direct answer received")
+				return
+			}
+			fmt.Printf("Error: expected '4' in answer, got: %s\n", block.Content.String())
+			return
+		}
 	}
+	fmt.Println("Error: no content block found")
 
-	// Output: Direct answer received
+	// Output: No thinking blocks
+	// Direct answer received
 }
