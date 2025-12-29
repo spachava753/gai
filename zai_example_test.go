@@ -379,17 +379,21 @@ Only output the price, like:
 		return
 	}
 
-	// Check if we got any content response
+	// Check if final response contains the price from tool result
 	for _, block := range resp.Candidates[0].Blocks {
 		if block.BlockType == Content {
-			fmt.Println("Final answer received")
+			if strings.Contains(block.Content.String(), "189.45") || strings.Contains(block.Content.String(), "189") {
+				fmt.Println("Final answer contains tool result")
+				return
+			}
+			fmt.Printf("Error: expected '189.45' in answer, got: %s\n", block.Content.String())
 			return
 		}
 	}
 	fmt.Println("Error: no content block in final response")
 
 	// Output: Tool call received
-	// Final answer received
+	// Final answer contains tool result
 }
 
 func ExampleZaiGenerator_Stream() {

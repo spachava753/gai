@@ -217,7 +217,7 @@ func (g *ZaiGenerator) buildMessages(dialog Dialog) ([]any, error) {
 				if blk.ID == "" {
 					return nil, fmt.Errorf("tool result message block must have the tool_call_id as ID")
 				}
-				messages = append(messages, oai.ToolMessage(blk.ID, blk.Content.String()))
+				messages = append(messages, oai.ToolMessage(blk.Content.String(), blk.ID))
 			}
 
 		default:
