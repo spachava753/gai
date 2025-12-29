@@ -673,6 +673,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 						Parameter: "thinking budget",
 						Reason:    fmt.Sprintf("value is not a unsigned int: %s", err),
 					})
+					return
 				}
 
 				params.Thinking = a.ThinkingConfigParamUnion{

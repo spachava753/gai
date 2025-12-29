@@ -43,7 +43,7 @@ func (t TickerTool) Call(ctx context.Context, parametersJSON json.RawMessage, to
 					BlockType:    Content,
 					ModalityType: Text,
 					MimeType:     "text/plain",
-					Content:      Str(fmt.Sprintf("Error: ticker is required")),
+					Content:      Str("Error: ticker is required"),
 				},
 			},
 		}, nil

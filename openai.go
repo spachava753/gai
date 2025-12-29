@@ -914,8 +914,10 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			switch chunk.Choices[0].FinishReason {
 			case "length":
 				yield(StreamChunk{}, MaxGenerationLimitErr)
+				return
 			case "content_filter":
 				yield(StreamChunk{}, ContentPolicyErr("could not produce response"))
+				return
 			}
 
 			if chunk.Choices[0].Delta.Refusal != "" {
