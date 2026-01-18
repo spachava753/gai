@@ -82,6 +82,23 @@ func TestValidateToolResultMessage(t *testing.T) {
 			wantErr:    false,
 		},
 		{
+			name: "valid PDF message",
+			message: Message{
+				Role: ToolResult,
+				Blocks: []Block{
+					{
+						ID:           "pdf-id",
+						BlockType:    Content,
+						ModalityType: Image,
+						MimeType:     "application/pdf",
+						Content:      Str("base64-pdf-data"),
+					},
+				},
+			},
+			toolCallID: "pdf-id",
+			wantErr:    false,
+		},
+		{
 			name: "valid multi-block message",
 			message: Message{
 				Role: ToolResult,

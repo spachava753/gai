@@ -587,7 +587,8 @@ func validateToolResultMessage(message *Message, toolCallID string) error {
 					return fmt.Errorf("block %d has text modality but non-text MIME type: %q", i, block.MimeType)
 				}
 			case Image:
-				if !strings.HasPrefix(block.MimeType, "image/") {
+				// Allow image/* MIME types and application/pdf (PDFs are treated as image modality)
+				if !strings.HasPrefix(block.MimeType, "image/") && block.MimeType != "application/pdf" {
 					return fmt.Errorf("block %d has image modality but non-image MIME type: %q", i, block.MimeType)
 				}
 			case Audio:
