@@ -14,10 +14,6 @@ import (
 	"github.com/openai/openai-go/v2/responses"
 )
 
-// ThoughtSummaryBlockType is a Block.BlockType that the ResponsesGenerator specifically returns.
-// It is meant to represent a thought summary from the OpenAI Responses API
-const ThoughtSummaryBlockType = "thought_summary"
-
 // ResponsesThoughtSummaryDetailParam is a key used for storing the thought summary detail level
 // in GenOpts.ExtraArgs. Setting parameter will set the level of detail of thought summaries that
 // are returned from the OpenAI Responses API. One of `auto`, `concise`, or `detailed`.
@@ -184,7 +180,7 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 					default:
 						return Response{}, UnsupportedInputModalityErr(blk.ModalityType.String())
 					}
-				case Thinking, ThoughtSummaryBlockType:
+				case Thinking:
 					// ignore thinking type blocks, responses API does not support injected thinking traces
 				case ToolCall:
 					if blk.ID == "" {
@@ -344,8 +340,6 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 	var blocks []Block
 	var hasToolCalls bool
 	var refusal string
-	var thinkingBuilder strings.Builder
-
 	for _, item := range res.Output {
 		switch item.Type {
 		case "message":
@@ -376,9 +370,13 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 			hasToolCalls = true
 		case "reasoning":
 			reas := item.AsReasoning()
+			// Process actual reasoning content as Thinking blocks
+			for _, rc := range reas.Content {
+				blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(rc.Text)})
+			}
+			// Also process summaries as Thinking blocks (as close as we get when full traces unavailable)
 			for _, rc := range reas.Summary {
-				thinkingBuilder.WriteString(rc.Text)
-				blocks = append(blocks, Block{BlockType: ThoughtSummaryBlockType, ModalityType: Text, MimeType: "text/plain", Content: Str(thinkingBuilder.String())})
+				blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(rc.Text)})
 			}
 		}
 	}
@@ -486,7 +484,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							yield(StreamChunk{}, UnsupportedInputModalityErr(blk.ModalityType.String()))
 							return
 						}
-					case Thinking, ThoughtSummaryBlockType:
+					case Thinking:
 						// ignore thinking type blocks, responses API does not support injected thinking traces
 					case ToolCall:
 						if blk.ID == "" {
@@ -669,10 +667,25 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 					}
 				case "reasoning":
 					reas := item.AsReasoning()
+					// Process actual reasoning content
+					for _, rc := range reas.Content {
+						if !yield(StreamChunk{
+							Block: Block{
+								BlockType:    Thinking,
+								ModalityType: Text,
+								MimeType:     "text/plain",
+								Content:      Str(rc.Text),
+							},
+							CandidatesIndex: 0,
+						}, nil) {
+							return
+						}
+					}
+					// Also process summaries as Thinking blocks
 					for _, rc := range reas.Summary {
 						if !yield(StreamChunk{
 							Block: Block{
-								BlockType:    ThoughtSummaryBlockType,
+								BlockType:    Thinking,
 								ModalityType: Text,
 								MimeType:     "text/plain",
 								Content:      Str(rc.Text),
@@ -733,7 +746,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				if summaryDelta.Delta != "" {
 					if !yield(StreamChunk{
 						Block: Block{
-							BlockType:    ThoughtSummaryBlockType,
+							BlockType:    Thinking,
 							ModalityType: Text,
 							MimeType:     "text/plain",
 							Content:      Str(summaryDelta.Delta),

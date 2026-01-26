@@ -427,7 +427,7 @@ func ExampleResponsesGenerator_Stream_parallelToolUse() {
 	// Received response_completed
 }
 
-func ExampleResponsesGenerator_Stream_thoughtSummary() {
+func ExampleResponsesGenerator_Stream_thinking() {
 	// Create an OpenAI client
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
@@ -470,8 +470,8 @@ func ExampleResponsesGenerator_Stream_thoughtSummary() {
 	}
 
 	for _, block := range blocks {
-		if block.BlockType == ThoughtSummaryBlockType {
-			fmt.Println("Has thought summary blocks")
+		if block.BlockType == Thinking {
+			fmt.Println("Has thinking blocks")
 			break
 		}
 	}
@@ -490,7 +490,7 @@ func ExampleResponsesGenerator_Stream_thoughtSummary() {
 		}
 	}
 
-	// Output: Has thought summary blocks
+	// Output: Has thinking blocks
 	// Response received
 	// Received response_completed
 }
