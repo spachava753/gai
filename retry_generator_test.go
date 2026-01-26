@@ -280,7 +280,7 @@ func TestRetryGenerator_Count_UnderlyingDoesNotImplementTokenCounter(t *testing.
 	if err == nil {
 		t.Fatal("Count() error = nil, want an error")
 	}
-	wantErrStr := fmt.Sprintf("underlying generator of type %T does not implement TokenCounter", underlying)
+	wantErrStr := fmt.Sprintf("inner generator of type %T does not implement TokenCounter", underlying)
 	if err.Error() != wantErrStr {
 		t.Errorf("Count() error = %q, want %q", err.Error(), wantErrStr)
 	}
@@ -428,7 +428,7 @@ func TestRetryGenerator_Register_UnderlyingDoesNotImplementToolCapableGenerator(
 		t.Fatal("Register() error = nil, want an error for non-ToolCapableGenerator")
 	}
 
-	wantErrStr := fmt.Sprintf("underlying generator of type %T does not implement ToolCapableGenerator", underlyingGen)
+	wantErrStr := fmt.Sprintf("inner generator of type %T does not implement ToolCapableGenerator", underlyingGen)
 	if err.Error() != wantErrStr {
 		t.Errorf("Register() error = %q, want %q", err.Error(), wantErrStr)
 	}

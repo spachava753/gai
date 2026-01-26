@@ -3,7 +3,6 @@ package gai
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -27,9 +26,9 @@ const (
 //   - gai.ApiErr with HTTP status code 429 (Too Many Requests)
 //   - gai.ApiErr with HTTP status codes 5xx (Server Errors)
 type RetryGenerator struct {
-	generator    Generator
-	baseBackOff  backoff.BackOff       // The core backoff strategy (e.g., *ExponentialBackOff).
-	retryOptions []backoff.RetryOption // User-provided options for the backoff.Retry call (e.g., MaxElapsedTime, Notify).
+	GeneratorWrapper              // Embed for default Count/Register/Stream delegation
+	baseBackOff      backoff.BackOff       // The core backoff strategy (e.g., *ExponentialBackOff).
+	retryOptions     []backoff.RetryOption // User-provided options for the backoff.Retry call (e.g., MaxElapsedTime, Notify).
 }
 
 // NewRetryGenerator creates a new RetryGenerator.
@@ -64,9 +63,9 @@ func NewRetryGenerator(generator Generator, baseBo backoff.BackOff, opts ...back
 	}
 
 	return &RetryGenerator{
-		generator:    generator,
-		baseBackOff:  actualBaseBo,
-		retryOptions: finalOpts,
+		GeneratorWrapper: GeneratorWrapper{Inner: generator},
+		baseBackOff:      actualBaseBo,
+		retryOptions:     finalOpts,
 	}
 }
 
@@ -81,7 +80,7 @@ func (rg *RetryGenerator) Generate(ctx context.Context, dialog Dialog, options *
 			return Response{}, backoff.Permanent(err)
 		}
 
-		resp, err := rg.generator.Generate(ctx, dialog, options)
+		resp, err := rg.Inner.Generate(ctx, dialog, options)
 		if err != nil {
 			// Analyze the error to determine if it's retriable.
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -131,30 +130,18 @@ func (rg *RetryGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	return resp, nil
 }
 
-// ensure RetryGenerator implements Generator
-var _ Generator = (*RetryGenerator)(nil)
+// Compile-time interface checks - inherited methods from GeneratorWrapper
+var (
+	_ Generator            = (*RetryGenerator)(nil)
+	_ TokenCounter         = (*RetryGenerator)(nil)
+	_ ToolCapableGenerator = (*RetryGenerator)(nil)
+	_ StreamingGenerator   = (*RetryGenerator)(nil)
+)
 
-// Count implements the TokenCounter interface if the underlying generator also implements it.
-// Retries are not applied to the Count method by this generator.
-func (rg *RetryGenerator) Count(ctx context.Context, dialog Dialog) (uint, error) {
-	if tc, ok := rg.generator.(TokenCounter); ok {
-		return tc.Count(ctx, dialog)
+// WithRetry returns a WrapperFunc that wraps a generator with retry logic.
+// See NewRetryGenerator for parameter details.
+func WithRetry(baseBo backoff.BackOff, opts ...backoff.RetryOption) WrapperFunc {
+	return func(g Generator) Generator {
+		return NewRetryGenerator(g, baseBo, opts...)
 	}
-	return 0, fmt.Errorf("underlying generator of type %T does not implement TokenCounter", rg.generator)
 }
-
-// Compile-time check to ensure RetryGenerator implements TokenCounter.
-var _ TokenCounter = (*RetryGenerator)(nil)
-
-// Register attempts to register a tool with the underlying generator, if it supports ToolCapableGenerator.
-// Retries are not applied to this method.
-func (rg *RetryGenerator) Register(tool Tool) error {
-	if tcg, ok := rg.generator.(ToolCapableGenerator); ok {
-		return tcg.Register(tool)
-	}
-	return fmt.Errorf("underlying generator of type %T does not implement ToolCapableGenerator", rg.generator)
-}
-
-// Compile-time check to ensure RetryGenerator implements ToolCapableGenerator.
-// This will only compile if RetryGenerator has the methods of ToolCapableGenerator.
-var _ ToolCapableGenerator = (*RetryGenerator)(nil)

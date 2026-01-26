@@ -139,7 +139,6 @@ When adding new configuration
 
 - Go 1.22+
 - Optional tools: `golangci-lint`, `rg` (ripgrep)
-- IDE hints stored under `.idea/` are not required for builds
 
 ## Parsing notes for agentic tools
 

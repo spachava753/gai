@@ -882,7 +882,7 @@ func NewAnthropicGenerator(client AnthropicSvc, model, systemInstructions string
 		model:              model,
 		tools:              make(map[string]a.ToolParam),
 	}
-	return &PreprocessingGenerator{Inner: inner}
+	return &PreprocessingGenerator{GeneratorWrapper: GeneratorWrapper{Inner: inner}}
 }
 
 var _ Generator = (*AnthropicGenerator)(nil)

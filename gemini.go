@@ -159,7 +159,7 @@ func NewGeminiGenerator(client *genai.Client, modelName, systemInstructions stri
 		systemInstructions: systemInstructions,
 	}
 
-	return &PreprocessingGenerator{Inner: inner}, nil
+	return &PreprocessingGenerator{GeneratorWrapper: GeneratorWrapper{Inner: inner}}, nil
 }
 
 // Generate implements gai.Generator
