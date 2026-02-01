@@ -256,48 +256,41 @@ func ToolCallBlock(id, toolName string, parameters map[string]any) (Block, error
 }
 
 // ToolResultMessage creates a message representing the result of a tool execution.
-// This function constructs a Message with the ToolResult role and a single Block containing
-// the tool execution results.
+// This function constructs a Message with the ToolResult role containing one or more
+// content blocks. The tool call ID is automatically set on all provided blocks.
 //
 // Parameters:
 //   - id: The identifier for the tool call, should match the original tool call ID
-//   - modality: The modality of the content (Text, Image, Audio, or Video)
-//   - mimeType: The MIME type of the content, e.g. "text/plain", "image/jpeg"
-//   - content: The actual content of the tool result as a fmt.Stringer
+//   - blocks: One or more content blocks (use TextBlock, ImageBlock, PDFBlock, etc.)
 //
-// Returns a Message configured with ToolResult role and appropriate Block settings.
+// Returns a Message configured with ToolResult role and the provided blocks.
 //
-// Example:
+// Examples:
 //
-//	result := ToolResultMessage("call_123", gai.Text, "text/plain", gai.Str("Temperature: 72°F"))
-func ToolResultMessage(id string, modality Modality, mimeType string, content fmt.Stringer) Message {
-	return Message{
-		Role: ToolResult,
-		Blocks: []Block{
-			{
-				ID:           id,
-				BlockType:    Content,
-				ModalityType: modality,
-				MimeType:     mimeType,
-				Content:      content,
-			},
-		},
+//	// Single text result
+//	result := ToolResultMessage("call_123", TextBlock("Temperature: 72°F"))
+//
+//	// PDF with explanation
+//	result := ToolResultMessage("call_123",
+//	    TextBlock("Here's the generated report:"),
+//	    PDFBlock(pdfData, "report.pdf"),
+//	)
+//
+//	// Multiple images
+//	result := ToolResultMessage("call_123",
+//	    TextBlock("Found 3 matching charts:"),
+//	    ImageBlock(chart1, "image/png"),
+//	    ImageBlock(chart2, "image/png"),
+//	)
+func ToolResultMessage(id string, blocks ...Block) Message {
+	// Set the ID on all blocks
+	resultBlocks := make([]Block, len(blocks))
+	for i, block := range blocks {
+		resultBlocks[i] = block
+		resultBlocks[i].ID = id
 	}
-}
-
-// TextToolResultMessage is a convenience function that creates a text-based tool result message.
-// This is a shorthand for creating tool result messages with text content using the default
-// "text/plain" MIME type.
-//
-// Parameters:
-//   - id: The identifier for the tool call, should match the original tool call ID
-//   - content: The text content of the tool result
-//
-// Returns a Message configured with ToolResult role and a single Text Block.
-//
-// Example:
-//
-//	result := TextToolResultMessage("call_123", "Temperature: 72°F")
-func TextToolResultMessage(id string, content string) Message {
-	return ToolResultMessage(id, Text, "text/plain", Str(content))
+	return Message{
+		Role:   ToolResult,
+		Blocks: resultBlocks,
+	}
 }

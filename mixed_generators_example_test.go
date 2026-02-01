@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	a "github.com/anthropics/anthropic-sdk-go"
-	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v3"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )

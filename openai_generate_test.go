@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	oaissestream "github.com/openai/openai-go/v2/packages/ssestream"
+	oaissestream "github.com/openai/openai-go/v3/packages/ssestream"
 
-	oai "github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
+	oai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 )
 
 // mockChatCompletionService is a mock implementation of OpenAICompletionService

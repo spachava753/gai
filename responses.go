@@ -8,10 +8,10 @@ import (
 	"iter"
 	"strings"
 
-	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
-	"github.com/openai/openai-go/v2/packages/ssestream"
-	"github.com/openai/openai-go/v2/responses"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/ssestream"
+	"github.com/openai/openai-go/v3/responses"
 )
 
 // ResponsesThoughtSummaryDetailParam is a key used for storing the thought summary detail level
@@ -220,17 +220,62 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 			if toolID == "" {
 				return Response{}, fmt.Errorf("tool result message block must have an ID")
 			}
-			var sb strings.Builder
+
+			// Check if all blocks are text-only (simple case)
+			allText := true
 			for _, blk := range msg.Blocks {
-				if blk.ID != toolID {
-					return Response{}, fmt.Errorf("all blocks in tool result must share the same ID")
-				}
 				if blk.ModalityType != Text {
-					return Response{}, UnsupportedInputModalityErr(blk.ModalityType.String())
+					allText = false
+					break
 				}
-				sb.WriteString(blk.Content.String())
 			}
-			inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCallOutput(toolID, sb.String()))
+
+			if allText {
+				// Simple text-only case: concatenate all text blocks
+				var sb strings.Builder
+				for _, blk := range msg.Blocks {
+					if blk.ID != toolID {
+						return Response{}, fmt.Errorf("all blocks in tool result must share the same ID")
+					}
+					sb.WriteString(blk.Content.String())
+				}
+				inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCallOutput(toolID, sb.String()))
+			} else {
+				// Complex case: blocks with images/PDFs - use array output format
+				var outputItems responses.ResponseFunctionCallOutputItemListParam
+				for _, blk := range msg.Blocks {
+					if blk.ID != toolID {
+						return Response{}, fmt.Errorf("all blocks in tool result must share the same ID")
+					}
+					switch blk.ModalityType {
+					case Text:
+						outputItems = append(outputItems, responses.ResponseFunctionCallOutputItemParamOfInputText(blk.Content.String()))
+					case Image:
+						if blk.MimeType == "application/pdf" {
+							// PDF files use input_file type
+							fileParam := responses.ResponseInputFileContentParam{
+								FileData: openai.String("data:" + blk.MimeType + ";base64," + blk.Content.String()),
+							}
+							if filename, ok := blk.ExtraFields[BlockFieldFilenameKey].(string); ok && filename != "" {
+								fileParam.Filename = openai.String(filename)
+							}
+							outputItems = append(outputItems, responses.ResponseFunctionCallOutputItemUnionParam{
+								OfInputFile: &fileParam,
+							})
+						} else {
+							// Regular images use input_image type with data URL
+							outputItems = append(outputItems, responses.ResponseFunctionCallOutputItemUnionParam{
+								OfInputImage: &responses.ResponseInputImageContentParam{
+									ImageURL: openai.String("data:" + blk.MimeType + ";base64," + blk.Content.String()),
+								},
+							})
+						}
+					default:
+						return Response{}, UnsupportedInputModalityErr(blk.ModalityType.String())
+					}
+				}
+				inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCallOutput(toolID, outputItems))
+			}
 		default:
 			return Response{}, fmt.Errorf("unsupported message role: %s", msg.Role.String())
 		}
@@ -530,19 +575,65 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 					yield(StreamChunk{}, fmt.Errorf("tool result message block must have an ID"))
 					return
 				}
-				var sb strings.Builder
+
+				// Check if all blocks are text-only (simple case)
+				allText := true
 				for _, blk := range msg.Blocks {
-					if blk.ID != toolID {
-						yield(StreamChunk{}, fmt.Errorf("all blocks in tool result must share the same ID"))
-						return
-					}
 					if blk.ModalityType != Text {
-						yield(StreamChunk{}, UnsupportedInputModalityErr(blk.ModalityType.String()))
-						return
+						allText = false
+						break
 					}
-					sb.WriteString(blk.Content.String())
 				}
-				inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCallOutput(toolID, sb.String()))
+
+				if allText {
+					// Simple text-only case: concatenate all text blocks
+					var sb strings.Builder
+					for _, blk := range msg.Blocks {
+						if blk.ID != toolID {
+							yield(StreamChunk{}, fmt.Errorf("all blocks in tool result must share the same ID"))
+							return
+						}
+						sb.WriteString(blk.Content.String())
+					}
+					inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCallOutput(toolID, sb.String()))
+				} else {
+					// Complex case: blocks with images/PDFs - use array output format
+					var outputItems responses.ResponseFunctionCallOutputItemListParam
+					for _, blk := range msg.Blocks {
+						if blk.ID != toolID {
+							yield(StreamChunk{}, fmt.Errorf("all blocks in tool result must share the same ID"))
+							return
+						}
+						switch blk.ModalityType {
+						case Text:
+							outputItems = append(outputItems, responses.ResponseFunctionCallOutputItemParamOfInputText(blk.Content.String()))
+						case Image:
+							if blk.MimeType == "application/pdf" {
+								// PDF files use input_file type
+								fileParam := responses.ResponseInputFileContentParam{
+									FileData: openai.String("data:" + blk.MimeType + ";base64," + blk.Content.String()),
+								}
+								if filename, ok := blk.ExtraFields[BlockFieldFilenameKey].(string); ok && filename != "" {
+									fileParam.Filename = openai.String(filename)
+								}
+								outputItems = append(outputItems, responses.ResponseFunctionCallOutputItemUnionParam{
+									OfInputFile: &fileParam,
+								})
+							} else {
+								// Regular images use input_image type with data URL
+								outputItems = append(outputItems, responses.ResponseFunctionCallOutputItemUnionParam{
+									OfInputImage: &responses.ResponseInputImageContentParam{
+										ImageURL: openai.String("data:" + blk.MimeType + ";base64," + blk.Content.String()),
+									},
+								})
+							}
+						default:
+							yield(StreamChunk{}, UnsupportedInputModalityErr(blk.ModalityType.String()))
+							return
+						}
+					}
+					inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCallOutput(toolID, outputItems))
+				}
 			default:
 				yield(StreamChunk{}, fmt.Errorf("unsupported message role: %s", msg.Role.String()))
 				return

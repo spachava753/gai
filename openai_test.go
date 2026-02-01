@@ -3,7 +3,7 @@ package gai
 import (
 	"testing"
 
-	oai "github.com/openai/openai-go/v2"
+	oai "github.com/openai/openai-go/v3"
 )
 
 func TestToOpenAIMessage(t *testing.T) {

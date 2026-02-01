@@ -112,9 +112,9 @@ func (f ToolCallBackFunc[T]) Call(ctx context.Context, parametersJSON json.RawMe
 	if validator, ok := any(&t).(Validator); ok {
 		if err := validator.Validate(); err != nil {
 			// Otherwise: Treat as tool error, return as tool result message so execution can continue.
-			msg := TextToolResultMessage(
+			msg := ToolResultMessage(
 				toolCallID,
-				fmt.Errorf("parameter validation failed: %s", err).Error(),
+				TextBlock(fmt.Errorf("parameter validation failed: %s", err).Error()),
 			)
 			msg.ToolResultError = true
 			return msg, nil
@@ -130,11 +130,11 @@ func (f ToolCallBackFunc[T]) Call(ctx context.Context, parametersJSON json.RawMe
 			return Message{}, execErr.Unwrap()
 		}
 		// Otherwise: Treat as tool error, return as tool result message so execution can continue.
-		msg := TextToolResultMessage(toolCallID, err.Error())
+		msg := ToolResultMessage(toolCallID, TextBlock(err.Error()))
 		msg.ToolResultError = true
 		return msg, nil
 	}
 
 	// Create and return a text tool result message
-	return TextToolResultMessage(toolCallID, content), nil
+	return ToolResultMessage(toolCallID, TextBlock(content)), nil
 }

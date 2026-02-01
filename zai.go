@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	oai "github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
-	oaissestream "github.com/openai/openai-go/v2/packages/ssestream"
+	oai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	oaissestream "github.com/openai/openai-go/v3/packages/ssestream"
 )
 
 // ZaiGenerator implements the Generator and StreamingGenerator interfaces for Z.AI API.

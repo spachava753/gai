@@ -203,13 +203,24 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 						Text: block.Content.String(),
 					}
 				case Image:
-					b.OfImage = &a.ImageBlockParam{
-						Source: a.ImageBlockParamSourceUnion{
-							OfBase64: &a.Base64ImageSourceParam{
-								Data:      block.Content.String(),
-								MediaType: a.Base64ImageSourceMediaType(block.MimeType),
+					// PDFs are treated as documents in the Anthropic API, not images
+					if block.MimeType == "application/pdf" {
+						b.OfDocument = &a.DocumentBlockParam{
+							Source: a.DocumentBlockParamSourceUnion{
+								OfBase64: &a.Base64PDFSourceParam{
+									Data: block.Content.String(),
+								},
 							},
-						},
+						}
+					} else {
+						b.OfImage = &a.ImageBlockParam{
+							Source: a.ImageBlockParamSourceUnion{
+								OfBase64: &a.Base64ImageSourceParam{
+									Data:      block.Content.String(),
+									MediaType: a.Base64ImageSourceMediaType(block.MimeType),
+								},
+							},
+						}
 					}
 				default:
 					return a.MessageParam{}, UnsupportedInputModalityErr(block.ModalityType.String())

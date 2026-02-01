@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	oai "github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
+	oai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 )
 
 const (

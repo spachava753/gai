@@ -16,11 +16,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/openai/openai-go/v2/option"
-	oaissestream "github.com/openai/openai-go/v2/packages/ssestream"
+	"github.com/openai/openai-go/v3/option"
+	oaissestream "github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/pkoukk/tiktoken-go" // Added for token counting
 
-	oai "github.com/openai/openai-go/v2"
+	oai "github.com/openai/openai-go/v3"
 )
 
 const (
