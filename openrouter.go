@@ -447,6 +447,10 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 		if completionTokens := usage.CompletionTokens; completionTokens > 0 {
 			result.UsageMetadata[UsageMetricGenerationTokens] = int(completionTokens)
 		}
+		// Check for cached tokens (OpenRouter uses OpenAI SDK structure)
+		if usage.PromptTokensDetails.CachedTokens > 0 {
+			result.UsageMetadata[UsageMetricCacheReadTokens] = int(usage.PromptTokensDetails.CachedTokens)
+		}
 	}
 
 	// Try to extract reasoning details from raw JSON response

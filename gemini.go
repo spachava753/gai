@@ -310,6 +310,10 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		if resp.UsageMetadata.TotalTokenCount > 0 {
 			result.UsageMetadata[UsageMetricGenerationTokens] = int(resp.UsageMetadata.TotalTokenCount - resp.UsageMetadata.PromptTokenCount)
 		}
+		// CachedContentTokenCount represents tokens read from cached content
+		if resp.UsageMetadata.CachedContentTokenCount > 0 {
+			result.UsageMetadata[UsageMetricCacheReadTokens] = int(resp.UsageMetadata.CachedContentTokenCount)
+		}
 	}
 
 	toolCallCount = len(toolCallIDToFunc)
@@ -512,7 +516,7 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		}
 
 		// Track cumulative usage
-		var totalInputTokens, totalOutputTokens int32
+		var totalInputTokens, totalOutputTokens, totalCacheReadTokens int32
 
 		for resp, err := range g.client.Models.GenerateContentStream(ctx, g.modelName, allContents, genContentConfig) {
 			if err != nil {
@@ -576,6 +580,10 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 				// CandidatesTokenCount is the output tokens in each response
 				if resp.UsageMetadata.CandidatesTokenCount > 0 {
 					totalOutputTokens += resp.UsageMetadata.CandidatesTokenCount
+				}
+				// CachedContentTokenCount represents tokens read from cached content
+				if resp.UsageMetadata.CachedContentTokenCount > 0 {
+					totalCacheReadTokens = resp.UsageMetadata.CachedContentTokenCount
 				}
 			}
 
@@ -670,7 +678,7 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		}
 
 		// Emit metadata block as final block
-		if totalInputTokens > 0 || totalOutputTokens > 0 {
+		if totalInputTokens > 0 || totalOutputTokens > 0 || totalCacheReadTokens > 0 {
 			metadata := make(Metadata)
 
 			if totalInputTokens > 0 {
@@ -678,6 +686,10 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			}
 			if totalOutputTokens > 0 {
 				metadata[UsageMetricGenerationTokens] = int(totalOutputTokens)
+			}
+			// CachedContentTokenCount represents tokens read from cached content
+			if totalCacheReadTokens > 0 {
+				metadata[UsageMetricCacheReadTokens] = int(totalCacheReadTokens)
 			}
 
 			yield(StreamChunk{

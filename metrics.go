@@ -19,6 +19,16 @@ const (
 	// UsageMetricGenerationTokens is a metric key representing the number of tokens generated
 	// in the Response. The value associated with this key is expected to be of type int.
 	UsageMetricGenerationTokens = "gen_tokens"
+
+	// UsageMetricCacheReadTokens is a metric key representing the number of tokens read from cache.
+	// This applies to providers that support prompt caching (e.g., Anthropic, OpenAI).
+	// The value associated with this key is expected to be of type int.
+	UsageMetricCacheReadTokens = "cache_read_tokens"
+
+	// UsageMetricCacheWriteTokens is a metric key representing the number of tokens written to cache.
+	// This applies to providers that support prompt caching (e.g., Anthropic).
+	// The value associated with this key is expected to be of type int.
+	UsageMetricCacheWriteTokens = "cache_write_tokens"
 )
 
 // InputTokens returns the number of tokens in the input Dialog from the metrics.
@@ -43,6 +53,32 @@ func InputTokens(m Metadata) (int, bool) {
 // Panics if the value in the metrics map cannot be type asserted to int.
 func OutputTokens(m Metadata) (int, bool) {
 	return GetMetric[int](m, UsageMetricGenerationTokens)
+}
+
+// CacheReadTokens returns the number of tokens read from cache from the metrics.
+// This metric is populated by providers that support prompt caching (e.g., Anthropic, OpenAI).
+// The first return value is the number of cache read tokens, and the second indicates
+// whether the metric was present in the map.
+//
+// If the metric is not present, returns (0, false).
+// If the metric is present, returns (tokens, true).
+//
+// Panics if the value in the metrics map cannot be type asserted to int.
+func CacheReadTokens(m Metadata) (int, bool) {
+	return GetMetric[int](m, UsageMetricCacheReadTokens)
+}
+
+// CacheWriteTokens returns the number of tokens written to cache from the metrics.
+// This metric is populated by providers that support prompt caching (e.g., Anthropic).
+// The first return value is the number of cache write tokens, and the second indicates
+// whether the metric was present in the map.
+//
+// If the metric is not present, returns (0, false).
+// If the metric is present, returns (tokens, true).
+//
+// Panics if the value in the metrics map cannot be type asserted to int.
+func CacheWriteTokens(m Metadata) (int, bool) {
+	return GetMetric[int](m, UsageMetricCacheWriteTokens)
 }
 
 // GetMetric is a generic function that retrieves a metric value of type T from the metrics map.

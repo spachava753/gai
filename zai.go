@@ -365,6 +365,10 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 	if resp.Usage.CompletionTokens > 0 {
 		result.UsageMetadata[UsageMetricGenerationTokens] = int(resp.Usage.CompletionTokens)
 	}
+	// Z.AI uses OpenAI-compatible API, check for cached tokens
+	if resp.Usage.PromptTokensDetails.CachedTokens > 0 {
+		result.UsageMetadata[UsageMetricCacheReadTokens] = int(resp.Usage.PromptTokensDetails.CachedTokens)
+	}
 
 	var hasToolCalls bool
 	for _, choice := range resp.Choices {
@@ -636,6 +640,10 @@ func (g *ZaiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOp
 			}
 			if finalUsage.CompletionTokens > 0 {
 				metadata[UsageMetricGenerationTokens] = int(finalUsage.CompletionTokens)
+			}
+			// Z.AI uses OpenAI-compatible API, check for cached tokens
+			if finalUsage.PromptTokensDetails.CachedTokens > 0 {
+				metadata[UsageMetricCacheReadTokens] = int(finalUsage.PromptTokensDetails.CachedTokens)
 			}
 			if len(metadata) > 0 {
 				yield(StreamChunk{

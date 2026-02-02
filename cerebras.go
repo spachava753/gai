@@ -94,6 +94,13 @@ type cerebrasChatResponse struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
+		// PromptTokensDetails contains detailed token breakdown including cache information.
+		// Cerebras supports automatic prompt caching and reports cache read tokens here.
+		// Note: Cerebras only reports cache read tokens (cached_tokens), not cache write tokens,
+		// since their caching mechanism is automatic and doesn't expose write metrics.
+		PromptTokensDetails *struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details,omitempty"`
 	} `json:"usage"`
 }
 
@@ -419,6 +426,9 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 	}
 	if cr.Usage.CompletionTokens > 0 {
 		result.UsageMetadata[UsageMetricGenerationTokens] = cr.Usage.CompletionTokens
+	}
+	if cr.Usage.PromptTokensDetails != nil && cr.Usage.PromptTokensDetails.CachedTokens > 0 {
+		result.UsageMetadata[UsageMetricCacheReadTokens] = cr.Usage.PromptTokensDetails.CachedTokens
 	}
 
 	var hasToolCalls bool

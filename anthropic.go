@@ -480,6 +480,12 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	inputTokens := resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens
 	result.UsageMetadata[UsageMetricInputTokens] = int(inputTokens)
 	result.UsageMetadata[UsageMetricGenerationTokens] = int(resp.Usage.OutputTokens)
+	if resp.Usage.CacheReadInputTokens > 0 {
+		result.UsageMetadata[UsageMetricCacheReadTokens] = int(resp.Usage.CacheReadInputTokens)
+	}
+	if resp.Usage.CacheCreationInputTokens > 0 {
+		result.UsageMetadata[UsageMetricCacheWriteTokens] = int(resp.Usage.CacheCreationInputTokens)
+	}
 
 	// Convert the message content
 	var blocks []Block
@@ -834,6 +840,12 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			}
 			if finalUsage.OutputTokens > 0 {
 				metadata[UsageMetricGenerationTokens] = int(finalUsage.OutputTokens)
+			}
+			if finalUsage.CacheReadInputTokens > 0 {
+				metadata[UsageMetricCacheReadTokens] = int(finalUsage.CacheReadInputTokens)
+			}
+			if finalUsage.CacheCreationInputTokens > 0 {
+				metadata[UsageMetricCacheWriteTokens] = int(finalUsage.CacheCreationInputTokens)
 			}
 
 			if len(metadata) > 0 {

@@ -605,6 +605,9 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		if completionTokens := usage.CompletionTokens; completionTokens > 0 {
 			result.UsageMetadata[UsageMetricGenerationTokens] = int(completionTokens)
 		}
+		if usage.PromptTokensDetails.CachedTokens > 0 {
+			result.UsageMetadata[UsageMetricCacheReadTokens] = int(usage.PromptTokensDetails.CachedTokens)
+		}
 	}
 
 	var hasToolCalls bool
@@ -990,6 +993,9 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			}
 			if finalUsage.CompletionTokens > 0 {
 				metadata[UsageMetricGenerationTokens] = int(finalUsage.CompletionTokens)
+			}
+			if finalUsage.PromptTokensDetails.CachedTokens > 0 {
+				metadata[UsageMetricCacheReadTokens] = int(finalUsage.PromptTokensDetails.CachedTokens)
 			}
 
 			if len(metadata) > 0 {

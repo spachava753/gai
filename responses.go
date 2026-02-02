@@ -379,6 +379,10 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 		if usage.OutputTokens > 0 {
 			result.UsageMetadata[UsageMetricGenerationTokens] = int(usage.OutputTokens)
 		}
+		// Report cached tokens if available (OpenAI Responses API prompt caching)
+		if usage.InputTokensDetails.CachedTokens > 0 {
+			result.UsageMetadata[UsageMetricCacheReadTokens] = int(usage.InputTokensDetails.CachedTokens)
+		}
 	}
 	result.UsageMetadata[ResponsesPrevRespId] = res.ID
 
@@ -864,6 +868,10 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				}
 				if usage := completed.Response.Usage; usage.OutputTokens > 0 {
 					metadata[UsageMetricGenerationTokens] = int(usage.OutputTokens)
+				}
+				// Report cached tokens if available (OpenAI Responses API prompt caching)
+				if cachedTokens := completed.Response.Usage.InputTokensDetails.CachedTokens; cachedTokens > 0 {
+					metadata[UsageMetricCacheReadTokens] = int(cachedTokens)
 				}
 				// Store the response ID in metadata for multi-turn support
 				metadata[ResponsesPrevRespId] = completed.Response.ID
