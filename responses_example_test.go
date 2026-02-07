@@ -134,8 +134,10 @@ func ExampleResponsesGenerator_Generate_thinking() {
 		panic(err.Error())
 	}
 	fmt.Println("Response received")
+	// The response blocks automatically contain the response ID in ExtraFields,
+	// so we just append them to the dialog and the next Generate call will
+	// automatically extract and use the previous response ID.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("What can you do?")}})
-	opts.ExtraArgs[ResponsesPrevRespId] = resp.UsageMetadata[ResponsesPrevRespId]
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
 		panic(err.Error())
@@ -179,16 +181,17 @@ Only output the price, like
 		panic(err.Error())
 	}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}}}
-	opts := GenOpts{ToolChoice: "get_stock_price", ExtraArgs: map[string]any{}}
+	opts := GenOpts{ToolChoice: "get_stock_price"}
 	resp, err := gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
 		panic(err.Error())
 	}
 	fmt.Println(resp.Candidates[0].Blocks[0].Content)
+	// Append the assistant's response (which contains the response ID in ExtraFields)
+	// and the tool result. The next Generate call will automatically extract
+	// the previous response ID from the assistant blocks.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: resp.Candidates[0].Blocks[0].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}})
-	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{ExtraArgs: map[string]any{
-		ResponsesPrevRespId: resp.UsageMetadata[ResponsesPrevRespId],
-	}})
+	resp, err = gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -239,10 +242,10 @@ Assistant: Nvidia
 	blocks := resp.Candidates[0].Blocks
 	fmt.Println(blocks[len(blocks)-2].Content)
 	fmt.Println(blocks[len(blocks)-1].Content)
+	// Append the assistant's response (with response ID in ExtraFields) and tool results.
+	// The next Generate call automatically extracts the previous response ID from the dialog.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: blocks[len(blocks)-2].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}}, Message{Role: ToolResult, Blocks: []Block{{ID: blocks[len(blocks)-1].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("678.45")}}})
-	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{ExtraArgs: map[string]any{
-		ResponsesPrevRespId: resp.UsageMetadata[ResponsesPrevRespId],
-	}})
+	resp, err = gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
 		panic(err.Error())
 	}

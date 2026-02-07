@@ -22,6 +22,11 @@ const ResponsesThoughtSummaryDetailParam = "responses_thought_summary_detail"
 // ResponsesPrevRespId is a key used for storing the previous response id in GenOpts.ExtraArgs.
 // When set, the previous response id will set in the param request. This allows the model to
 // refer back to earlier reasoning traces stored in the OpenAI Responses API, boosting performance.
+//
+// This key is also used in Block.ExtraFields to automatically store the response ID from the
+// API response. When a dialog is sent to Generate/Stream, the generator will automatically
+// look for the most recent response ID in Assistant message blocks and use it, unless an
+// explicit response ID is provided via GenOpts.ExtraArgs.
 const ResponsesPrevRespId = "responses_prev_resp_id"
 
 type ResponsesService interface {
@@ -70,6 +75,32 @@ func NewResponsesGenerator(client ResponsesService, model, systemInstructions st
 var _ ToolRegister = (*ResponsesGenerator)(nil)
 var _ Generator = (*ResponsesGenerator)(nil)
 var _ StreamingGenerator = (*ResponsesGenerator)(nil)
+
+// extractResponseIdFromDialog scans the dialog for the most recent response ID stored
+// in Assistant message blocks' ExtraFields. It iterates through messages in reverse order
+// and returns the first response ID found, or an empty string if none exists.
+func extractResponseIdFromDialog(dialog Dialog) string {
+	// Iterate in reverse to find the most recent response ID
+	for i := len(dialog) - 1; i >= 0; i-- {
+		msg := dialog[i]
+		if msg.Role != Assistant {
+			continue
+		}
+		// Check blocks in reverse order within the message
+		for j := len(msg.Blocks) - 1; j >= 0; j-- {
+			blk := msg.Blocks[j]
+			if blk.ExtraFields == nil {
+				continue
+			}
+			if val, ok := blk.ExtraFields[ResponsesPrevRespId]; ok {
+				if respId, ok := val.(string); ok && respId != "" {
+					return respId
+				}
+			}
+		}
+	}
+	return ""
+}
 
 func (r *ResponsesGenerator) Register(tool Tool) error {
 	if tool.Name == "" {
@@ -286,6 +317,9 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: inputItems},
 	}
 
+	// Track if user explicitly provided a response ID
+	var explicitPrevRespId bool
+
 	if r.systemInstructions != "" {
 		params.Instructions = openai.Opt(r.systemInstructions)
 	}
@@ -343,7 +377,15 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 			prevId := val.(string)
 			if prevId != "" {
 				params.PreviousResponseID = openai.Opt[string](prevId)
+				explicitPrevRespId = true
 			}
+		}
+	}
+
+	// If no explicit response ID was provided via options, try to extract from dialog
+	if !explicitPrevRespId {
+		if prevId := extractResponseIdFromDialog(dialog); prevId != "" {
+			params.PreviousResponseID = openai.Opt[string](prevId)
 		}
 	}
 
@@ -386,6 +428,11 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 	}
 	result.UsageMetadata[ResponsesPrevRespId] = res.ID
 
+	// Create ExtraFields map with the response ID for all blocks
+	blockExtraFields := map[string]interface{}{
+		ResponsesPrevRespId: res.ID,
+	}
+
 	var blocks []Block
 	var hasToolCalls bool
 	var refusal string
@@ -396,7 +443,7 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 			for _, c := range msg.Content {
 				switch c.Type {
 				case "output_text":
-					blocks = append(blocks, Block{BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str(c.Text)})
+					blocks = append(blocks, Block{BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str(c.Text), ExtraFields: blockExtraFields})
 				case "refusal":
 					if c.Refusal != "" {
 						refusal = c.Refusal
@@ -415,17 +462,17 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 			if id == "" {
 				id = fc.ID
 			}
-			blocks = append(blocks, Block{ID: id, BlockType: ToolCall, ModalityType: Text, MimeType: "application/json", Content: Str(b)})
+			blocks = append(blocks, Block{ID: id, BlockType: ToolCall, ModalityType: Text, MimeType: "application/json", Content: Str(b), ExtraFields: blockExtraFields})
 			hasToolCalls = true
 		case "reasoning":
 			reas := item.AsReasoning()
 			// Process actual reasoning content as Thinking blocks
 			for _, rc := range reas.Content {
-				blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(rc.Text)})
+				blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(rc.Text), ExtraFields: blockExtraFields})
 			}
 			// Also process summaries as Thinking blocks (as close as we get when full traces unavailable)
 			for _, rc := range reas.Summary {
-				blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(rc.Text)})
+				blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(rc.Text), ExtraFields: blockExtraFields})
 			}
 		}
 	}
@@ -649,6 +696,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			Input: responses.ResponseNewParamsInputUnion{OfInputItemList: inputItems},
 		}
 
+		// Track if user explicitly provided a response ID
+		var explicitPrevRespId bool
+
 		if r.systemInstructions != "" {
 			params.Instructions = openai.Opt(r.systemInstructions)
 		}
@@ -708,7 +758,15 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				prevId := val.(string)
 				if prevId != "" {
 					params.PreviousResponseID = openai.Opt[string](prevId)
+					explicitPrevRespId = true
 				}
+			}
+		}
+
+		// If no explicit response ID was provided via options, try to extract from dialog
+		if !explicitPrevRespId {
+			if prevId := extractResponseIdFromDialog(dialog); prevId != "" {
+				params.PreviousResponseID = openai.Opt[string](prevId)
 			}
 		}
 
@@ -876,8 +934,14 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				// Store the response ID in metadata for multi-turn support
 				metadata[ResponsesPrevRespId] = completed.Response.ID
 
+				// Create metadata block with response ID also in ExtraFields for automatic extraction
+				metadataBlock := MetadataBlock(metadata)
+				metadataBlock.ExtraFields = map[string]interface{}{
+					ResponsesPrevRespId: completed.Response.ID,
+				}
+
 				yield(StreamChunk{
-					Block:           MetadataBlock(metadata),
+					Block:           metadataBlock,
 					CandidatesIndex: 0,
 				}, nil)
 				return
