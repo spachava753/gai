@@ -499,6 +499,7 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 				}
 
 				if reasoningContent != "" {
+					extraFields[ThinkingExtraFieldGeneratorKey] = ThinkingGeneratorOpenRouter
 					blocks = append(blocks, Block{
 						ID:           detail.ID,
 						BlockType:    Thinking,

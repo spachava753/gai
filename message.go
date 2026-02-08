@@ -67,10 +67,66 @@ func (m Modality) String() string {
 }
 
 const (
-	Content           = "content"
-	Thinking          = "thinking"
-	ToolCall          = "tool_call"
+	// Content represents unstructured content of a single Modality, like text, images and audio.
+	Content = "content"
+
+	// Thinking represents the thinking/reasoning content a Generator produced.
+	// When a block has this type, its ExtraFields will contain ThinkingExtraFieldGeneratorKey
+	// to identify which generator produced the thinking content. This allows consumers to
+	// handle thinking blocks differently based on their source (e.g., accessing Anthropic-specific
+	// signature fields via AnthropicExtraFieldThinkingSignature).
+	Thinking = "thinking"
+
+	// ToolCall represents a tool call request by the model.
+	ToolCall = "tool_call"
+
+	// MetadataBlockType represents a block containing usage metadata.
 	MetadataBlockType = "metadata"
+
+	// ThinkingExtraFieldGeneratorKey is set in Block.ExtraFields for Thinking blocks to identify
+	// which generator produced the thinking content. All generators that support thinking blocks
+	// set this field automatically.
+	//
+	// The value is one of the ThinkingGenerator* constants (e.g., ThinkingGeneratorAnthropic).
+	//
+	// Example usage:
+	//
+	//	for _, block := range message.Blocks {
+	//	    if block.BlockType == gai.Thinking {
+	//	        if gen, ok := block.ExtraFields[gai.ThinkingExtraFieldGeneratorKey]; ok {
+	//	            switch gen {
+	//	            case gai.ThinkingGeneratorAnthropic:
+	//	                // Access Anthropic-specific fields like AnthropicExtraFieldThinkingSignature
+	//	            case gai.ThinkingGeneratorGemini:
+	//	                // Access Gemini-specific fields like GeminiExtraFieldThoughtSignature
+	//	            }
+	//	        }
+	//	    }
+	//	}
+	ThinkingExtraFieldGeneratorKey = "thinking_generator"
+
+	// ThinkingGeneratorAnthropic identifies thinking blocks from the Anthropic generator.
+	// Anthropic thinking blocks may also contain AnthropicExtraFieldThinkingSignature.
+	ThinkingGeneratorAnthropic = "anthropic"
+
+	// ThinkingGeneratorCerebras identifies thinking blocks from the Cerebras generator.
+	ThinkingGeneratorCerebras = "cerebras"
+
+	// ThinkingGeneratorGemini identifies thinking blocks from the Gemini generator.
+	// Gemini thinking blocks may also contain GeminiExtraFieldThoughtSignature.
+	ThinkingGeneratorGemini = "gemini"
+
+	// ThinkingGeneratorOpenRouter identifies thinking blocks from the OpenRouter generator.
+	// OpenRouter thinking blocks may also contain OpenRouterExtraFieldReasoningType,
+	// OpenRouterExtraFieldReasoningFormat, OpenRouterExtraFieldReasoningIndex, and
+	// OpenRouterExtraFieldReasoningSignature.
+	ThinkingGeneratorOpenRouter = "openrouter"
+
+	// ThinkingGeneratorResponses identifies thinking blocks from the OpenAI Responses generator.
+	ThinkingGeneratorResponses = "responses"
+
+	// ThinkingGeneratorZai identifies thinking blocks from the Zai generator.
+	ThinkingGeneratorZai = "zai"
 )
 
 // Block represents a self-contained piece of a Message, meant to represent a "part" of a message.
@@ -106,8 +162,18 @@ type Block struct {
 	// content type.
 	Content fmt.Stringer
 
-	// ExtraFields allows a Generator to store Generator-specific extra information that can used
-	// in a later invocation
+	// ExtraFields allows a Generator to store Generator-specific extra information that can be used
+	// in a later invocation or for handling provider-specific features.
+	//
+	// Common fields include:
+	//   - ThinkingExtraFieldGeneratorKey: Always set on Thinking blocks to identify the source generator
+	//   - AnthropicExtraFieldThinkingSignature: Signature for Anthropic extended thinking blocks
+	//   - GeminiExtraFieldThoughtSignature: Signature for Gemini thinking blocks
+	//   - OpenRouterExtraFieldReasoningType/Format/Index/Signature: OpenRouter reasoning metadata
+	//   - OpenAIExtraFieldImageWidth/Height/Detail: Image processing hints for OpenAI
+	//   - BlockFieldFilenameKey: Filename for PDF blocks
+	//
+	// See each generator's documentation for provider-specific fields.
 	ExtraFields map[string]interface{}
 }
 

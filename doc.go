@@ -306,6 +306,49 @@
 //		}
 //	}
 //
+// # Working with Thinking Blocks
+//
+// Many LLM providers support "thinking" or "reasoning" output, where the model shows its
+// internal reasoning process. gai normalizes these into Thinking blocks (BlockType == Thinking).
+//
+// To identify which generator produced a thinking block, check the ThinkingExtraFieldGeneratorKey
+// in the block's ExtraFields. This allows you to handle provider-specific features:
+//
+//	for _, block := range message.Blocks {
+//	    if block.BlockType == gai.Thinking {
+//	        generator := block.ExtraFields[gai.ThinkingExtraFieldGeneratorKey]
+//	        fmt.Printf("Thinking from %s: %s\n", generator, block.Content)
+//
+//	        // Handle provider-specific fields
+//	        switch generator {
+//	        case gai.ThinkingGeneratorAnthropic:
+//	            // Anthropic requires signatures for extended thinking
+//	            if sig, ok := block.ExtraFields[gai.AnthropicExtraFieldThinkingSignature]; ok {
+//	                fmt.Printf("Signature: %s\n", sig)
+//	            }
+//	        case gai.ThinkingGeneratorGemini:
+//	            // Gemini may include thought signatures
+//	            if sig, ok := block.ExtraFields[gai.GeminiExtraFieldThoughtSignature]; ok {
+//	                fmt.Printf("Thought signature: %s\n", sig)
+//	            }
+//	        case gai.ThinkingGeneratorOpenRouter:
+//	            // OpenRouter includes reasoning metadata
+//	            reasonType := block.ExtraFields[gai.OpenRouterExtraFieldReasoningType]
+//	            fmt.Printf("Reasoning type: %s\n", reasonType)
+//	        }
+//	    }
+//	}
+//
+// Available generator constants:
+//   - ThinkingGeneratorAnthropic - Anthropic Claude models with extended thinking
+//   - ThinkingGeneratorCerebras - Cerebras models with reasoning
+//   - ThinkingGeneratorGemini - Google Gemini models with thinking
+//   - ThinkingGeneratorOpenRouter - OpenRouter with reasoning models
+//   - ThinkingGeneratorResponses - OpenAI Responses API with reasoning
+//   - ThinkingGeneratorZai - Zai generator with reasoning
+//
+// Note: The OpenAI Chat Completions generator (OpenAiGenerator) does not support thinking blocks.
+//
 // # Working with PDFs
 //
 // gai supports PDF documents as a special case of the Image modality. PDFs are automatically

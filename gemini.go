@@ -608,7 +608,9 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 								ModalityType: Text,
 								MimeType:     "text/plain",
 								Content:      Str(part.Text),
-								ExtraFields:  nil,
+								ExtraFields: map[string]interface{}{
+									ThinkingExtraFieldGeneratorKey: ThinkingGeneratorGemini,
+								},
 							},
 							CandidatesIndex: 0,
 						}, nil) {

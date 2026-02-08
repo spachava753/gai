@@ -442,6 +442,9 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 				ModalityType: Text,
 				MimeType:     "text/plain",
 				Content:      Str(*ch.Message.Reasoning),
+				ExtraFields: map[string]interface{}{
+					ThinkingExtraFieldGeneratorKey: ThinkingGeneratorCerebras,
+				},
 			})
 		}
 

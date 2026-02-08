@@ -381,6 +381,9 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 				ModalityType: Text,
 				MimeType:     "text/plain",
 				Content:      Str(rc),
+				ExtraFields: map[string]interface{}{
+					ThinkingExtraFieldGeneratorKey: ThinkingGeneratorZai,
+				},
 			})
 		}
 
@@ -573,6 +576,9 @@ func (g *ZaiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOp
 						ModalityType: Text,
 						MimeType:     "text/plain",
 						Content:      Str(rc),
+						ExtraFields: map[string]interface{}{
+							ThinkingExtraFieldGeneratorKey: ThinkingGeneratorZai,
+						},
 					},
 					CandidatesIndex: int(choice.Index),
 				}, nil) {

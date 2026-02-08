@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -468,11 +469,13 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 			reas := item.AsReasoning()
 			// Process actual reasoning content as Thinking blocks
 			for _, rc := range reas.Content {
-				blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(rc.Text), ExtraFields: blockExtraFields})
+				blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(rc.Text), ExtraFields: maps.Clone(blockExtraFields)})
+				blocks[len(blocks)-1].ExtraFields[ThinkingExtraFieldGeneratorKey] = ThinkingGeneratorResponses
 			}
 			// Also process summaries as Thinking blocks (as close as we get when full traces unavailable)
 			for _, rc := range reas.Summary {
-				blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(rc.Text), ExtraFields: blockExtraFields})
+				blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(rc.Text), ExtraFields: maps.Clone(blockExtraFields)})
+				blocks[len(blocks)-1].ExtraFields[ThinkingExtraFieldGeneratorKey] = ThinkingGeneratorResponses
 			}
 		}
 	}
@@ -828,6 +831,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								ModalityType: Text,
 								MimeType:     "text/plain",
 								Content:      Str(rc.Text),
+								ExtraFields: map[string]interface{}{
+									ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
+								},
 							},
 							CandidatesIndex: 0,
 						}, nil) {
@@ -842,6 +848,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								ModalityType: Text,
 								MimeType:     "text/plain",
 								Content:      Str(rc.Text),
+								ExtraFields: map[string]interface{}{
+									ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
+								},
 							},
 							CandidatesIndex: 0,
 						}, nil) {
@@ -888,6 +897,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							ModalityType: Text,
 							MimeType:     "text/plain",
 							Content:      Str(reasoningDelta.Delta),
+							ExtraFields: map[string]interface{}{
+								ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
+							},
 						},
 						CandidatesIndex: 0,
 					}, nil) {
@@ -903,6 +915,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							ModalityType: Text,
 							MimeType:     "text/plain",
 							Content:      Str(summaryDelta.Delta),
+							ExtraFields: map[string]interface{}{
+								ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
+							},
 						},
 						CandidatesIndex: 0,
 					}, nil) {
