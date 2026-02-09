@@ -43,7 +43,7 @@ type Validator interface {
 // that the error is a hard failure and execution should terminate, rather than being
 // returned as an erroneous tool result.
 type CallbackExecErr struct {
-	Err error
+	Err error `json:"err,omitempty" yaml:"err,omitempty"`
 }
 
 // Unwrap allows errors.Unwrap and errors.As to extract the underlying error.

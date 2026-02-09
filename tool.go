@@ -97,16 +97,16 @@ func GenerateSchema[T any]() (*jsonschema.Schema, error) {
 type Tool struct {
 	// Name is the identifier used to reference this tool.
 	// It should be unique among all tools provided to a Generator.
-	Name string
+	Name string `json:"name" yaml:"name"`
 
 	// Description explains what the tool does.
 	// This helps the Generator understand when and how to use the tool.
-	Description string
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 
 	// InputSchema defines the parameters this tool accepts using JSON Schema.
 	// A nil value indicates no parameters are accepted.
 	// The schema should typically be of type "object" for parameter definitions.
-	InputSchema *jsonschema.Schema
+	InputSchema *jsonschema.Schema `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`
 }
 
 // ToolCallback represents a function that can be automatically executed by a ToolGenerator
@@ -538,8 +538,8 @@ func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen Gen
 // ToolCallInput represents a standardized format for tool use in all generators.
 // It contains the name of the tool to use and the parameters to pass to it.
 type ToolCallInput struct {
-	Name       string         `json:"name"`
-	Parameters map[string]any `json:"parameters"`
+	Name       string         `json:"name" yaml:"name"`
+	Parameters map[string]any `json:"parameters" yaml:"parameters"`
 }
 
 // validateToolResultMessage validates a tool result message without modifying it.

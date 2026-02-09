@@ -55,9 +55,9 @@ func (i InvalidToolChoiceErr) Error() string {
 //   - Invalid combination of parameters (e.g., both [GenOpts.Temperature] and [GenOpts.TopP] set)
 type InvalidParameterErr struct {
 	// Parameter is the name of the invalid parameter
-	Parameter string
+	Parameter string `json:"parameter" yaml:"parameter"`
 	// Reason describes why the parameter is invalid
-	Reason string
+	Reason string `json:"reason" yaml:"reason"`
 }
 
 func (i InvalidParameterErr) Error() string {
@@ -91,9 +91,9 @@ func (c ContentPolicyErr) Error() string {
 // The Cause field contains the underlying error that caused the registration to fail.
 type ToolRegistrationErr struct {
 	// Tool is the name of the tool that failed to register
-	Tool string
+	Tool string `json:"tool" yaml:"tool"`
 	// Cause is the underlying error that caused the registration to fail
-	Cause error
+	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
 }
 
 func (t ToolRegistrationErr) Error() string {
@@ -147,11 +147,11 @@ func (r RateLimitErr) Error() string {
 // detailed information about the API error.
 type ApiErr struct {
 	// StatusCode is the HTTP status code returned by the API
-	StatusCode int
+	StatusCode int `json:"status_code" yaml:"status_code"`
 	// Type is the error type returned by the API (e.g., "invalid_request_error")
-	Type string
+	Type string `json:"type" yaml:"type"`
 	// Message is the error message returned by the API
-	Message string
+	Message string `json:"message" yaml:"message"`
 }
 
 func (a ApiErr) Error() string {

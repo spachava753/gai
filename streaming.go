@@ -22,8 +22,8 @@ import (
 // CandidatesIndex indicates which candidate this chunk belongs to when N>1 is used.
 // Currently only CandidatesIndex=0 is supported by the StreamingAdapter.
 type StreamChunk struct {
-	Block           Block
-	CandidatesIndex int
+	Block           Block `json:"block" yaml:"block"`
+	CandidatesIndex int   `json:"candidates_index" yaml:"candidates_index"`
 }
 
 // StreamingGenerator is an interface for generators that support streaming responses.

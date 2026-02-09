@@ -137,7 +137,7 @@ type Block struct {
 	// ID is optional, it is commonly set when for ToolCall block types,
 	// and sometimes for Content type blocks. An empty string means that the ID field
 	// is not set
-	ID string
+	ID string `json:"id,omitempty" yaml:"id,omitempty"`
 
 	// BlockType is required, and if not set explicitly, the default value is of type Content.
 	// - A Content BlockType represents unstructured content of single Modality, like text, images and audio
@@ -146,21 +146,21 @@ type Block struct {
 	//
 	// Note that a Generator can support more block types than the ones listed above,
 	// the above block types are simply a common set of block types that a Generator can return.
-	BlockType string
+	BlockType string `json:"block_type" yaml:"block_type"`
 
 	// ModalityType represents the Modality of the content
-	ModalityType Modality
+	ModalityType Modality `json:"modality_type" yaml:"modality_type"`
 
 	// MimeType represents the MIME type of the content.
 	// Common values include "text/plain", "image/jpeg", "image/png", "audio/mp3", "video/mp4", etc.
 	// If empty, defaults to "text/plain"
-	MimeType string
+	MimeType string `json:"mime_type,omitempty" yaml:"mime_type,omitempty"`
 
 	// Content represents the content of the block. It can be any type that implements fmt.Stringer.
 	// For non-text modalities like images, audio, or video, the Content's String() method should
 	// return base64 encoded data. The MimeType field should be set appropriately to indicate the
 	// content type.
-	Content fmt.Stringer
+	Content fmt.Stringer `json:"content,omitempty" yaml:"content,omitempty"`
 
 	// ExtraFields allows a Generator to store Generator-specific extra information that can be used
 	// in a later invocation or for handling provider-specific features.
@@ -174,7 +174,7 @@ type Block struct {
 	//   - BlockFieldFilenameKey: Filename for PDF blocks
 	//
 	// See each generator's documentation for provider-specific fields.
-	ExtraFields map[string]interface{}
+	ExtraFields map[string]interface{} `json:"extra_fields,omitempty" yaml:"extra_fields,omitempty"`
 }
 
 // Message represents a collection of blocks produced by the user or meant for the assistant.
@@ -182,21 +182,21 @@ type Message struct {
 	// Role is required, and the default value of Role is User. However, for readability purposes,
 	// it is recommended to always set the Role to User or Assistant and not rely on the zero value
 	// to make it clear to the reader what type of Message it is
-	Role Role
+	Role Role `json:"role" yaml:"role"`
 
 	// Blocks represents the collection of different blocks produced by the User or Assistant
-	Blocks []Block
+	Blocks []Block `json:"blocks" yaml:"blocks"`
 
 	// ToolResultError indicates whether the tool execution resulted in an error.
 	// When true, the message content represents an error response from a tool call.
 	// This is used by providers to properly format error responses in the API request.
-	ToolResultError bool
+	ToolResultError bool `json:"tool_result_error,omitempty" yaml:"tool_result_error,omitempty"`
 
 	// ExtraFields allows storing additional message-level information that can be used
 	// for provider-specific features or custom metadata. Unlike Block.ExtraFields which
 	// stores block-specific data, this field is for information that applies to the
 	// entire message.
-	ExtraFields map[string]interface{}
+	ExtraFields map[string]interface{} `json:"extra_fields,omitempty" yaml:"extra_fields,omitempty"`
 }
 
 // Dialog represents a dialog between a User and Assistant
