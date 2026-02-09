@@ -42,6 +42,7 @@
 //		Role   Role
 //		Blocks []Block
 //		ToolResultError bool
+//		ExtraFields  map[string]interface{}
 //	}
 //
 // Block: A self-contained piece of content within a message, which can be text, image, audio,

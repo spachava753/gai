@@ -187,7 +187,16 @@ type Message struct {
 	// Blocks represents the collection of different blocks produced by the User or Assistant
 	Blocks []Block
 
+	// ToolResultError indicates whether the tool execution resulted in an error.
+	// When true, the message content represents an error response from a tool call.
+	// This is used by providers to properly format error responses in the API request.
 	ToolResultError bool
+
+	// ExtraFields allows storing additional message-level information that can be used
+	// for provider-specific features or custom metadata. Unlike Block.ExtraFields which
+	// stores block-specific data, this field is for information that applies to the
+	// entire message.
+	ExtraFields map[string]interface{}
 }
 
 // Dialog represents a dialog between a User and Assistant

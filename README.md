@@ -49,6 +49,7 @@ type Message struct {
 	Role   Role
 	Blocks []Block
 	ToolResultError bool
+	ExtraFields  map[string]interface{}
 }
 ```
 
@@ -91,17 +92,17 @@ Tool: A function that can be called by the language model during generation.
 type Tool struct {
 	Name        string
 	Description string
-	InputSchema InputSchema
+	InputSchema *jsonschema.Schema
 }
 ```
 
 The InputSchema defines the parameters the tool accepts using JSON Schema conventions:
 
-```go
-type InputSchema struct {
-	Type       PropertyType
-	Properties map[string]Property
-	Required   []string
+```
+&jsonschema.Schema{
+	Type:       "object",
+	Properties: map[string]*jsonschema.Schema{...},
+	Required:   []string{...},
 }
 ```
 
@@ -159,10 +160,10 @@ func main() {
 	}
 
 	// Get usage metrics
-	if inputTokens, ok := gai.InputTokens(response.UsageMetrics); ok {
+	if inputTokens, ok := gai.InputTokens(response.UsageMetadata); ok {
 		fmt.Printf("Input tokens: %d\n", inputTokens)
 	}
-	if outputTokens, ok := gai.OutputTokens(response.UsageMetrics); ok {
+	if outputTokens, ok := gai.OutputTokens(response.UsageMetadata); ok {
 		fmt.Printf("Output tokens: %d\n", outputTokens)
 	}
 }
@@ -326,6 +327,49 @@ func main() {
 	}
 }
 ```
+
+## Working with Thinking Blocks
+
+Many LLM providers support "thinking" or "reasoning" output, where the model shows its internal reasoning process. gai normalizes these into Thinking blocks (BlockType == Thinking).
+
+To identify which generator produced a thinking block, check the ThinkingExtraFieldGeneratorKey in the block's ExtraFields. This allows you to handle provider-specific features:
+
+```go
+for _, block := range message.Blocks {
+    if block.BlockType == gai.Thinking {
+        generator := block.ExtraFields[gai.ThinkingExtraFieldGeneratorKey]
+        fmt.Printf("Thinking from %s: %s\n", generator, block.Content)
+
+        // Handle provider-specific fields
+        switch generator {
+        case gai.ThinkingGeneratorAnthropic:
+            // Anthropic requires signatures for extended thinking
+            if sig, ok := block.ExtraFields[gai.AnthropicExtraFieldThinkingSignature]; ok {
+                fmt.Printf("Signature: %s\n", sig)
+            }
+        case gai.ThinkingGeneratorGemini:
+            // Gemini may include thought signatures
+            if sig, ok := block.ExtraFields[gai.GeminiExtraFieldThoughtSignature]; ok {
+                fmt.Printf("Thought signature: %s\n", sig)
+            }
+        case gai.ThinkingGeneratorOpenRouter:
+            // OpenRouter includes reasoning metadata
+            reasonType := block.ExtraFields[gai.OpenRouterExtraFieldReasoningType]
+            fmt.Printf("Reasoning type: %s\n", reasonType)
+        }
+    }
+}
+```
+
+Available generator constants:
+- ThinkingGeneratorAnthropic - Anthropic Claude models with extended thinking
+- ThinkingGeneratorCerebras - Cerebras models with reasoning
+- ThinkingGeneratorGemini - Google Gemini models with thinking
+- ThinkingGeneratorOpenRouter - OpenRouter with reasoning models
+- ThinkingGeneratorResponses - OpenAI Responses API with reasoning
+- ThinkingGeneratorZai - Zai generator with reasoning
+
+Note: The OpenAI Chat Completions generator (OpenAiGenerator) does not support thinking blocks.
 
 ## Working with PDFs
 
