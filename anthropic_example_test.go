@@ -38,7 +38,7 @@ func ExampleAnthropicGenerator_Generate() {
 
 	// Generate a response
 	// Note that anthropic generator requires that max generation tokens generation param be set
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 1024})
+	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(1024)})
 	if err != nil {
 		panic(err.Error())
 	}
@@ -47,8 +47,8 @@ func ExampleAnthropicGenerator_Generate() {
 
 	// Customize generation parameters
 	opts := GenOpts{
-		Temperature:         0.7,
-		MaxGenerationTokens: 1024,
+		Temperature: Ptr(0.7),
+		MaxGenerationTokens: Ptr(1024),
 	}
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
@@ -84,7 +84,7 @@ func ExampleAnthropicGenerator_Stream() {
 
 	// Stream a response
 	var blocks []Block
-	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 1024}) {
+	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(1024)}) {
 		if err != nil {
 			fmt.Println(err.Error())
 			return
@@ -120,8 +120,8 @@ func ExampleAnthropicGenerator_Generate_thinking() {
 
 	// Use thinking
 	opts := GenOpts{
-		Temperature:         1.0,
-		MaxGenerationTokens: 9000,
+		Temperature: Ptr(1.0),
+		MaxGenerationTokens: Ptr(9000),
 		ThinkingBudget:      "5000",
 	}
 	resp, err := gen.Generate(context.Background(), dialog, &opts)
@@ -190,7 +190,7 @@ func ExampleAnthropicGenerator_Generate_image() {
 			},
 		},
 	}
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 512})
+	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(512)})
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -262,7 +262,7 @@ Only output the price, like
 	// Customize generation parameters
 	opts := GenOpts{
 		ToolChoice:          "get_stock_price", // Can specify a specific tool to force invoke
-		MaxGenerationTokens: 8096,
+		MaxGenerationTokens: Ptr(8096),
 	}
 	// Generate a response
 	resp, err := gen.Generate(context.Background(), dialog, &opts)
@@ -282,7 +282,7 @@ Only output the price, like
 		},
 	})
 
-	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 8096})
+	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(8096)})
 	if err != nil {
 		panic(err.Error())
 	}
@@ -356,7 +356,7 @@ Assistant: MSFT
 
 	// Generate a response
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{
-		MaxGenerationTokens: 8096,
+		MaxGenerationTokens: Ptr(8096),
 		ThinkingBudget:      "4000",
 	})
 	if err != nil {
@@ -386,7 +386,7 @@ Assistant: MSFT
 	})
 
 	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{
-		MaxGenerationTokens: 8096,
+		MaxGenerationTokens: Ptr(8096),
 		ThinkingBudget:      "4000",
 	})
 	if err != nil {
@@ -464,7 +464,7 @@ Assistant: MSFT
 	// Stream a response
 	var blocks []Block
 	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{
-		MaxGenerationTokens: 32000,
+		MaxGenerationTokens: Ptr(32000),
 		ThinkingBudget:      "10000",
 	}) {
 		if err != nil {
@@ -581,7 +581,7 @@ Assistant: MSFT
 	// Stream a response
 	blocks = nil
 	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{
-		MaxGenerationTokens: 32000,
+		MaxGenerationTokens: Ptr(32000),
 		ThinkingBudget:      "10000",
 	}) {
 		if err != nil {
@@ -694,7 +694,7 @@ func ExampleAnthropicGenerator_Generate_pdf() {
 
 	// Generate a response
 	ctx := context.Background()
-	response, err := gen.Generate(ctx, dialog, &GenOpts{MaxGenerationTokens: 1024})
+	response, err := gen.Generate(ctx, dialog, &GenOpts{MaxGenerationTokens: Ptr(1024)})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return

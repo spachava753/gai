@@ -4,6 +4,12 @@ import (
 	"context"
 )
 
+// Ptr returns a pointer to the given value. This is a helper function
+// for setting optional pointer fields in GenOpts.
+func Ptr[T any](v T) *T {
+	return &v
+}
+
 const (
 	ToolChoiceAuto          = "auto"
 	ToolChoiceToolsRequired = "required"
@@ -25,53 +31,54 @@ type GenOpts struct {
 	// Higher temperatures lead to more creative and diverse outputs, while lower temperatures result in more
 	// conservative and deterministic outputs
 	//
-	// Must be between 0.0 and 1.0. Default value is 0.0
-	Temperature float64 `json:"temperature,omitempty" yaml:"temperature,omitempty"`
+	// Must be between 0.0 and 1.0. When nil, the Generator uses its default value.
+	Temperature *float64 `json:"temperature,omitempty" yaml:"temperature,omitempty"`
 
 	// TopP is a parameter that uses nucleus sampling. The API computes the cumulative distribution over all
 	// options for each subsequent token in decreasing probability order and cuts it off once it reaches the
 	// specified probability. You should either alter Temperature or TopP, but not both
 	//
-	// Must be between 0.0 and 1.0. Default value is 0.0
-	TopP float64 `json:"top_p,omitempty" yaml:"top_p,omitempty"`
+	// Must be between 0.0 and 1.0. When nil, the Generator uses its default value.
+	TopP *float64 `json:"top_p,omitempty" yaml:"top_p,omitempty"`
 
 	// TopK is used to only sample from the top k options for each subsequent token, and generally
 	// used to remove "long tail" low probability responses.
 	//
-	// Requires a value greater than 0, so if the value is set to 0, it is treated as if the value is not set
+	// When nil, the Generator uses its default value.
 	//
 	// Recommended for advanced use cases only - you usually only need to use temperature
-	TopK uint `json:"top_k,omitempty" yaml:"top_k,omitempty"`
+	TopK *uint `json:"top_k,omitempty" yaml:"top_k,omitempty"`
 
 	// FrequencyPenalty is a number between -2.0 and 2.0. Positive values penalize new tokens based on their
 	// existing frequency in the text so far, decreasing the model's likelihood to repeat the same line verbatim.
 	//
-	// Default value is 0
+	// When nil, the Generator uses its default value.
 	//
 	// Note that this parameter is not supported by every Generator, in which case this parameter will be ignored
-	FrequencyPenalty float64 `json:"frequency_penalty,omitempty" yaml:"frequency_penalty,omitempty"`
+	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty" yaml:"frequency_penalty,omitempty"`
 
 	// PresencePenalty is a number between -2.0 and 2.0. Positive values penalize new tokens based on whether
 	// they appear in the text so far, increasing the model's likelihood to talk about new topics
 	//
-	// Default value is 0
+	// When nil, the Generator uses its default value.
 	//
 	// Note that this parameter is not supported by every Generator, in which case this parameter will be ignored
-	PresencePenalty float64 `json:"presence_penalty,omitempty" yaml:"presence_penalty,omitempty"`
+	PresencePenalty *float64 `json:"presence_penalty,omitempty" yaml:"presence_penalty,omitempty"`
 
 	// N represents how many [Response.Candidates] to generate.
 	//
-	// If N is not set (equal to 0), then the default value of 1 is used
+	// When nil, the default value of 1 is used
 	//
 	// IMPORTANT: Note that you will be charged based on the number of generated tokens across all the choices.
 	// Keep N as 1 to minimize costs
-	N uint `json:"n,omitempty" yaml:"n,omitempty"`
+	N *uint `json:"n,omitempty" yaml:"n,omitempty"`
 
 	// MaxGenerationTokens is the maximum number of tokens to generate before stopping for each [Response.Candidates].
 	//
 	// Note that a Generator may stop before reaching this maximum.
-	// This parameter only specifies the absolute maximum number of tokens to generate
-	MaxGenerationTokens int `json:"max_generation_tokens,omitempty" yaml:"max_generation_tokens,omitempty"`
+	// This parameter only specifies the absolute maximum number of tokens to generate.
+	// When nil, the Generator uses its default value.
+	MaxGenerationTokens *int `json:"max_generation_tokens,omitempty" yaml:"max_generation_tokens,omitempty"`
 
 	// ToolChoice represents how the Generator should use the provided tools.
 	// The Generator can use a specific tool, any available tool, or decide by itself

@@ -49,7 +49,7 @@ func Example_mixGenerators() {
 	claudeResp, err := anthropicGen.Generate(
 		context.Background(),
 		dialog,
-		&GenOpts{MaxGenerationTokens: 1024}, // Claude requires MaxGenerationTokens
+		&GenOpts{MaxGenerationTokens: Ptr(1024)}, // Claude requires MaxGenerationTokens
 	)
 	if err != nil {
 		panic(err)
@@ -75,7 +75,7 @@ func Example_mixGenerators() {
 	gptResp, err := openaiGen.Generate(
 		context.Background(),
 		dialog,
-		&GenOpts{MaxGenerationTokens: 1024},
+		&GenOpts{MaxGenerationTokens: Ptr(1024)},
 	)
 	if err != nil {
 		panic(err)
@@ -129,7 +129,7 @@ func Example_mixGenerators() {
 		stockDialog,
 		&GenOpts{
 			ToolChoice:          "get_stock_price",
-			MaxGenerationTokens: 1024,
+			MaxGenerationTokens: Ptr(1024),
 		},
 	)
 	if err != nil {
@@ -156,7 +156,7 @@ func Example_mixGenerators() {
 	claudeToolResp, err := anthropicGen.Generate(
 		context.Background(),
 		stockDialog,
-		&GenOpts{MaxGenerationTokens: 1024},
+		&GenOpts{MaxGenerationTokens: Ptr(1024)},
 	)
 	if err != nil {
 		panic(err)

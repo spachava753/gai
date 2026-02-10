@@ -421,33 +421,33 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	// Map our options to OpenAI params if options are provided
 	if options != nil {
 		// Set temperature if non-zero
-		if options.Temperature != 0 {
-			params.Temperature = oai.Float(options.Temperature)
+		if options.Temperature != nil {
+			params.Temperature = oai.Float(*options.Temperature)
 		}
 
 		// Set top_p if non-zero
-		if options.TopP != 0 {
-			params.TopP = oai.Float(options.TopP)
+		if options.TopP != nil {
+			params.TopP = oai.Float(*options.TopP)
 		}
 
 		// Set frequency penalty if non-zero
-		if options.FrequencyPenalty != 0 {
-			params.FrequencyPenalty = oai.Float(options.FrequencyPenalty)
+		if options.FrequencyPenalty != nil {
+			params.FrequencyPenalty = oai.Float(*options.FrequencyPenalty)
 		}
 
 		// Set presence penalty if non-zero
-		if options.PresencePenalty != 0 {
-			params.PresencePenalty = oai.Float(options.PresencePenalty)
+		if options.PresencePenalty != nil {
+			params.PresencePenalty = oai.Float(*options.PresencePenalty)
 		}
 
 		// Set max tokens if specified
-		if options.MaxGenerationTokens > 0 {
-			params.MaxCompletionTokens = oai.Int(int64(options.MaxGenerationTokens))
+		if options.MaxGenerationTokens != nil {
+			params.MaxCompletionTokens = oai.Int(int64(*options.MaxGenerationTokens))
 		}
 
 		// Set number of completions if specified
-		if options.N > 0 {
-			params.N = oai.Int(int64(options.N))
+		if options.N != nil {
+			params.N = oai.Int(int64(*options.N))
 		}
 
 		// Set stop sequences if specified
@@ -759,33 +759,33 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		// Map our options to OpenAI params if options are provided
 		if options != nil {
 			// Set temperature if non-zero
-			if options.Temperature != 0 {
-				params.Temperature = oai.Float(options.Temperature)
+			if options.Temperature != nil {
+				params.Temperature = oai.Float(*options.Temperature)
 			}
 
 			// Set top_p if non-zero
-			if options.TopP != 0 {
-				params.TopP = oai.Float(options.TopP)
+			if options.TopP != nil {
+				params.TopP = oai.Float(*options.TopP)
 			}
 
 			// Set frequency penalty if non-zero
-			if options.FrequencyPenalty != 0 {
-				params.FrequencyPenalty = oai.Float(options.FrequencyPenalty)
+			if options.FrequencyPenalty != nil {
+				params.FrequencyPenalty = oai.Float(*options.FrequencyPenalty)
 			}
 
 			// Set presence penalty if non-zero
-			if options.PresencePenalty != 0 {
-				params.PresencePenalty = oai.Float(options.PresencePenalty)
+			if options.PresencePenalty != nil {
+				params.PresencePenalty = oai.Float(*options.PresencePenalty)
 			}
 
 			// Set max tokens if specified
-			if options.MaxGenerationTokens > 0 {
-				params.MaxCompletionTokens = oai.Int(int64(options.MaxGenerationTokens))
+			if options.MaxGenerationTokens != nil {
+				params.MaxCompletionTokens = oai.Int(int64(*options.MaxGenerationTokens))
 			}
 
 			// Set number of completions if specified
-			if options.N > 0 {
-				params.N = oai.Int(int64(options.N))
+			if options.N != nil {
+				params.N = oai.Int(int64(*options.N))
 			}
 
 			// Set stop sequences if specified

@@ -296,14 +296,14 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 
 	// Map GenOpts
 	if options != nil {
-		if options.Temperature != 0 {
-			params.Temperature = oai.Float(options.Temperature)
+		if options.Temperature != nil {
+			params.Temperature = oai.Float(*options.Temperature)
 		}
-		if options.TopP != 0 {
-			params.TopP = oai.Float(options.TopP)
+		if options.TopP != nil {
+			params.TopP = oai.Float(*options.TopP)
 		}
-		if options.MaxGenerationTokens > 0 {
-			params.MaxCompletionTokens = oai.Int(int64(options.MaxGenerationTokens))
+		if options.MaxGenerationTokens != nil {
+			params.MaxCompletionTokens = oai.Int(int64(*options.MaxGenerationTokens))
 		}
 		if len(options.StopSequences) > 0 {
 			if len(options.StopSequences) == 1 {
@@ -478,14 +478,14 @@ func (g *ZaiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOp
 
 		// Map GenOpts
 		if options != nil {
-			if options.Temperature != 0 {
-				params.Temperature = oai.Float(options.Temperature)
+			if options.Temperature != nil {
+				params.Temperature = oai.Float(*options.Temperature)
 			}
-			if options.TopP != 0 {
-				params.TopP = oai.Float(options.TopP)
+			if options.TopP != nil {
+				params.TopP = oai.Float(*options.TopP)
 			}
-			if options.MaxGenerationTokens > 0 {
-				params.MaxCompletionTokens = oai.Int(int64(options.MaxGenerationTokens))
+			if options.MaxGenerationTokens != nil {
+				params.MaxCompletionTokens = oai.Int(int64(*options.MaxGenerationTokens))
 			}
 			if len(options.StopSequences) > 0 {
 				if len(options.StopSequences) == 1 {

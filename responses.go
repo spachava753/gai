@@ -334,14 +334,14 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 	}
 
 	if options != nil {
-		if options.Temperature != 0 {
-			params.Temperature = openai.Opt(options.Temperature)
+		if options.Temperature != nil {
+			params.Temperature = openai.Opt(*options.Temperature)
 		}
-		if options.TopP != 0 {
-			params.TopP = openai.Opt(options.TopP)
+		if options.TopP != nil {
+			params.TopP = openai.Opt(*options.TopP)
 		}
-		if options.MaxGenerationTokens > 0 {
-			params.MaxOutputTokens = openai.Opt(int64(options.MaxGenerationTokens))
+		if options.MaxGenerationTokens != nil {
+			params.MaxOutputTokens = openai.Opt(int64(*options.MaxGenerationTokens))
 		}
 		if options.ToolChoice != "" {
 			switch options.ToolChoice {
@@ -715,14 +715,14 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 		}
 
 		if options != nil {
-			if options.Temperature != 0 {
-				params.Temperature = openai.Opt(options.Temperature)
+			if options.Temperature != nil {
+				params.Temperature = openai.Opt(*options.Temperature)
 			}
-			if options.TopP != 0 {
-				params.TopP = openai.Opt(options.TopP)
+			if options.TopP != nil {
+				params.TopP = openai.Opt(*options.TopP)
 			}
-			if options.MaxGenerationTokens > 0 {
-				params.MaxOutputTokens = openai.Opt(int64(options.MaxGenerationTokens))
+			if options.MaxGenerationTokens != nil {
+				params.MaxOutputTokens = openai.Opt(int64(*options.MaxGenerationTokens))
 			}
 			if options.ToolChoice != "" {
 				switch options.ToolChoice {

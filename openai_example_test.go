@@ -53,7 +53,7 @@ func ExampleOpenAiGenerator_Generate_image() {
 			},
 		},
 	}
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 512})
+	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(512)})
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -113,7 +113,7 @@ func ExampleOpenAiGenerator_Generate_audio() {
 	}
 
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{
-		MaxGenerationTokens: 128,
+		MaxGenerationTokens: Ptr(128),
 	})
 	if err != nil {
 		fmt.Println("Error:", err)
@@ -162,9 +162,9 @@ func ExampleOpenAiGenerator_Generate() {
 
 	// Customize generation parameters
 	opts := GenOpts{
-		TopK:                10,
-		N:                   2, // Set N to a value higher than 1 to generate multiple responses in a single request
-		MaxGenerationTokens: 1024,
+		TopK: Ptr[uint](10),
+		N: Ptr[uint](2), // Set N to a value higher than 1 to generate multiple responses in a single request
+		MaxGenerationTokens: Ptr(1024),
 	}
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
@@ -204,7 +204,7 @@ func ExampleOpenAiGenerator_Stream() {
 
 	// Stream a response
 	blocks := make([][]Block, 2)
-	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{N: 2}) {
+	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{N: Ptr[uint](2)}) {
 		if err != nil {
 			fmt.Println(err.Error())
 			return
@@ -248,7 +248,7 @@ func ExampleOpenAiGenerator_Generate_openRouter() {
 
 	// Customize generation parameters
 	opts := GenOpts{
-		MaxGenerationTokens: 1024,
+		MaxGenerationTokens: Ptr(1024),
 	}
 
 	// Generate a response
@@ -285,9 +285,9 @@ func ExampleOpenAiGenerator_Generate_thinking() {
 
 	// Customize generation parameters
 	opts := GenOpts{
-		MaxGenerationTokens: 4096,
+		MaxGenerationTokens: Ptr(4096),
 		ThinkingBudget:      "low",
-		Temperature:         1.0,
+		Temperature: Ptr(1.0),
 	}
 
 	// Generate a response

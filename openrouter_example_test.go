@@ -51,7 +51,7 @@ func ExampleOpenRouterGenerator_Generate() {
 
 	// Customize generation parameters
 	opts := GenOpts{
-		MaxGenerationTokens: 10000,
+		MaxGenerationTokens: Ptr(10000),
 	}
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
@@ -108,7 +108,7 @@ func ExampleOpenRouterGenerator_Generate_image() {
 		},
 	}
 
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 512})
+	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(512)})
 	if err != nil {
 		fmt.Println("Error:", err)
 		return

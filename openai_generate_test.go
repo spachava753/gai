@@ -76,7 +76,7 @@ func TestGenerate(t *testing.T) {
 
 	// Test with single stop sequence
 	singleStopOptions := &GenOpts{
-		Temperature:   0.7,
+		Temperature: Ptr(0.7),
 		StopSequences: []string{"stop"},
 	}
 
@@ -117,18 +117,18 @@ func TestGenerate(t *testing.T) {
 
 	// Standard options for tests
 	testOptions := &GenOpts{
-		Temperature: 0.7,
+		Temperature: Ptr(0.7),
 	}
 
 	// Advanced options for testing more parameters
 	advancedOptions := &GenOpts{
-		Temperature:         0.5,
-		TopP:                0.9,
-		TopK:                10,
-		FrequencyPenalty:    0.2,
-		PresencePenalty:     0.1,
-		MaxGenerationTokens: 100,
-		N:                   2,
+		Temperature: Ptr(0.5),
+		TopP: Ptr(0.9),
+		TopK: Ptr[uint](10),
+		FrequencyPenalty: Ptr(0.2),
+		PresencePenalty: Ptr(0.1),
+		MaxGenerationTokens: Ptr(100),
+		N: Ptr[uint](2),
 		StopSequences:       []string{"stop"},
 		ToolChoice:          ToolChoiceToolsRequired,
 	}

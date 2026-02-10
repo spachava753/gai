@@ -131,7 +131,7 @@
 //
 //		// Generate a response
 //		response, err := generator.Generate(context.Background(), dialog, &gai.GenOpts{
-//			Temperature: 0.7,
+//			Temperature: Ptr(0.7),
 //		})
 //		if err != nil {
 //			fmt.Printf("Error: %v\n", err)
@@ -294,7 +294,7 @@
 //
 //		// Generate a response using the fallback strategy
 //		response, err := fallbackGen.Generate(context.Background(), dialog, &gai.GenOpts{
-//			Temperature: 0.7,
+//			Temperature: Ptr(0.7),
 //		})
 //		if err != nil {
 //			fmt.Printf("Error: %v\n", err)
@@ -533,7 +533,7 @@
 //	completeDialog, err := toolGen.Generate(ctx, dialog, func(d gai.Dialog) *gai.GenOpts {
 //		return &gai.GenOpts{
 //			ToolChoice: gai.ToolChoiceAuto,
-//			Temperature: 0.7,
+//			Temperature: Ptr(0.7),
 //		}
 //	})
 //

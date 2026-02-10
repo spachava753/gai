@@ -296,28 +296,25 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 
 	// Map GenOpts subset supported by Cerebras
 	if options != nil {
-		if options.Temperature != 0 {
-			t := options.Temperature
-			req.Temperature = &t
+		if options.Temperature != nil {
+			req.Temperature = options.Temperature
 		}
-		if options.TopP != 0 {
-			tp := options.TopP
-			req.TopP = &tp
+		if options.TopP != nil {
+			req.TopP = options.TopP
 		}
-		if options.FrequencyPenalty != 0 {
+		if options.FrequencyPenalty != nil {
 			return Response{}, fmt.Errorf("frequency penalty is invalid")
 		}
-		if options.PresencePenalty != 0 {
+		if options.PresencePenalty != nil {
 			return Response{}, fmt.Errorf("presence penalty is invalid")
 		}
-		if options.TopK != 0 {
+		if options.TopK != nil {
 			return Response{}, fmt.Errorf("top_k is invalid")
 		}
-		if options.MaxGenerationTokens > 0 {
-			m := options.MaxGenerationTokens
-			req.MaxCompletionTokens = &m
+		if options.MaxGenerationTokens != nil {
+			req.MaxCompletionTokens = options.MaxGenerationTokens
 		}
-		if options.N > 0 {
+		if options.N != nil {
 			return Response{}, fmt.Errorf("n is invalid")
 		}
 		if len(options.StopSequences) > 0 {

@@ -83,7 +83,7 @@ func ExampleResponsesGenerator_Generate_image() {
 			},
 		},
 	}
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: 512, ThinkingBudget: "high"})
+	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(512), ThinkingBudget: "high"})
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -126,7 +126,7 @@ func ExampleResponsesGenerator_Generate_thinking() {
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5, "You are a helpful assistant")
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Are LLMs conscious? Think it through and give a comprehensive answer")}}}
-	opts := GenOpts{ThinkingBudget: "medium", Temperature: 1.0, ExtraArgs: map[string]any{
+	opts := GenOpts{ThinkingBudget: "medium", Temperature: Ptr(1.0), ExtraArgs: map[string]any{
 		ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
 	}}
 	resp, err := gen.Generate(context.Background(), dialog, &opts)

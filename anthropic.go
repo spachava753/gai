@@ -318,32 +318,32 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	// Map our options to Anthropic params if options are provided
 	if options != nil {
 		// Set temperature if non-zero
-		if options.Temperature != 0 {
-			params.Temperature = a.Float(options.Temperature)
+		if options.Temperature != nil {
+			params.Temperature = a.Float(*options.Temperature)
 		}
 
 		// Set top_p if non-zero
-		if options.TopP != 0 {
-			params.TopP = a.Float(options.TopP)
+		if options.TopP != nil {
+			params.TopP = a.Float(*options.TopP)
 		}
 
 		// Set frequency penalty if non-zero
-		if options.FrequencyPenalty != 0 {
+		if options.FrequencyPenalty != nil {
 			return Response{}, fmt.Errorf("frequency penalty is invalid")
 		}
 
 		// Set presence penalty if non-zero
-		if options.PresencePenalty != 0 {
+		if options.PresencePenalty != nil {
 			return Response{}, fmt.Errorf("presence penalty is invalid")
 		}
 
 		// Set max tokens if specified
-		if options.MaxGenerationTokens > 0 {
-			params.MaxTokens = int64(options.MaxGenerationTokens)
+		if options.MaxGenerationTokens != nil {
+			params.MaxTokens = int64(*options.MaxGenerationTokens)
 		}
 
 		// Set number of completions if specified
-		if options.N > 0 {
+		if options.N != nil {
 			return Response{}, fmt.Errorf("n is invalid")
 		}
 
@@ -615,34 +615,34 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 		// Map our options to OpenAI params if options are provided
 		if options != nil {
 			// Set temperature if non-zero
-			if options.Temperature != 0 {
-				params.Temperature = a.Float(options.Temperature)
+			if options.Temperature != nil {
+				params.Temperature = a.Float(*options.Temperature)
 			}
 
 			// Set top_p if non-zero
-			if options.TopP != 0 {
-				params.TopP = a.Float(options.TopP)
+			if options.TopP != nil {
+				params.TopP = a.Float(*options.TopP)
 			}
 
 			// Set frequency penalty if non-zero
-			if options.FrequencyPenalty != 0 {
+			if options.FrequencyPenalty != nil {
 				yield(StreamChunk{}, fmt.Errorf("frequency penalty is invalid"))
 				return
 			}
 
 			// Set presence penalty if non-zero
-			if options.PresencePenalty != 0 {
+			if options.PresencePenalty != nil {
 				yield(StreamChunk{}, fmt.Errorf("presence penalty is invalid"))
 				return
 			}
 
 			// Set max tokens if specified
-			if options.MaxGenerationTokens > 0 {
-				params.MaxTokens = int64(options.MaxGenerationTokens)
+			if options.MaxGenerationTokens != nil {
+				params.MaxTokens = int64(*options.MaxGenerationTokens)
 			}
 
 			// Set number of completions if specified
-			if options.N > 0 {
+			if options.N != nil {
 				yield(StreamChunk{}, fmt.Errorf("n is invalid"))
 				return
 			}

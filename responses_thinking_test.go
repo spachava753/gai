@@ -28,7 +28,7 @@ func TestResponsesGenerator_Generate_Thinking_Logging(t *testing.T) {
 
 	opts := GenOpts{
 		ThinkingBudget: "medium",
-		Temperature:    1.0,
+		Temperature: Ptr(1.0),
 		ExtraArgs: map[string]any{
 			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
 		},

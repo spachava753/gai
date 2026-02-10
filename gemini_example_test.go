@@ -660,7 +660,7 @@ func ExampleGeminiGenerator_Generate_pdf() {
 	}
 
 	// Generate a response
-	response, err := g.Generate(ctx, dialog, &GenOpts{MaxGenerationTokens: 1024})
+	response, err := g.Generate(ctx, dialog, &GenOpts{MaxGenerationTokens: Ptr(1024)})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return

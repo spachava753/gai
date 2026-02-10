@@ -219,23 +219,23 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 			genContentConfig.ToolConfig = tc
 		}
 
-		if options.Temperature > 0 {
-			genContentConfig.Temperature = genai.Ptr(float32(options.Temperature))
+		if options.Temperature != nil {
+			genContentConfig.Temperature = genai.Ptr(float32(*options.Temperature))
 		}
-		if options.MaxGenerationTokens > 0 {
-			genContentConfig.MaxOutputTokens = int32(options.MaxGenerationTokens)
+		if options.MaxGenerationTokens != nil {
+			genContentConfig.MaxOutputTokens = int32(*options.MaxGenerationTokens)
 		}
-		if options.N > 1 {
-			genContentConfig.CandidateCount = int32(options.N)
+		if options.N != nil && *options.N > 1 {
+			genContentConfig.CandidateCount = int32(*options.N)
 		}
 		if options.StopSequences != nil {
 			genContentConfig.StopSequences = options.StopSequences
 		}
-		if options.TopP > 0 {
-			genContentConfig.TopP = genai.Ptr(float32(options.TopP))
+		if options.TopP != nil {
+			genContentConfig.TopP = genai.Ptr(float32(*options.TopP))
 		}
-		if options.TopK > 0 {
-			genContentConfig.TopK = genai.Ptr(float32(options.TopK))
+		if options.TopK != nil {
+			genContentConfig.TopK = genai.Ptr(float32(*options.TopK))
 		}
 		if options.ThinkingBudget != "" {
 			switch options.ThinkingBudget {
@@ -489,23 +489,23 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 				genContentConfig.ToolConfig = tc
 			}
 
-			if options.Temperature > 0 {
-				genContentConfig.Temperature = genai.Ptr(float32(options.Temperature))
+			if options.Temperature != nil {
+				genContentConfig.Temperature = genai.Ptr(float32(*options.Temperature))
 			}
-			if options.MaxGenerationTokens > 0 {
-				genContentConfig.MaxOutputTokens = int32(options.MaxGenerationTokens)
+			if options.MaxGenerationTokens != nil {
+				genContentConfig.MaxOutputTokens = int32(*options.MaxGenerationTokens)
 			}
-			if options.N > 1 {
-				genContentConfig.CandidateCount = int32(options.N)
+			if options.N != nil && *options.N > 1 {
+				genContentConfig.CandidateCount = int32(*options.N)
 			}
 			if options.StopSequences != nil {
 				genContentConfig.StopSequences = options.StopSequences
 			}
-			if options.TopP > 0 {
-				genContentConfig.TopP = genai.Ptr(float32(options.TopP))
+			if options.TopP != nil {
+				genContentConfig.TopP = genai.Ptr(float32(*options.TopP))
 			}
-			if options.TopK > 0 {
-				genContentConfig.TopK = genai.Ptr(float32(options.TopK))
+			if options.TopK != nil {
+				genContentConfig.TopK = genai.Ptr(float32(*options.TopK))
 			}
 		}
 

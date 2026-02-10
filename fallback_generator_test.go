@@ -120,7 +120,7 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 
 	// Create test options
 	testOptions := &GenOpts{
-		Temperature: 0.7,
+		Temperature: Ptr(0.7),
 	}
 
 	tests := []struct {
