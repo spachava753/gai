@@ -388,18 +388,29 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		}
 
 		if options.ThinkingBudget != "" {
-			budget, err := strconv.ParseUint(options.ThinkingBudget, 10, 64)
-			if err != nil {
-				return Response{}, &InvalidParameterErr{
-					Parameter: "thinking budget",
-					Reason:    fmt.Sprintf("value is not a unsigned int: %s", err),
+			switch options.ThinkingBudget {
+			case "adaptive":
+				params.Thinking = a.ThinkingConfigParamUnion{
+					OfAdaptive: &a.ThinkingConfigAdaptiveParam{},
 				}
-			}
-
-			params.Thinking = a.ThinkingConfigParamUnion{
-				OfEnabled: &a.ThinkingConfigEnabledParam{
-					BudgetTokens: int64(budget),
-				},
+			case "disabled":
+				params.Thinking = a.ThinkingConfigParamUnion{
+					OfDisabled: &a.ThinkingConfigDisabledParam{},
+				}
+			default:
+				// Try to parse as token budget for backward compatibility
+				budget, err := strconv.ParseUint(options.ThinkingBudget, 10, 64)
+				if err != nil {
+					return Response{}, &InvalidParameterErr{
+						Parameter: "thinking budget",
+						Reason:    fmt.Sprintf("value must be 'adaptive', 'disabled', or a valid unsigned int: %s", err),
+					}
+				}
+				params.Thinking = a.ThinkingConfigParamUnion{
+					OfEnabled: &a.ThinkingConfigEnabledParam{
+						BudgetTokens: int64(budget),
+					},
+				}
 			}
 		}
 	}
@@ -685,19 +696,30 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			}
 
 			if options.ThinkingBudget != "" {
-				budget, err := strconv.ParseUint(options.ThinkingBudget, 10, 64)
-				if err != nil {
-					yield(StreamChunk{}, InvalidParameterErr{
-						Parameter: "thinking budget",
-						Reason:    fmt.Sprintf("value is not a unsigned int: %s", err),
-					})
-					return
-				}
-
-				params.Thinking = a.ThinkingConfigParamUnion{
-					OfEnabled: &a.ThinkingConfigEnabledParam{
-						BudgetTokens: int64(budget),
-					},
+				switch options.ThinkingBudget {
+				case "adaptive":
+					params.Thinking = a.ThinkingConfigParamUnion{
+						OfAdaptive: &a.ThinkingConfigAdaptiveParam{},
+					}
+				case "disabled":
+					params.Thinking = a.ThinkingConfigParamUnion{
+						OfDisabled: &a.ThinkingConfigDisabledParam{},
+					}
+				default:
+					// Try to parse as token budget for backward compatibility
+					budget, err := strconv.ParseUint(options.ThinkingBudget, 10, 64)
+					if err != nil {
+						yield(StreamChunk{}, InvalidParameterErr{
+							Parameter: "thinking budget",
+							Reason:    fmt.Sprintf("value must be 'adaptive', 'disabled', or a valid unsigned int: %s", err),
+						})
+						return
+					}
+					params.Thinking = a.ThinkingConfigParamUnion{
+						OfEnabled: &a.ThinkingConfigEnabledParam{
+							BudgetTokens: int64(budget),
+						},
+					}
 				}
 			}
 		}

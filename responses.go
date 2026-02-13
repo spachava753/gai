@@ -354,12 +354,7 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 			}
 		}
 		if options.ThinkingBudget != "" {
-			switch options.ThinkingBudget {
-			case "minimal", "low", "medium", "high":
-				params.Reasoning = responses.ReasoningParam{Effort: responses.ReasoningEffort(options.ThinkingBudget)}
-			default:
-				return Response{}, InvalidParameterErr{Parameter: "thinking budget", Reason: fmt.Sprintf("invalid thinking budget: %s", options.ThinkingBudget)}
-			}
+			params.Reasoning = responses.ReasoningParam{Effort: responses.ReasoningEffort(options.ThinkingBudget)}
 			if options.ExtraArgs != nil {
 				if val, ok := options.ExtraArgs[ResponsesThoughtSummaryDetailParam]; ok {
 					params.Reasoning.Summary = val.(responses.ReasoningSummary)
@@ -735,13 +730,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				}
 			}
 			if options.ThinkingBudget != "" {
-				switch options.ThinkingBudget {
-				case "minimal", "low", "medium", "high":
-					params.Reasoning = responses.ReasoningParam{Effort: responses.ReasoningEffort(options.ThinkingBudget)}
-				default:
-					yield(StreamChunk{}, InvalidParameterErr{Parameter: "thinking budget", Reason: fmt.Sprintf("invalid thinking budget: %s", options.ThinkingBudget)})
-					return
-				}
+				params.Reasoning = responses.ReasoningParam{Effort: responses.ReasoningEffort(options.ThinkingBudget)}
 				if options.ExtraArgs != nil {
 					if val, ok := options.ExtraArgs[ResponsesThoughtSummaryDetailParam]; ok {
 						params.Reasoning.Summary = val.(responses.ReasoningSummary)

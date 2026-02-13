@@ -3,7 +3,7 @@ module github.com/spachava753/gai
 go 1.24.0
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.20.0
+	github.com/anthropics/anthropic-sdk-go v1.22.1
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/google/jsonschema-go v0.4.2
 	github.com/openai/openai-go/v3 v3.17.0
