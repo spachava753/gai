@@ -3,7 +3,6 @@ package gai
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -290,21 +289,70 @@ Assistant: Nvidia
 	// MSFT
 }
 
-func ExampleResponsesGenerator_Stream_parallelToolUse() {
-	// Create an OpenAI client
+// ExampleStreamingAdapter_responses demonstrates using StreamingAdapter with
+// the ResponsesGenerator for stateless multi-turn conversation. The adapter
+// compresses streaming chunks into complete Response objects, making it easy
+// to append the assistant's response to the dialog for subsequent turns.
+func ExampleStreamingAdapter_responses() {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
 		return
 	}
-	client := openai.NewClient(
-		option.WithAPIKey(apiKey),
-	)
+	client := openai.NewClient(option.WithAPIKey(apiKey))
 
-	// Register tools
+	// Create the generator and wrap it with StreamingAdapter.
+	// StreamingAdapter.Generate streams internally, then compresses chunks into
+	// a standard Response — identical to what ResponsesGenerator.Generate returns.
+	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
+	adapter := &StreamingAdapter{S: &gen}
+
+	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Hi!")}}}
+
+	resp, err := adapter.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		panic(err.Error())
+	}
+	fmt.Println("Response received")
+
+	// The adapter produces a complete Response with Candidates, just like Generate.
+	// Append the assistant's message and continue the conversation statelessly.
+	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("What can you help me with?")}})
+
+	resp, err = adapter.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		panic(err.Error())
+	}
+	fmt.Println(len(resp.Candidates))
+	// Output: Response received
+	// 1
+}
+
+// ExampleStreamingAdapter_responses_toolUse demonstrates using StreamingAdapter
+// with tool calling on the Responses API. The adapter compresses streaming tool
+// call chunks into complete blocks, preserving IDs and Thinking block ExtraFields
+// so the dialog can be passed back for subsequent turns without any manual chunk
+// reconstruction.
+func ExampleStreamingAdapter_responses_toolUse() {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
+		return
+	}
+	client := openai.NewClient(option.WithAPIKey(apiKey))
+	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that returns the price of a stock and nothing else.
+
+Only output the price, like
+<example>
+435.56
+</example>
+<example>
+3235.55
+</example>
+`)
 	tickerTool := Tool{
 		Name:        "get_stock_price",
-		Description: "Get the current stock price for a given ticker symbol.",
+		Description: "Get the current stock price for a given ticker symbol.\nYou can call this tool in parallel",
 		InputSchema: func() *jsonschema.Schema {
 			schema, err := GenerateSchema[struct {
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
@@ -315,209 +363,116 @@ func ExampleResponsesGenerator_Stream_parallelToolUse() {
 			return schema
 		}(),
 	}
-
-	// Instantiate a Responses Generator
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, "You are a helpful assistant")
-
-	// Register tools
-	tickerTool.Description += "\nYou can call this tool in parallel"
 	if err := gen.Register(tickerTool); err != nil {
 		panic(err.Error())
 	}
 
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Which stock, Apple vs. Microsoft, is more expensive?"),
-				},
-			},
-		},
+	// StreamingAdapter wraps the generator so we get compressed Response objects
+	// instead of raw streaming chunks.
+	adapter := &StreamingAdapter{S: &gen}
+
+	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Which stock, Apple vs. Microsoft, is more expensive?")}}}
+
+	// Turn 1: the model should call get_stock_price for both tickers.
+	resp, err := adapter.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		panic(err.Error())
 	}
 
-	// Stream a response
-	var blocks []Block
-	for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
-		if err != nil {
-			fmt.Println(err.Error())
-			return
-		}
-		blocks = append(blocks, chunk.Block)
-	}
-
-	if len(blocks) > 1 {
-		fmt.Println("Response received")
-	}
-
-	// collect the blocks
-	var prevToolCallId string
-	var toolCalls []Block
-	var toolcallArgs string
-	var toolCallInput ToolCallInput
-	for _, block := range blocks {
-		// Skip metadata blocks
-		if block.BlockType == MetadataBlockType {
-			continue
-		}
-		if block.ID != "" && block.ID != prevToolCallId {
-			if toolcallArgs != "" {
-				// Parse the arguments string into a map
-				if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
-					panic(err.Error())
-				}
-
-				// Marshal back to JSON for consistent representation
-				toolUseJSON, err := json.Marshal(toolCallInput)
-				if err != nil {
-					panic(err.Error())
-				}
-				toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
-				toolCallInput = ToolCallInput{}
-				toolcallArgs = ""
-			}
-			prevToolCallId = block.ID
-			toolCalls = append(toolCalls, Block{
-				ID:           block.ID,
-				BlockType:    ToolCall,
-				ModalityType: Text,
-				MimeType:     "text/plain",
-			})
-			toolCallInput.Name = block.Content.String()
-		} else {
-			toolcallArgs += block.Content.String()
+	// Collect the tool call blocks from the compressed response.
+	var toolCallBlocks []Block
+	for _, blk := range resp.Candidates[0].Blocks {
+		if blk.BlockType == ToolCall {
+			toolCallBlocks = append(toolCallBlocks, blk)
 		}
 	}
+	fmt.Println(toolCallBlocks[0].Content)
+	fmt.Println(toolCallBlocks[1].Content)
 
-	if toolcallArgs != "" {
-		// Parse the arguments string into a map
-		if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
-			panic(err.Error())
-		}
+	// Append the full assistant message (including any Thinking blocks with encrypted
+	// reasoning content) and tool results. This is the key advantage of StreamingAdapter:
+	// the compressed Candidates[0] is directly usable in the dialog.
+	dialog = append(dialog, resp.Candidates[0],
+		Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[0].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}},
+		Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[1].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("678.45")}}},
+	)
 
-		// Marshal back to JSON for consistent representation
-		toolUseJSON, err := json.Marshal(toolCallInput)
-		if err != nil {
-			panic(err.Error())
-		}
-		toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
-		toolCallInput = ToolCallInput{}
+	// Turn 2: the model responds with the answer.
+	resp, err = adapter.Generate(context.Background(), dialog, nil)
+	if err != nil {
+		panic(err.Error())
 	}
-
-	fmt.Println(len(toolCalls))
-
-	dialog = append(dialog, Message{
-		Role:   Assistant,
-		Blocks: toolCalls,
-	}, Message{
-		Role: ToolResult,
-		Blocks: []Block{
-			{
-				ID:           toolCalls[0].ID,
-				ModalityType: Text,
-				Content:      Str("123.45"),
-			},
-		},
-	}, Message{
-		Role: ToolResult,
-		Blocks: []Block{
-			{
-				ID:           toolCalls[1].ID,
-				ModalityType: Text,
-				Content:      Str("678.45"),
-			},
-		},
-	})
-
-	// Stream a response
-	blocks = nil
-	for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
-		if err != nil {
-			fmt.Println(err.Error())
-			return
-		}
-		blocks = append(blocks, chunk.Block)
-	}
-
-	if len(blocks) > 1 {
-		fmt.Println("Response received")
-	}
-
-	// Check if metadata block is present (emitted on response.completed)
-	for _, blk := range blocks {
-		if blk.BlockType == MetadataBlockType {
-			fmt.Println("Received response_completed")
+	for _, blk := range resp.Candidates[0].Blocks {
+		if blk.BlockType == Content {
+			fmt.Println(blk.Content)
 			break
 		}
 	}
-
-	// Output: Response received
-	// 2
-	// Response received
-	// Received response_completed
+	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
+	// {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
+	// MSFT
 }
 
+// ExampleResponsesGenerator_Stream_thinking demonstrates consuming the raw
+// streaming iterator with a reasoning model. The stream yields thinking chunks
+// (reasoning deltas) interleaved with content chunks. At the end, a metadata
+// block carries usage information. This example also shows how to build a
+// dialog-ready assistant message from the streamed blocks using
+// compressStreamingBlocks (via StreamingAdapter) for a follow-up turn.
 func ExampleResponsesGenerator_Stream_thinking() {
-	// Create an OpenAI client
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
 		return
 	}
-	client := openai.NewClient(
-		option.WithAPIKey(apiKey),
-	)
-
-	// Instantiate a Responses Generator
+	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
 
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Do LLMs have a soul, according to any definition of soul given by famous historical philosophers?"),
-				},
-			},
-		},
-	}
-
-	// Stream a response
-	var blocks []Block
-	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{
-		ThinkingBudget: "medium",
+	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the capital of France? Reply with just the city name.")}}}
+	opts := &GenOpts{
+		ThinkingBudget: "low",
 		ExtraArgs: map[string]any{
 			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
 		},
-	}) {
-		if err != nil {
-			fmt.Println(err.Error())
-			return
-		}
-		blocks = append(blocks, chunk.Block)
 	}
 
-	for _, block := range blocks {
-		if block.BlockType == Thinking {
-			fmt.Println("Has thinking blocks")
+	// Use StreamingAdapter so the streamed output is automatically compressed
+	// into a proper Response with Thinking blocks carrying ExtraFields (including
+	// encrypted reasoning content for stateless multi-turn conversations).
+	adapter := &StreamingAdapter{S: &gen}
+
+	resp, err := adapter.Generate(context.Background(), dialog, opts)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	// The compressed response preserves Thinking blocks from the reasoning model.
+	hasThinking := false
+	for _, blk := range resp.Candidates[0].Blocks {
+		if blk.BlockType == Thinking {
+			hasThinking = true
 			break
 		}
 	}
+	fmt.Println("Has thinking blocks:", hasThinking)
 
-	if len(blocks) > 1 {
-		fmt.Println("Response received")
+	// Append the full assistant message to the dialog. Thinking blocks with
+	// encrypted content are included, so the next call can reconstruct reasoning
+	// input items automatically.
+	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("And what country is that in?")}})
+
+	resp, err = adapter.Generate(context.Background(), dialog, opts)
+	if err != nil {
+		panic(err.Error())
 	}
 
-	// Check if metadata block is present (emitted on response.completed)
-	if blocks[len(blocks)-1].BlockType == MetadataBlockType {
-		fmt.Println("Received response_completed")
+	// Find the content block in the follow-up response.
+	for _, blk := range resp.Candidates[0].Blocks {
+		if blk.BlockType == Content {
+			fmt.Println(strings.Contains(blk.Content.String(), "France"))
+			break
+		}
 	}
-
-	// Output: Has thinking blocks
-	// Response received
-	// Received response_completed
+	// Output: Has thinking blocks: true
+	// true
 }

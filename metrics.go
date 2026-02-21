@@ -29,6 +29,12 @@ const (
 	// This applies to providers that support prompt caching (e.g., Anthropic).
 	// The value associated with this key is expected to be of type int.
 	UsageMetricCacheWriteTokens = "cache_write_tokens"
+
+	// UsageMetricReasoningTokens is a metric key representing the number of reasoning tokens
+	// in the output. This applies to providers that support reasoning/thinking models
+	// (e.g., OpenAI Responses API with reasoning enabled).
+	// The value associated with this key is expected to be of type int.
+	UsageMetricReasoningTokens = "reasoning_tokens"
 )
 
 // InputTokens returns the number of tokens in the input Dialog from the metrics.

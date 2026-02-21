@@ -415,7 +415,7 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 // processResponseOutput converts the API response output items into Block slices.
 // For reasoning items, it stores the encrypted content and reasoning ID in ExtraFields
 // so that subsequent calls can reconstruct the reasoning input items.
-func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks []Block, hasToolCalls bool, refusal string) {
+func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks []Block, hasToolCalls bool, refusal string, err error) {
 	for _, item := range output {
 		switch item.Type {
 		case "message":
@@ -434,7 +434,10 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks [
 			fc := item.AsFunctionCall()
 			var paramsMap map[string]any
 			if fc.Arguments != "" {
-				_ = json.Unmarshal([]byte(fc.Arguments), &paramsMap)
+				if unmarshalErr := json.Unmarshal([]byte(fc.Arguments), &paramsMap); unmarshalErr != nil {
+					err = fmt.Errorf("malformed function call arguments for %q: %w", fc.Name, unmarshalErr)
+					return
+				}
 			}
 			tci := ToolCallInput{Name: fc.Name, Parameters: paramsMap}
 			b, _ := json.Marshal(tci)
@@ -497,7 +500,7 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks [
 			}
 		}
 	}
-	return blocks, hasToolCalls, refusal
+	return blocks, hasToolCalls, refusal, nil
 }
 
 func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
@@ -554,9 +557,16 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 		if usage.InputTokensDetails.CachedTokens > 0 {
 			result.UsageMetadata[UsageMetricCacheReadTokens] = int(usage.InputTokensDetails.CachedTokens)
 		}
+		// Report reasoning tokens if available (models with reasoning/thinking enabled)
+		if usage.OutputTokensDetails.ReasoningTokens > 0 {
+			result.UsageMetadata[UsageMetricReasoningTokens] = int(usage.OutputTokensDetails.ReasoningTokens)
+		}
 	}
 
-	blocks, hasToolCalls, refusal := processResponseOutput(res.Output)
+	blocks, hasToolCalls, refusal, parseErr := processResponseOutput(res.Output)
+	if parseErr != nil {
+		return Response{}, parseErr
+	}
 	result.Candidates = append(result.Candidates, Message{Role: Assistant, Blocks: blocks})
 
 	if res.IncompleteDetails.Reason == "max_output_tokens" {
@@ -612,34 +622,15 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			case "response.output_item.added":
 				item := event.AsResponseOutputItemAdded().Item
 				switch item.Type {
-				case "message":
-					msg := item.AsMessage()
-					for _, c := range msg.Content {
-						switch c.Type {
-						case "output_text":
-							if !yield(StreamChunk{
-								Block: Block{
-									BlockType:    Content,
-									ModalityType: Text,
-									MimeType:     "text/plain",
-									Content:      Str(c.Text),
-								},
-								CandidatesIndex: 0,
-							}, nil) {
-								return
-							}
-						case "refusal":
-							if c.Refusal != "" {
-								yield(StreamChunk{}, ContentPolicyErr(c.Refusal))
-								return
-							}
-						}
-					}
 				case "function_call":
 					fc := item.AsFunctionCall()
+					id := fc.CallID
+					if id == "" {
+						id = fc.ID
+					}
 					if !yield(StreamChunk{
 						Block: Block{
-							ID:           fc.CallID,
+							ID:           id,
 							BlockType:    ToolCall,
 							ModalityType: Text,
 							MimeType:     "application/json",
@@ -648,42 +639,6 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 						CandidatesIndex: 0,
 					}, nil) {
 						return
-					}
-				case "reasoning":
-					reas := item.AsReasoning()
-					// Process actual reasoning content
-					for _, rc := range reas.Content {
-						if !yield(StreamChunk{
-							Block: Block{
-								BlockType:    Thinking,
-								ModalityType: Text,
-								MimeType:     "text/plain",
-								Content:      Str(rc.Text),
-								ExtraFields: map[string]interface{}{
-									ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
-								},
-							},
-							CandidatesIndex: 0,
-						}, nil) {
-							return
-						}
-					}
-					// Also process summaries as Thinking blocks
-					for _, rc := range reas.Summary {
-						if !yield(StreamChunk{
-							Block: Block{
-								BlockType:    Thinking,
-								ModalityType: Text,
-								MimeType:     "text/plain",
-								Content:      Str(rc.Text),
-								ExtraFields: map[string]interface{}{
-									ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
-								},
-							},
-							CandidatesIndex: 0,
-						}, nil) {
-							return
-						}
 					}
 				}
 			case "response.output_text.delta":
@@ -752,6 +707,44 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 						return
 					}
 				}
+			case "response.output_item.done":
+				// When a reasoning item completes, emit a zero-content thinking
+				// chunk carrying the encrypted content and reasoning ID in
+				// ExtraFields. compressStreamingBlocks merges ExtraFields across
+				// consecutive thinking chunks via maps.Copy, so the final
+				// compressed block will carry the encrypted content needed for
+				// stateless multi-turn function calling.
+				//
+				// Note: if the API ever returns multiple reasoning items in a
+				// single response (not observed in practice — one per turn is
+				// the norm), consecutive thinking chunks would be merged into
+				// one block and only the last item's encrypted content would
+				// survive. The Generate path does not have this limitation.
+				item := event.AsResponseOutputItemDone().Item
+				if item.Type == "reasoning" {
+					reas := item.AsReasoning()
+					if reas.EncryptedContent != "" || reas.ID != "" {
+						extra := map[string]interface{}{
+							ThinkingExtraFieldGeneratorKey:  ThinkingGeneratorResponses,
+							ResponsesExtraFieldReasoningID: reas.ID,
+						}
+						if reas.EncryptedContent != "" {
+							extra[ResponsesExtraFieldEncryptedContent] = reas.EncryptedContent
+						}
+						if !yield(StreamChunk{
+							Block: Block{
+								BlockType:    Thinking,
+								ModalityType: Text,
+								MimeType:     "text/plain",
+								Content:      Str(""),
+								ExtraFields:  extra,
+							},
+							CandidatesIndex: 0,
+						}, nil) {
+							return
+						}
+					}
+				}
 			case "response.refusal.delta":
 				refusalDelta := event.AsResponseRefusalDelta()
 				if refusalDelta.Delta != "" {
@@ -761,29 +754,33 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			case "response.completed":
 				completed := event.AsResponseCompleted()
 
-				// Emit usage metadata as final block
 				metadata := make(Metadata)
-
-				if usage := completed.Response.Usage; usage.InputTokens > 0 {
+				usage := completed.Response.Usage
+				if usage.InputTokens > 0 {
 					metadata[UsageMetricInputTokens] = int(usage.InputTokens)
 				}
-				if usage := completed.Response.Usage; usage.OutputTokens > 0 {
+				if usage.OutputTokens > 0 {
 					metadata[UsageMetricGenerationTokens] = int(usage.OutputTokens)
 				}
-				// Report cached tokens if available (OpenAI Responses API prompt caching)
-				if cachedTokens := completed.Response.Usage.InputTokensDetails.CachedTokens; cachedTokens > 0 {
-					metadata[UsageMetricCacheReadTokens] = int(cachedTokens)
+				if usage.InputTokensDetails.CachedTokens > 0 {
+					metadata[UsageMetricCacheReadTokens] = int(usage.InputTokensDetails.CachedTokens)
+				}
+				if usage.OutputTokensDetails.ReasoningTokens > 0 {
+					metadata[UsageMetricReasoningTokens] = int(usage.OutputTokensDetails.ReasoningTokens)
 				}
 
-				metadataBlock := MetadataBlock(metadata)
-
 				yield(StreamChunk{
-					Block:           metadataBlock,
+					Block:           MetadataBlock(metadata),
 					CandidatesIndex: 0,
 				}, nil)
 				return
 			case "response.failed":
-				yield(StreamChunk{}, fmt.Errorf("response failed"))
+				failed := event.AsResponseFailed()
+				if failed.Response.Error.Message != "" {
+					yield(StreamChunk{}, fmt.Errorf("response failed: %s (code: %s)", failed.Response.Error.Message, failed.Response.Error.Code))
+				} else {
+					yield(StreamChunk{}, fmt.Errorf("response failed"))
+				}
 				return
 			case "response.incomplete":
 				yield(StreamChunk{}, MaxGenerationLimitErr)
