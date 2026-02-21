@@ -151,8 +151,7 @@ type Response struct {
 	// The metric UsageMetricInputTokens and UsageMetricGenerationTokens is most commonly returned by an
 	// implementation of a Generator, representing the total input tokens and output tokens consumed, however
 	// it is not guaranteed to have those metrics be present. In addition, a Generator may return additional metrics
-	// specific to the implementation. For example, ResponsesGenerator.Generate returns the response id, stored using
-	// the key ResponsesPrevRespId
+	// specific to the implementation.
 	UsageMetadata Metadata `json:"usage_metadata,omitempty" yaml:"usage_metadata,omitempty"`
 }
 

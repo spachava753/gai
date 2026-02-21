@@ -44,8 +44,12 @@ func ExampleResponsesGenerator_Generate_pdf() {
 		fmt.Println("Error:", err)
 		return
 	}
-	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Blocks) > 0 {
-		fmt.Println(resp.Candidates[0].Blocks[0].Content)
+	// Find the first Content block (skip Thinking blocks from reasoning)
+	for _, blk := range resp.Candidates[0].Blocks {
+		if blk.BlockType == Content {
+			fmt.Println(blk.Content)
+			break
+		}
 	}
 	// Output: Attention Is All You Need
 }
@@ -94,7 +98,13 @@ func ExampleResponsesGenerator_Generate_image() {
 	if len(resp.Candidates[0].Blocks) == 0 {
 		panic("Expected at least 1 block")
 	}
-	fmt.Println(strings.Contains(resp.Candidates[0].Blocks[0].Content.String(), "Guy"))
+	// Find the first Content block (skip Thinking blocks from reasoning)
+	for _, blk := range resp.Candidates[0].Blocks {
+		if blk.BlockType == Content {
+			fmt.Println(strings.Contains(blk.Content.String(), "Guy"))
+			break
+		}
+	}
 	// Output: true
 }
 
@@ -134,9 +144,9 @@ func ExampleResponsesGenerator_Generate_thinking() {
 		panic(err.Error())
 	}
 	fmt.Println("Response received")
-	// The response blocks automatically contain the response ID in ExtraFields,
-	// so we just append them to the dialog and the next Generate call will
-	// automatically extract and use the previous response ID.
+	// The generator is stateless: just append the assistant response and continue.
+	// Reasoning blocks with encrypted content are automatically reconstructed as
+	// input reasoning items on the next call.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("What can you do?")}})
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
@@ -186,16 +196,29 @@ Only output the price, like
 	if err != nil {
 		panic(err.Error())
 	}
-	fmt.Println(resp.Candidates[0].Blocks[0].Content)
-	// Append the assistant's response (which contains the response ID in ExtraFields)
-	// and the tool result. The next Generate call will automatically extract
-	// the previous response ID from the assistant blocks.
-	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: resp.Candidates[0].Blocks[0].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}})
+	// Find the first ToolCall block (reasoning models may produce Thinking blocks before tool calls)
+	var toolCallBlock Block
+	for _, blk := range resp.Candidates[0].Blocks {
+		if blk.BlockType == ToolCall {
+			toolCallBlock = blk
+			break
+		}
+	}
+	fmt.Println(toolCallBlock.Content)
+	// Append the assistant's response and the tool result. The generator is stateless
+	// and manages conversation context through the dialog.
+	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlock.ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}})
 	resp, err = gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
 		panic(err.Error())
 	}
-	fmt.Println(resp.Candidates[0].Blocks[0].Content)
+	// Find the first Content block in the final response
+	for _, blk := range resp.Candidates[0].Blocks {
+		if blk.BlockType == Content {
+			fmt.Println(blk.Content)
+			break
+		}
+	}
 	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
 	// 123.45
 }
@@ -239,17 +262,29 @@ Assistant: Nvidia
 	if err != nil {
 		panic(err.Error())
 	}
-	blocks := resp.Candidates[0].Blocks
-	fmt.Println(blocks[len(blocks)-2].Content)
-	fmt.Println(blocks[len(blocks)-1].Content)
-	// Append the assistant's response (with response ID in ExtraFields) and tool results.
-	// The next Generate call automatically extracts the previous response ID from the dialog.
-	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: blocks[len(blocks)-2].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}}, Message{Role: ToolResult, Blocks: []Block{{ID: blocks[len(blocks)-1].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("678.45")}}})
+	// Collect ToolCall blocks (reasoning models may produce Thinking blocks before tool calls)
+	var toolCallBlocks []Block
+	for _, blk := range resp.Candidates[0].Blocks {
+		if blk.BlockType == ToolCall {
+			toolCallBlocks = append(toolCallBlocks, blk)
+		}
+	}
+	fmt.Println(toolCallBlocks[0].Content)
+	fmt.Println(toolCallBlocks[1].Content)
+	// Append the assistant's response and tool results. The generator is stateless
+	// and manages conversation context through the dialog.
+	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[0].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}}, Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[1].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("678.45")}}})
 	resp, err = gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
 		panic(err.Error())
 	}
-	fmt.Println(resp.Candidates[0].Blocks[0].Content)
+	// Find the first Content block in the final response
+	for _, blk := range resp.Candidates[0].Blocks {
+		if blk.BlockType == Content {
+			fmt.Println(blk.Content)
+			break
+		}
+	}
 	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
 	// {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
 	// MSFT
@@ -396,9 +431,9 @@ func ExampleResponsesGenerator_Stream_parallelToolUse() {
 		},
 	})
 
-	// Stream a response with previous response ID
+	// Stream a response
 	blocks = nil
-	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{}) {
+	for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
 		if err != nil {
 			fmt.Println(err.Error())
 			return
@@ -410,17 +445,11 @@ func ExampleResponsesGenerator_Stream_parallelToolUse() {
 		fmt.Println("Response received")
 	}
 
-	// Check if metadata block with response ID is present
+	// Check if metadata block is present (emitted on response.completed)
 	for _, blk := range blocks {
 		if blk.BlockType == MetadataBlockType {
-			// Parse metadata to check for response ID
-			var metadata Metadata
-			if err := json.Unmarshal([]byte(blk.Content.String()), &metadata); err == nil {
-				if _, hasRespID := metadata[ResponsesPrevRespId]; hasRespID {
-					fmt.Println("Received response_completed")
-					break
-				}
-			}
+			fmt.Println("Received response_completed")
+			break
 		}
 	}
 
@@ -483,14 +512,9 @@ func ExampleResponsesGenerator_Stream_thinking() {
 		fmt.Println("Response received")
 	}
 
-	// Check if metadata block with response ID is present
+	// Check if metadata block is present (emitted on response.completed)
 	if blocks[len(blocks)-1].BlockType == MetadataBlockType {
-		var metadata Metadata
-		if err := json.Unmarshal([]byte(blocks[len(blocks)-1].Content.String()), &metadata); err == nil {
-			if _, hasRespID := metadata[ResponsesPrevRespId]; hasRespID {
-				fmt.Println("Received response_completed")
-			}
-		}
+		fmt.Println("Received response_completed")
 	}
 
 	// Output: Has thinking blocks

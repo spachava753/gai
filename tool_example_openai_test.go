@@ -174,8 +174,8 @@ func ExampleToolGenerator_Generate_responses() {
 
 	client := openai.NewClient()
 
-	// Instantiate a OpenAI Generator
-	responsesGen := NewResponsesGenerator(
+	// Instantiate a Responses Generator (stateless, no adapter needed)
+	gen := NewResponsesGenerator(
 		&client.Responses,
 		openai.ChatModelGPT5Mini,
 		`You are a helpful assistant that returns the price of a stock and nothing else.
@@ -190,10 +190,8 @@ Only output the price, like
 `,
 	)
 
-	gen := NewResponsesToolGeneratorAdapter(responsesGen, "")
-
 	tg := ToolGenerator{
-		G: gen,
+		G: &gen,
 	}
 
 	// Register tools
@@ -229,7 +227,14 @@ Only output the price, like
 		panic(err.Error())
 	}
 	fmt.Printf("len of the new dialog: %d\n", len(newDialog))
-	fmt.Printf("%s\n", newDialog[len(newDialog)-1].Blocks[0].Content)
+	// Find the first Content block (reasoning models may produce Thinking blocks first)
+	lastMsg := newDialog[len(newDialog)-1]
+	for _, blk := range lastMsg.Blocks {
+		if blk.BlockType == Content {
+			fmt.Printf("%s\n", blk.Content)
+			break
+		}
+	}
 
 	// Output: len of the new dialog: 4
 	// 435.56
