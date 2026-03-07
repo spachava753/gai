@@ -196,6 +196,9 @@ type Message struct {
 	// for provider-specific features or custom metadata. Unlike Block.ExtraFields which
 	// stores block-specific data, this field is for information that applies to the
 	// entire message.
+	//
+	// Common fields include:
+	//   - ResponsesMessageExtraFieldPhase: OpenAI Responses assistant message phase
 	ExtraFields map[string]interface{} `json:"extra_fields,omitempty" yaml:"extra_fields,omitempty"`
 }
 

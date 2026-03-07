@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"reflect"
 )
 
 // StreamChunk represents a single chunk of content yielded during streaming generation.
@@ -19,11 +20,16 @@ import (
 //   - For "tool_call" blocks: either a header (with ID and tool name) or parameter fragments
 //   - For MetadataBlockType blocks: usage metrics (always the last chunk)
 //
+// MessageExtraFields carries message-level metadata discovered during streaming.
+// The StreamingAdapter merges these across chunks and stores them on the final
+// Response candidate Message.ExtraFields.
+//
 // CandidatesIndex indicates which candidate this chunk belongs to when N>1 is used.
 // Currently only CandidatesIndex=0 is supported by the StreamingAdapter.
 type StreamChunk struct {
-	Block           Block `json:"block" yaml:"block"`
-	CandidatesIndex int   `json:"candidates_index" yaml:"candidates_index"`
+	Block              Block                  `json:"block" yaml:"block"`
+	MessageExtraFields map[string]interface{} `json:"message_extra_fields,omitempty" yaml:"message_extra_fields,omitempty"`
+	CandidatesIndex    int                    `json:"candidates_index" yaml:"candidates_index"`
 }
 
 // StreamingGenerator is an interface for generators that support streaming responses.
@@ -340,12 +346,24 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 func (s *StreamingAdapter) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
 	// Stream and accumulate blocks
 	var blocks []Block
+	var messageExtraFields map[string]interface{}
 	for chunk, err := range s.S.Stream(ctx, dialog, options) {
 		if err != nil {
 			return Response{}, err
 		}
 		if chunk.CandidatesIndex > 0 {
 			return Response{}, errors.New("does not support n > 1 option")
+		}
+		if len(chunk.MessageExtraFields) > 0 {
+			if messageExtraFields == nil {
+				messageExtraFields = make(map[string]interface{})
+			}
+			for k, v := range chunk.MessageExtraFields {
+				if existing, ok := messageExtraFields[k]; ok && !reflect.DeepEqual(existing, v) {
+					return Response{}, fmt.Errorf("conflicting message extra field %q in streaming output", k)
+				}
+				messageExtraFields[k] = v
+			}
 		}
 		blocks = append(blocks, chunk.Block)
 	}
@@ -390,8 +408,9 @@ func (s *StreamingAdapter) Generate(ctx context.Context, dialog Dialog, options 
 
 	return Response{
 		Candidates: []Message{{
-			Role:   Assistant,
-			Blocks: contentBlocks,
+			Role:        Assistant,
+			Blocks:      contentBlocks,
+			ExtraFields: messageExtraFields,
 		}},
 		FinishReason:  finishReason,
 		UsageMetadata: usageMetadata,

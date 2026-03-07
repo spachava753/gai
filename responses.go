@@ -37,6 +37,16 @@ const ResponsesExtraFieldReasoningID = "responses_reasoning_id"
 // automatically ignore reasoning items that aren't relevant to the current context.
 const ResponsesExtraFieldEncryptedContent = "responses_encrypted_content"
 
+// ResponsesMessageExtraFieldPhase is the key used in Message.ExtraFields for assistant messages
+// returned by the OpenAI Responses API. The API documents that assistant message phase should be
+// preserved and resent in follow-up requests when present.
+const ResponsesMessageExtraFieldPhase = "responses_phase"
+
+const (
+	ResponsesMessagePhaseCommentary  = "commentary"
+	ResponsesMessagePhaseFinalAnswer = "final_answer"
+)
+
 type ResponsesService interface {
 	New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (res *responses.Response, err error)
 	NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (stream *ssestream.Stream[responses.ResponseStreamEventUnion])
@@ -89,6 +99,52 @@ func NewResponsesGenerator(client ResponsesService, model, systemInstructions st
 var _ ToolRegister = (*ResponsesGenerator)(nil)
 var _ Generator = (*ResponsesGenerator)(nil)
 var _ StreamingGenerator = (*ResponsesGenerator)(nil)
+
+func responsesMessagePhase(extraFields map[string]interface{}) (responses.ResponseOutputMessagePhase, error) {
+	if extraFields == nil {
+		return "", nil
+	}
+	raw, ok := extraFields[ResponsesMessageExtraFieldPhase]
+	if !ok || raw == nil {
+		return "", nil
+	}
+	phase, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("responses message phase must be a string")
+	}
+	switch phase {
+	case "":
+		return "", nil
+	case ResponsesMessagePhaseCommentary:
+		return responses.ResponseOutputMessagePhaseCommentary, nil
+	case ResponsesMessagePhaseFinalAnswer:
+		return responses.ResponseOutputMessagePhaseFinalAnswer, nil
+	default:
+		return "", fmt.Errorf("invalid responses message phase %q", phase)
+	}
+}
+
+func mergeResponsesMessagePhase(extraFields map[string]interface{}, phase string) (map[string]interface{}, error) {
+	if phase == "" {
+		return extraFields, nil
+	}
+	if extraFields == nil {
+		return map[string]interface{}{ResponsesMessageExtraFieldPhase: phase}, nil
+	}
+	if existing, ok := extraFields[ResponsesMessageExtraFieldPhase]; ok && existing != nil {
+		existingPhase, ok := existing.(string)
+		if !ok {
+			return nil, fmt.Errorf("responses message phase must be a string")
+		}
+		if existingPhase != phase {
+			return nil, fmt.Errorf("responses output contained multiple assistant message phases (%q, %q)", existingPhase, phase)
+		}
+		return extraFields, nil
+	}
+	merged := maps.Clone(extraFields)
+	merged[ResponsesMessageExtraFieldPhase] = phase
+	return merged, nil
+}
 
 func (r *ResponsesGenerator) Register(tool Tool) error {
 	if tool.Name == "" {
@@ -182,6 +238,10 @@ func (r *ResponsesGenerator) buildInputItems(dialog Dialog) ([]responses.Respons
 		case Assistant:
 			var contents []responses.ResponseOutputMessageContentUnionParam
 			var toolCalls []responses.ResponseInputItemUnionParam
+			phase, err := responsesMessagePhase(msg.ExtraFields)
+			if err != nil {
+				return nil, err
+			}
 			// Collect reasoning items from Thinking blocks. In stateless mode, we must
 			// pass back reasoning items (with encrypted content) to the API so the model
 			// can continue its chain of thought across function-calling turns. The API
@@ -258,11 +318,16 @@ func (r *ResponsesGenerator) buildInputItems(dialog Dialog) ([]responses.Respons
 			if len(reasoningItems) > 0 {
 				inputItems = append(inputItems, reasoningItems...)
 			}
-			if len(contents) > 0 {
+			if len(contents) > 0 || phase != "" {
+				messageContents := contents
+				if messageContents == nil {
+					messageContents = []responses.ResponseOutputMessageContentUnionParam{}
+				}
 				inputItems = append(inputItems, responses.ResponseInputItemUnionParam{
 					OfOutputMessage: &responses.ResponseOutputMessageParam{
 						ID:      "",
-						Content: contents,
+						Content: messageContents,
+						Phase:   phase,
 					},
 				})
 			}
@@ -412,18 +477,23 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 	return params, nil
 }
 
-// processResponseOutput converts the API response output items into Block slices.
+// processResponseOutput converts the API response output items into an assistant Message.
 // For reasoning items, it stores the encrypted content and reasoning ID in ExtraFields
 // so that subsequent calls can reconstruct the reasoning input items.
-func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks []Block, hasToolCalls bool, refusal string, err error) {
+func processResponseOutput(output []responses.ResponseOutputItemUnion) (message Message, hasToolCalls bool, refusal string, err error) {
+	message.Role = Assistant
 	for _, item := range output {
 		switch item.Type {
 		case "message":
 			msg := item.AsMessage()
+			message.ExtraFields, err = mergeResponsesMessagePhase(message.ExtraFields, string(msg.Phase))
+			if err != nil {
+				return Message{}, false, "", err
+			}
 			for _, c := range msg.Content {
 				switch c.Type {
 				case "output_text":
-					blocks = append(blocks, Block{BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str(c.Text)})
+					message.Blocks = append(message.Blocks, Block{BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str(c.Text)})
 				case "refusal":
 					if c.Refusal != "" {
 						refusal = c.Refusal
@@ -445,7 +515,7 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks [
 			if id == "" {
 				id = fc.ID
 			}
-			blocks = append(blocks, Block{ID: id, BlockType: ToolCall, ModalityType: Text, MimeType: "application/json", Content: Str(b)})
+			message.Blocks = append(message.Blocks, Block{ID: id, BlockType: ToolCall, ModalityType: Text, MimeType: "application/json", Content: Str(b)})
 			hasToolCalls = true
 		case "reasoning":
 			reas := item.AsReasoning()
@@ -454,7 +524,7 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks [
 			// and encrypted content so that when this block is passed back in a
 			// subsequent Assistant message, we can reconstruct the reasoning input item.
 			extraFields := map[string]interface{}{
-				ThinkingExtraFieldGeneratorKey:  ThinkingGeneratorResponses,
+				ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
 				ResponsesExtraFieldReasoningID: reas.ID,
 			}
 			if reas.EncryptedContent != "" {
@@ -467,7 +537,7 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks [
 			// and encrypted content across all of them (the encrypted content is per
 			// reasoning item, not per content entry).
 			for _, rc := range reas.Content {
-				blocks = append(blocks, Block{
+				message.Blocks = append(message.Blocks, Block{
 					BlockType:    Thinking,
 					ModalityType: Text,
 					MimeType:     "text/plain",
@@ -478,7 +548,7 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks [
 			// Also process summaries as Thinking blocks. Summaries are the closest
 			// we get to the model's reasoning when full traces are unavailable.
 			for _, rc := range reas.Summary {
-				blocks = append(blocks, Block{
+				message.Blocks = append(message.Blocks, Block{
 					BlockType:    Thinking,
 					ModalityType: Text,
 					MimeType:     "text/plain",
@@ -490,7 +560,7 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks [
 			// emit a placeholder block so the encrypted content is preserved in the dialog
 			// for the next turn.
 			if len(reas.Content) == 0 && len(reas.Summary) == 0 && reas.EncryptedContent != "" {
-				blocks = append(blocks, Block{
+				message.Blocks = append(message.Blocks, Block{
 					BlockType:    Thinking,
 					ModalityType: Text,
 					MimeType:     "text/plain",
@@ -500,7 +570,7 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (blocks [
 			}
 		}
 	}
-	return blocks, hasToolCalls, refusal, nil
+	return message, hasToolCalls, refusal, nil
 }
 
 func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
@@ -563,11 +633,11 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 		}
 	}
 
-	blocks, hasToolCalls, refusal, parseErr := processResponseOutput(res.Output)
+	assistantMsg, hasToolCalls, refusal, parseErr := processResponseOutput(res.Output)
 	if parseErr != nil {
 		return Response{}, parseErr
 	}
-	result.Candidates = append(result.Candidates, Message{Role: Assistant, Blocks: blocks})
+	result.Candidates = append(result.Candidates, assistantMsg)
 
 	if res.IncompleteDetails.Reason == "max_output_tokens" {
 		result.FinishReason = MaxGenerationLimit
@@ -611,6 +681,8 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			return
 		}
 
+		var assistantMessageExtraFields map[string]interface{}
+
 		// Start the stream
 		stream := r.client.NewStreaming(ctx, params)
 		defer stream.Close()
@@ -622,6 +694,13 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			case "response.output_item.added":
 				item := event.AsResponseOutputItemAdded().Item
 				switch item.Type {
+				case "message":
+					msg := item.AsMessage()
+					assistantMessageExtraFields, err = mergeResponsesMessagePhase(assistantMessageExtraFields, string(msg.Phase))
+					if err != nil {
+						yield(StreamChunk{}, err)
+						return
+					}
 				case "function_call":
 					fc := item.AsFunctionCall()
 					id := fc.CallID
@@ -636,7 +715,8 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							MimeType:     "application/json",
 							Content:      Str(fc.Name),
 						},
-						CandidatesIndex: 0,
+						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
+						CandidatesIndex:    0,
 					}, nil) {
 						return
 					}
@@ -651,7 +731,8 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							MimeType:     "text/plain",
 							Content:      Str(textDelta.Delta),
 						},
-						CandidatesIndex: 0,
+						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
+						CandidatesIndex:    0,
 					}, nil) {
 						return
 					}
@@ -666,7 +747,8 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							MimeType:     "text/plain",
 							Content:      Str(fcDelta.Delta),
 						},
-						CandidatesIndex: 0,
+						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
+						CandidatesIndex:    0,
 					}, nil) {
 						return
 					}
@@ -684,7 +766,8 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
 							},
 						},
-						CandidatesIndex: 0,
+						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
+						CandidatesIndex:    0,
 					}, nil) {
 						return
 					}
@@ -702,7 +785,8 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
 							},
 						},
-						CandidatesIndex: 0,
+						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
+						CandidatesIndex:    0,
 					}, nil) {
 						return
 					}
@@ -721,11 +805,19 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				// one block and only the last item's encrypted content would
 				// survive. The Generate path does not have this limitation.
 				item := event.AsResponseOutputItemDone().Item
-				if item.Type == "reasoning" {
+				switch item.Type {
+				case "message":
+					msg := item.AsMessage()
+					assistantMessageExtraFields, err = mergeResponsesMessagePhase(assistantMessageExtraFields, string(msg.Phase))
+					if err != nil {
+						yield(StreamChunk{}, err)
+						return
+					}
+				case "reasoning":
 					reas := item.AsReasoning()
 					if reas.EncryptedContent != "" || reas.ID != "" {
 						extra := map[string]interface{}{
-							ThinkingExtraFieldGeneratorKey:  ThinkingGeneratorResponses,
+							ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
 							ResponsesExtraFieldReasoningID: reas.ID,
 						}
 						if reas.EncryptedContent != "" {
@@ -739,7 +831,8 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								Content:      Str(""),
 								ExtraFields:  extra,
 							},
-							CandidatesIndex: 0,
+							MessageExtraFields: maps.Clone(assistantMessageExtraFields),
+							CandidatesIndex:    0,
 						}, nil) {
 							return
 						}
@@ -770,8 +863,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				}
 
 				yield(StreamChunk{
-					Block:           MetadataBlock(metadata),
-					CandidatesIndex: 0,
+					Block:              MetadataBlock(metadata),
+					MessageExtraFields: maps.Clone(assistantMessageExtraFields),
+					CandidatesIndex:    0,
 				}, nil)
 				return
 			case "response.failed":
