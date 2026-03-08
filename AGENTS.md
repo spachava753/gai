@@ -74,11 +74,17 @@ Design principles
 - Provider-agnostic core, provider-specific edges
 - Opt into features (metrics, callbacks) without forcing dependencies
 
+Provider-specific metadata placement
+- Prefer `ExtraFields` for provider-specific data that is not universal across generators.
+- Store provider metadata at the narrowest scope that matches the provider API contract:
+  - Use `Message.ExtraFields` for message-level metadata.
+  - Use `Block.ExtraFields` for block-level metadata.
+
 ## Testing guidelines
 
 - Use `go test ./...` locally and in CI
 - Structure tests as table-driven where relevant
-- Keep external calls mocked or recorded; tests should be deterministic and offline by default
+- Prefer live tests, that is, actually making network calls with SDKs and our packages, mocks cannot provide the same testing gaurantees
 - Example tests (`*_example_test.go`) should compile and run as documentation
 - For streaming, assert on ordered chunk assembly and termination conditions
 - Include negative tests: timeouts, API errors, invalid tool payloads
