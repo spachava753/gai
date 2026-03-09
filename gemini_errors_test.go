@@ -28,18 +28,22 @@ func TestGeminiAPIErrorMapping(t *testing.T) {
 					}
 				}`,
 			errChecker: func(t *testing.T, err error) {
-				var apiErr ApiErr
+				var apiErr *ApiErr
 				if !errors.As(err, &apiErr) {
 					t.Fatalf("Expected error to be ApiErr, got %T: %v", err, err)
 				}
 				if apiErr.StatusCode != http.StatusInternalServerError {
 					t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, apiErr.StatusCode)
 				}
-				if apiErr.Type != "api_error" {
-					t.Errorf("Expected error type %q, got %q", "api_error", apiErr.Type)
+				if apiErr.Kind != APIErrorKindServer {
+					t.Errorf("Expected error kind %q, got %q", APIErrorKindServer, apiErr.Kind)
 				}
 				if apiErr.Message == "" {
 					t.Errorf("Expected non-empty error message")
+				}
+				var sdkErr genai.APIError
+				if !errors.As(err, &sdkErr) {
+					t.Errorf("Expected original Gemini APIError to be reachable in cause chain")
 				}
 			},
 		},
@@ -83,19 +87,21 @@ func TestGeminiAPIErrorMapping(t *testing.T) {
 				}
 			}`,
 			errChecker: func(t *testing.T, err error) {
-				var rlErr RateLimitErr
-				if !errors.As(err, &rlErr) {
-					t.Fatalf("Expected error to be RateLimitErr, got %T: %v", err, err)
+				var apiErr *ApiErr
+				if !errors.As(err, &apiErr) {
+					t.Fatalf("Expected error to be ApiErr, got %T: %v", err, err)
 				}
-				msg := rlErr.Error()
-				if msg == "" || msg == "rate limit error: " {
-					t.Errorf("Expected non-empty rate limit error message, got: %q", msg)
+				if apiErr.Kind != APIErrorKindRateLimit {
+					t.Fatalf("Expected error kind %q, got %q", APIErrorKindRateLimit, apiErr.Kind)
+				}
+				if apiErr.Message == "" {
+					t.Errorf("Expected non-empty rate limit error message")
 				}
 			},
 		},
 		{
 			name:       "400 Authentication Error",
-			statusCode: http.StatusTooManyRequests,
+			statusCode: http.StatusBadRequest,
 			errorBody: `{
   "error": {
     "code": 400,
@@ -119,15 +125,15 @@ func TestGeminiAPIErrorMapping(t *testing.T) {
   }
 }`,
 			errChecker: func(t *testing.T, err error) {
-				var apiErr ApiErr
+				var apiErr *ApiErr
 				if !errors.As(err, &apiErr) {
 					t.Fatalf("Expected error to be ApiErr, got %T: %v", err, err)
 				}
 				if apiErr.StatusCode != http.StatusBadRequest {
 					t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, apiErr.StatusCode)
 				}
-				if apiErr.Type != "invalid_request_error" {
-					t.Errorf("Expected error type %q, got %q", "api_error", apiErr.Type)
+				if apiErr.Kind != APIErrorKindAuthentication {
+					t.Errorf("Expected error kind %q, got %q", APIErrorKindAuthentication, apiErr.Kind)
 				}
 				if apiErr.Message == "" {
 					t.Errorf("Expected non-empty error message")

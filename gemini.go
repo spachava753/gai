@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"iter"
 	"maps"
@@ -254,46 +253,8 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 	resp, err := g.client.Models.GenerateContent(ctx, g.modelName, allContents, genContentConfig)
 	if err != nil {
-		var apierr genai.APIError
-		if errors.As(err, &apierr) {
-			// Map HTTP status codes to our error types
-			switch apierr.Code {
-			case 401:
-				return Response{}, AuthenticationErr(apierr.Error())
-			case 403:
-				return Response{}, ApiErr{
-					StatusCode: apierr.Code,
-					Type:       "permission_error",
-					Message:    apierr.Error(),
-				}
-			case 404:
-				return Response{}, ApiErr{
-					StatusCode: apierr.Code,
-					Type:       "not_found_error",
-					Message:    apierr.Error(),
-				}
-			case 429:
-				return Response{}, RateLimitErr(apierr.Error())
-			case 500:
-				return Response{}, ApiErr{
-					StatusCode: apierr.Code,
-					Type:       "api_error",
-					Message:    apierr.Error(),
-				}
-			case 503:
-				return Response{}, ApiErr{
-					StatusCode: apierr.Code,
-					Type:       "service_unavailable",
-					Message:    apierr.Error(),
-				}
-			default:
-				// Default to invalid_request_error for 400 and other status codes
-				return Response{}, ApiErr{
-					StatusCode: apierr.Code,
-					Type:       "invalid_request_error",
-					Message:    apierr.Error(),
-				}
-			}
+		if mapped := mapGeminiError(err); mapped != nil {
+			return Response{}, mapped
 		}
 		return Response{}, fmt.Errorf("gemini: generation failed: %w", err)
 	}
@@ -520,55 +481,11 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 		for resp, err := range g.client.Models.GenerateContentStream(ctx, g.modelName, allContents, genContentConfig) {
 			if err != nil {
-				var apierr genai.APIError
-				if errors.As(err, &apierr) {
-					// Map HTTP status codes to our error types
-					switch apierr.Code {
-					case 401:
-						yield(StreamChunk{}, AuthenticationErr(apierr.Error()))
-						return
-					case 403:
-						yield(StreamChunk{}, ApiErr{
-							StatusCode: apierr.Code,
-							Type:       "permission_error",
-							Message:    apierr.Error(),
-						})
-						return
-					case 404:
-						yield(StreamChunk{}, ApiErr{
-							StatusCode: apierr.Code,
-							Type:       "not_found_error",
-							Message:    apierr.Error(),
-						})
-						return
-					case 429:
-						yield(StreamChunk{}, RateLimitErr(apierr.Error()))
-						return
-					case 500:
-						yield(StreamChunk{}, ApiErr{
-							StatusCode: apierr.Code,
-							Type:       "api_error",
-							Message:    apierr.Error(),
-						})
-						return
-					case 503:
-						yield(StreamChunk{}, ApiErr{
-							StatusCode: apierr.Code,
-							Type:       "service_unavailable",
-							Message:    apierr.Error(),
-						})
-						return
-					default:
-						// Default to invalid_request_error for 400 and other status codes
-						yield(StreamChunk{}, ApiErr{
-							StatusCode: apierr.Code,
-							Type:       "invalid_request_error",
-							Message:    apierr.Error(),
-						})
-						return
-					}
+				if mapped := mapGeminiError(err); mapped != nil {
+					yield(StreamChunk{}, mapped)
+				} else {
+					yield(StreamChunk{}, fmt.Errorf("gemini: generation failed: %w", err))
 				}
-				yield(StreamChunk{}, fmt.Errorf("gemini: generation failed: %w", err))
 				return
 			}
 
@@ -800,7 +717,7 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 			if !ok || fn == "" {
 				return nil, fmt.Errorf("tool result references unknown tool call id: %q", id)
 			}
-			
+
 			switch block.ModalityType {
 			case Text:
 				var respObj map[string]any
@@ -921,46 +838,8 @@ func (g *GeminiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 
 	resp, err := g.client.Models.CountTokens(ctx, g.modelName, allContents, &countTokenConfig)
 	if err != nil {
-		var apierr *genai.APIError
-		if errors.As(err, &apierr) {
-			// Map HTTP status codes to our error types
-			switch apierr.Code {
-			case 401:
-				return 0, AuthenticationErr(apierr.Error())
-			case 403:
-				return 0, ApiErr{
-					StatusCode: apierr.Code,
-					Type:       "permission_error",
-					Message:    apierr.Error(),
-				}
-			case 404:
-				return 0, ApiErr{
-					StatusCode: apierr.Code,
-					Type:       "not_found_error",
-					Message:    apierr.Error(),
-				}
-			case 429:
-				return 0, RateLimitErr(apierr.Error())
-			case 500:
-				return 0, ApiErr{
-					StatusCode: apierr.Code,
-					Type:       "api_error",
-					Message:    apierr.Error(),
-				}
-			case 503:
-				return 0, ApiErr{
-					StatusCode: apierr.Code,
-					Type:       "service_unavailable",
-					Message:    apierr.Error(),
-				}
-			default:
-				// Default to invalid_request_error for 400 and other status codes
-				return 0, ApiErr{
-					StatusCode: apierr.Code,
-					Type:       "invalid_request_error",
-					Message:    apierr.Error(),
-				}
-			}
+		if mapped := mapGeminiError(err); mapped != nil {
+			return 0, mapped
 		}
 		return 0, fmt.Errorf("gemini: token counting failed: %w", err)
 	}

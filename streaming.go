@@ -178,7 +178,7 @@ type StreamChunk struct {
 //   - [ContextLengthExceededErr] when input dialog is too long
 //   - [ContentPolicyErr] when content violates usage policies
 //   - [EmptyDialogErr] when no messages are provided in the dialog
-//   - [AuthenticationErr] when there are authentication or authorization issues
+//   - [ApiErr] when a provider returns a server/API error
 type StreamingGenerator interface {
 	Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error]
 }

@@ -536,47 +536,8 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	// Make the API call
 	resp, err := g.client.New(ctx, params)
 	if err != nil {
-		// Convert OpenAI SDK error to our error types based on status code
-		var apierr *oai.Error
-		if errors.As(err, &apierr) {
-			// Map HTTP status codes to our error types
-			switch apierr.StatusCode {
-			case 401:
-				return Response{}, AuthenticationErr(apierr.Error())
-			case 403:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "permission_error",
-					Message:    apierr.Error(),
-				}
-			case 404:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "not_found_error",
-					Message:    apierr.Error(),
-				}
-			case 429:
-				return Response{}, RateLimitErr(apierr.Error())
-			case 500:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "api_error",
-					Message:    apierr.Error(),
-				}
-			case 503:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "service_unavailable",
-					Message:    apierr.Error(),
-				}
-			default:
-				// Default to invalid_request_error for 400 and other status codes
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "invalid_request_error",
-					Message:    apierr.Error(),
-				}
-			}
+		if mapped := mapOpenAICompatibleError(ProviderOpenAI, err); mapped != nil {
+			return Response{}, mapped
 		}
 		return Response{}, fmt.Errorf("failed to create new message: %w", err)
 	}
@@ -957,7 +918,11 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 		// Check for stream errors
 		if stream.Err() != nil {
-			yield(StreamChunk{}, stream.Err())
+			if mapped := mapOpenAICompatibleError(ProviderOpenAI, stream.Err()); mapped != nil {
+				yield(StreamChunk{}, mapped)
+			} else {
+				yield(StreamChunk{}, stream.Err())
+			}
 			return
 		}
 

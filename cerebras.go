@@ -278,7 +278,7 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 		return Response{}, fmt.Errorf("cerebras: client not initialized")
 	}
 	if g.apiKey == "" {
-		return Response{}, AuthenticationErr("missing API key")
+		return Response{}, fmt.Errorf("cerebras: missing API key")
 	}
 	if len(dialog) == 0 {
 		return Response{}, EmptyDialogErr
@@ -391,25 +391,7 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Map common status codes
-		switch resp.StatusCode {
-		case 401:
-			return Response{}, AuthenticationErr(strings.TrimSpace(string(respBody)))
-		case 403:
-			return Response{}, ApiErr{StatusCode: resp.StatusCode, Type: "permission_error", Message: strings.TrimSpace(string(respBody))}
-		case 404:
-			return Response{}, ApiErr{StatusCode: resp.StatusCode, Type: "not_found_error", Message: strings.TrimSpace(string(respBody))}
-		case 413:
-			return Response{}, ApiErr{StatusCode: resp.StatusCode, Type: "request_too_large", Message: strings.TrimSpace(string(respBody))}
-		case 429:
-			return Response{}, RateLimitErr(strings.TrimSpace(string(respBody)))
-		case 500:
-			return Response{}, ApiErr{StatusCode: resp.StatusCode, Type: "api_error", Message: strings.TrimSpace(string(respBody))}
-		case 503:
-			return Response{}, ApiErr{StatusCode: resp.StatusCode, Type: "service_unavailable", Message: strings.TrimSpace(string(respBody))}
-		default:
-			return Response{}, ApiErr{StatusCode: resp.StatusCode, Type: "invalid_request_error", Message: strings.TrimSpace(string(respBody))}
-		}
+		return Response{}, newHTTPAPIError(ProviderCerebras, resp.StatusCode, string(respBody))
 	}
 
 	var cr cerebrasChatResponse

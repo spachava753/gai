@@ -109,51 +109,91 @@ func (t ToolRegistrationErr) Unwrap() error {
 // At least one Message must be present in the Dialog.
 var EmptyDialogErr = errors.New("empty dialog: at least one message required")
 
-// AuthenticationErr is returned when there are issues with authentication or authorization.
-// This can include:
-//   - Invalid or expired API keys
-//   - Insufficient permissions
-//   - Account suspension
-//
-// The string value contains details about the specific authentication issue.
-type AuthenticationErr string
+// Provider identifies the upstream service that returned an API/server error.
+type Provider string
 
-func (a AuthenticationErr) Error() string {
-	return fmt.Sprintf("authentication error: %s", string(a))
-}
+const (
+	ProviderAnthropic  Provider = "anthropic"
+	ProviderCerebras   Provider = "cerebras"
+	ProviderGemini     Provider = "gemini"
+	ProviderOpenAI     Provider = "openai"
+	ProviderOpenRouter Provider = "openrouter"
+	ProviderResponses  Provider = "responses"
+	ProviderZAI        Provider = "zai"
+)
 
-// RateLimitErr is returned when the API request exceeds the allowed rate limits.
-// This can include:
-//   - Too many requests in a short time period
-//   - Quota limits being reached
-//   - Per-minute, per-hour, or per-day limits exceeded
-//
-// The string value contains details about the specific rate limit issue.
-type RateLimitErr string
+// APIErrorKind classifies server-originated errors in a provider-agnostic way.
+type APIErrorKind string
 
-func (r RateLimitErr) Error() string {
-	return fmt.Sprintf("rate limit error: %s", string(r))
-}
+const (
+	APIErrorKindUnknown            APIErrorKind = "unknown"
+	APIErrorKindInvalidRequest     APIErrorKind = "invalid_request"
+	APIErrorKindAuthentication     APIErrorKind = "authentication"
+	APIErrorKindPermission         APIErrorKind = "permission"
+	APIErrorKindNotFound           APIErrorKind = "not_found"
+	APIErrorKindRateLimit          APIErrorKind = "rate_limit"
+	APIErrorKindRequestTooLarge    APIErrorKind = "request_too_large"
+	APIErrorKindTimeout            APIErrorKind = "timeout"
+	APIErrorKindServer             APIErrorKind = "server"
+	APIErrorKindServiceUnavailable APIErrorKind = "service_unavailable"
+	APIErrorKindOverloaded         APIErrorKind = "overloaded"
+	APIErrorKindContentPolicy      APIErrorKind = "content_policy"
+)
 
-// ApiErr is returned when the API returns a non-success status code that doesn't
-// fall into more specific error categories. This can include:
-//   - 400 Bad Request errors (invalid_request_error)
-//   - 404 Not Found errors (not_found_error)
-//   - 413 Request Too Large errors (request_too_large)
-//   - 500 Internal Server errors (api_error)
-//   - 529 Service Overloaded errors (overloaded_error)
-//
-// The struct contains the HTTP status code, error type, and message to provide
-// detailed information about the API error.
+// ApiErr is returned when a provider responds with a server/API error. It stores
+// a normalized classification, the HTTP status code when available, the raw body
+// when available, and wraps the original provider error in Cause.
 type ApiErr struct {
-	// StatusCode is the HTTP status code returned by the API
-	StatusCode int `json:"status_code" yaml:"status_code"`
-	// Type is the error type returned by the API (e.g., "invalid_request_error")
-	Type string `json:"type" yaml:"type"`
-	// Message is the error message returned by the API
-	Message string `json:"message" yaml:"message"`
+	Provider Provider     `json:"provider" yaml:"provider"`
+	Kind     APIErrorKind `json:"kind" yaml:"kind"`
+
+	// StatusCode is the HTTP status code returned by the API when available.
+	StatusCode int `json:"status_code,omitempty" yaml:"status_code,omitempty"`
+	// Message is the best-effort human-readable message extracted from the server response.
+	Message string `json:"message,omitempty" yaml:"message,omitempty"`
+	// RawBody is the unmodified server response body when the provider exposes it.
+	RawBody string `json:"raw_body,omitempty" yaml:"raw_body,omitempty"`
+	// Cause is the original provider error or a synthetic internal error representing
+	// the raw provider response when no SDK error object exists.
+	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
 }
 
-func (a ApiErr) Error() string {
-	return fmt.Sprintf("%d %s: %s", a.StatusCode, a.Type, a.Message)
+func (a *ApiErr) Error() string {
+	if a == nil {
+		return "<nil>"
+	}
+	if a.StatusCode > 0 && a.Message != "" {
+		return fmt.Sprintf("%s %s (%d): %s", a.Provider, a.Kind, a.StatusCode, a.Message)
+	}
+	if a.Message != "" {
+		return fmt.Sprintf("%s %s: %s", a.Provider, a.Kind, a.Message)
+	}
+	if a.StatusCode > 0 {
+		return fmt.Sprintf("%s %s (%d)", a.Provider, a.Kind, a.StatusCode)
+	}
+	return fmt.Sprintf("%s %s", a.Provider, a.Kind)
+}
+
+// Unwrap returns the original provider error when one exists.
+func (a *ApiErr) Unwrap() error {
+	if a == nil {
+		return nil
+	}
+	return a.Cause
+}
+
+// Retryable reports whether the error represents a retryable upstream failure.
+func (a *ApiErr) Retryable() bool {
+	if a == nil {
+		return false
+	}
+	if a.StatusCode >= 500 && a.StatusCode < 600 {
+		return true
+	}
+	switch a.Kind {
+	case APIErrorKindRateLimit, APIErrorKindTimeout, APIErrorKindServer, APIErrorKindServiceUnavailable, APIErrorKindOverloaded:
+		return true
+	default:
+		return false
+	}
 }

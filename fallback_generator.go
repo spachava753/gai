@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // FallbackConfig represents the configuration for when to fallback to another generator
@@ -49,24 +48,8 @@ func NewFallbackGenerator(generators []Generator, config *FallbackConfig) (*Fall
 // defaultShouldFallback is the default logic for determining when to fallback to another generator.
 // It fallbacks on rate limit errors and API errors with 5xx status codes.
 func defaultShouldFallback(err error) bool {
-	// Check for rate limit errors
-	var rateLimitErr RateLimitErr
-	if errors.As(err, &rateLimitErr) {
-		return true
-	}
-
-	// Check for API errors with 5xx status codes
-	var apiErr ApiErr
-	if errors.As(err, &apiErr) && apiErr.StatusCode >= 500 && apiErr.StatusCode < 600 {
-		return true
-	}
-
-	// Check if the error is related to rate limits by examining the error message
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "rate limit") {
-		return true
-	}
-
-	return false
+	var apiErr *ApiErr
+	return errors.As(err, &apiErr) && apiErr.Retryable()
 }
 
 // Generate implements the Generator interface.
@@ -102,18 +85,11 @@ func (f *FallbackGenerator) Generate(ctx context.Context, dialog Dialog, options
 }
 
 // NewHTTPStatusFallbackConfig creates a FallbackConfig that fallbacks on specific HTTP status codes.
-// It will fallback on rate limit errors and the specified status codes.
+// It will fallback on ApiErr values matching the specified status codes.
 func NewHTTPStatusFallbackConfig(statusCodes ...int) FallbackConfig {
 	return FallbackConfig{
 		ShouldFallback: func(err error) bool {
-			// Check for rate limit errors first (always fallback on these)
-			var rateLimitErr RateLimitErr
-			if errors.As(err, &rateLimitErr) {
-				return true
-			}
-
-			// Check for API errors with specific status codes
-			var apiErr ApiErr
+			var apiErr *ApiErr
 			if errors.As(err, &apiErr) {
 				for _, code := range statusCodes {
 					if apiErr.StatusCode == code {
@@ -121,18 +97,17 @@ func NewHTTPStatusFallbackConfig(statusCodes ...int) FallbackConfig {
 					}
 				}
 			}
-
 			return false
 		},
 	}
 }
 
-// NewRateLimitOnlyFallbackConfig creates a FallbackConfig that only fallbacks on rate limit errors.
+// NewRateLimitOnlyFallbackConfig creates a FallbackConfig that only fallbacks on rate limit ApiErr values.
 func NewRateLimitOnlyFallbackConfig() FallbackConfig {
 	return FallbackConfig{
 		ShouldFallback: func(err error) bool {
-			var rateLimitErr RateLimitErr
-			return errors.As(err, &rateLimitErr)
+			var apiErr *ApiErr
+			return errors.As(err, &apiErr) && apiErr.Kind == APIErrorKindRateLimit
 		},
 	}
 }

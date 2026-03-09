@@ -3,7 +3,6 @@ package gai
 import (
 	"context"
 	"errors"
-	"net/http"
 	"time"
 
 	"github.com/cenkalti/backoff/v5"
@@ -22,11 +21,9 @@ const (
 //
 // It retries on specific errors:
 //   - context.DeadlineExceeded (from the Generate call itself, not the overall context)
-//   - gai.RateLimitErr
-//   - gai.ApiErr with HTTP status code 429 (Too Many Requests)
-//   - gai.ApiErr with HTTP status codes 5xx (Server Errors)
+//   - gai.ApiErr values classified as retryable (rate limits and transient upstream errors)
 type RetryGenerator struct {
-	GeneratorWrapper              // Embed for default Count/Register/Stream delegation
+	GeneratorWrapper                       // Embed for default Count/Register/Stream delegation
 	baseBackOff      backoff.BackOff       // The core backoff strategy (e.g., *ExponentialBackOff).
 	retryOptions     []backoff.RetryOption // User-provided options for the backoff.Retry call (e.g., MaxElapsedTime, Notify).
 }
@@ -86,16 +83,9 @@ func (rg *RetryGenerator) Generate(ctx context.Context, dialog Dialog, options *
 			if errors.Is(err, context.DeadlineExceeded) {
 				return resp, err // Retriable
 			}
-			var rateLimitErr RateLimitErr
-			if errors.As(err, &rateLimitErr) {
+			var apiErr *ApiErr
+			if errors.As(err, &apiErr) && apiErr.Retryable() {
 				return resp, err // Retriable
-			}
-			var apiErr ApiErr
-			if errors.As(err, &apiErr) {
-				if apiErr.StatusCode == http.StatusTooManyRequests || // 429
-					(apiErr.StatusCode >= 500 && apiErr.StatusCode <= 599) { // 5xx
-					return resp, err // Retriable
-				}
 			}
 			// context.Canceled from the operation itself is treated as permanent.
 			if errors.Is(err, context.Canceled) {

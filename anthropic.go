@@ -3,7 +3,6 @@ package gai
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"iter"
 	"strconv"
@@ -431,53 +430,8 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	// for all models to keep things simple
 	resp, err := g.client.New(ctx, params)
 	if err != nil {
-		// Convert Anthropic SDK error to our error types based on status code
-		var apierr *a.Error
-		if errors.As(err, &apierr) {
-			// Map HTTP status codes to our error types
-			switch apierr.StatusCode {
-			case 401:
-				return Response{}, AuthenticationErr(apierr.Error())
-			case 403:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "permission_error",
-					Message:    apierr.Error(),
-				}
-			case 404:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "not_found_error",
-					Message:    apierr.Error(),
-				}
-			case 413:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "request_too_large",
-					Message:    apierr.Error(),
-				}
-			case 429:
-				return Response{}, RateLimitErr(apierr.Error())
-			case 500:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "api_error",
-					Message:    apierr.Error(),
-				}
-			case 529:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "overloaded_error",
-					Message:    apierr.Error(),
-				}
-			default:
-				// Default to invalid_request_error for 400 and other status codes
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "invalid_request_error",
-					Message:    apierr.Error(),
-				}
-			}
+		if mapped := mapAnthropicError(err); mapped != nil {
+			return Response{}, mapped
 		}
 		return Response{}, fmt.Errorf("failed to create new message: %w", err)
 	}
@@ -850,7 +804,11 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 
 		// Check for stream errors
 		if stream.Err() != nil {
-			yield(StreamChunk{}, stream.Err())
+			if mapped := mapAnthropicError(stream.Err()); mapped != nil {
+				yield(StreamChunk{}, mapped)
+			} else {
+				yield(StreamChunk{}, stream.Err())
+			}
 			return
 		}
 
@@ -1017,53 +975,8 @@ func (g *AnthropicGenerator) Count(ctx context.Context, dialog Dialog) (uint, er
 
 	resp, err := g.client.CountTokens(ctx, params)
 	if err != nil {
-		// Convert Anthropic SDK error to our error types based on status code
-		var apierr *a.Error
-		if errors.As(err, &apierr) {
-			// Map HTTP status codes to our error types
-			switch apierr.StatusCode {
-			case 401:
-				return 0, AuthenticationErr(apierr.Error())
-			case 403:
-				return 0, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "permission_error",
-					Message:    apierr.Error(),
-				}
-			case 404:
-				return 0, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "not_found_error",
-					Message:    apierr.Error(),
-				}
-			case 413:
-				return 0, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "request_too_large",
-					Message:    apierr.Error(),
-				}
-			case 429:
-				return 0, RateLimitErr(apierr.Error())
-			case 500:
-				return 0, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "api_error",
-					Message:    apierr.Error(),
-				}
-			case 529:
-				return 0, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "overloaded_error",
-					Message:    apierr.Error(),
-				}
-			default:
-				// Default to invalid_request_error for 400 and other status codes
-				return 0, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "invalid_request_error",
-					Message:    apierr.Error(),
-				}
-			}
+		if mapped := mapAnthropicError(err); mapped != nil {
+			return 0, mapped
 		}
 		return 0, fmt.Errorf("failed to count tokens: %w", err)
 	}

@@ -361,7 +361,7 @@ func ExampleOpenRouterGenerator_Generate_invalidModel() {
 
 	_, err := gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		var apiErr ApiErr
+		var apiErr *ApiErr
 		if errors.As(err, &apiErr) {
 			fmt.Println("Handled error")
 		} else {

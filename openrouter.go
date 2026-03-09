@@ -3,7 +3,6 @@ package gai
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	oai "github.com/openai/openai-go/v3"
@@ -46,10 +45,11 @@ const (
 // levels ("low", "medium", "high") or max_tokens (as string). This generator:
 // 1. Sets reasoning config in requests via ThinkingBudget in GenOpts
 // 2. Extracts reasoning_details from responses as Thinking blocks with extra fields:
-//    - OpenRouterExtraFieldReasoningType
-//    - OpenRouterExtraFieldReasoningFormat
-//    - OpenRouterExtraFieldReasoningIndex
-//    - OpenRouterExtraFieldReasoningSignature (when applicable)
+//   - OpenRouterExtraFieldReasoningType
+//   - OpenRouterExtraFieldReasoningFormat
+//   - OpenRouterExtraFieldReasoningIndex
+//   - OpenRouterExtraFieldReasoningSignature (when applicable)
+//
 // 3. Passes reasoning_details back in assistant messages (recommended by OpenRouter)
 // 4. Sets OpenRouterUsageMetricReasoningDetailsAvailable in Response.UsageMetadata when reasoning_details are present
 //
@@ -356,81 +356,26 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 	// Make the API call with request options
 	resp, err := g.client.New(ctx, params, reqOpts...)
 	if err != nil {
-		// Handle OpenAI-style errors (non-200 status codes)
-		// These occur when: 1) request is invalid or 2) API key/account is out of credits
-		var apierr *oai.Error
-		if errors.As(err, &apierr) {
-			switch apierr.StatusCode {
-			case 401:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "authentication_error",
-					Message:    apierr.Error(),
-				}
-			case 429:
-				return Response{}, RateLimitErr(apierr.Error())
-			case 500:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "api_error",
-					Message:    apierr.Error(),
-				}
-			case 503:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "service_unavailable",
-					Message:    apierr.Error(),
-				}
-			default:
-				return Response{}, ApiErr{
-					StatusCode: apierr.StatusCode,
-					Type:       "invalid_request_error",
-					Message:    apierr.Error(),
-				}
-			}
+		if mapped := mapOpenAICompatibleError(ProviderOpenRouter, err); mapped != nil {
+			return Response{}, mapped
 		}
 		return Response{}, fmt.Errorf("failed to create new message: %w", err)
 	}
 
-	// Check for OpenRouter upstream errors in response body
-	// OpenRouter returns 200 status code but includes error in response body for upstream errors
+	// Check for OpenRouter upstream errors in response body.
+	// OpenRouter can return a 200 response with an error payload when the upstream provider fails.
 	if rawJSON := resp.RawJSON(); rawJSON != "" {
 		var errorCheck struct {
 			Error *struct {
-				Code    json.Number `json:"code"`
-				Message string      `json:"message"`
+				Code json.Number `json:"code"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(rawJSON), &errorCheck); err == nil && errorCheck.Error != nil {
-			// Extract status code from error
-			statusCode := 500 // Default to server error
+			statusCode := 500
 			if code, err := errorCheck.Error.Code.Int64(); err == nil {
 				statusCode = int(code)
 			}
-
-			// Map to appropriate error type
-			switch statusCode {
-			case 401:
-				return Response{}, ApiErr{
-					StatusCode: statusCode,
-					Type:       "authentication_error",
-					Message:    errorCheck.Error.Message,
-				}
-			case 429:
-				return Response{}, RateLimitErr(errorCheck.Error.Message)
-			case 500, 502, 503, 504:
-				return Response{}, ApiErr{
-					StatusCode: statusCode,
-					Type:       "upstream_error",
-					Message:    errorCheck.Error.Message,
-				}
-			default:
-				return Response{}, ApiErr{
-					StatusCode: statusCode,
-					Type:       "upstream_error",
-					Message:    errorCheck.Error.Message,
-				}
-			}
+			return Response{}, newHTTPAPIError(ProviderOpenRouter, statusCode, rawJSON)
 		}
 	}
 

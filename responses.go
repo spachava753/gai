@@ -3,7 +3,6 @@ package gai
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"iter"
 	"maps"
@@ -593,24 +592,8 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 	res, err := r.client.New(ctx, params)
 	if err != nil {
-		var apierr *responses.Error
-		if errors.As(err, &apierr) {
-			switch apierr.StatusCode {
-			case 401:
-				return Response{}, AuthenticationErr(apierr.Error())
-			case 403:
-				return Response{}, ApiErr{StatusCode: apierr.StatusCode, Type: "permission_error", Message: apierr.Error()}
-			case 404:
-				return Response{}, ApiErr{StatusCode: apierr.StatusCode, Type: "not_found_error", Message: apierr.Error()}
-			case 429:
-				return Response{}, RateLimitErr(apierr.Error())
-			case 500:
-				return Response{}, ApiErr{StatusCode: apierr.StatusCode, Type: "api_error", Message: apierr.Error()}
-			case 503:
-				return Response{}, ApiErr{StatusCode: apierr.StatusCode, Type: "service_unavailable", Message: apierr.Error()}
-			default:
-				return Response{}, ApiErr{StatusCode: apierr.StatusCode, Type: "invalid_request_error", Message: apierr.Error()}
-			}
+		if mapped := mapResponsesRequestError(err); mapped != nil {
+			return Response{}, mapped
 		}
 		return Response{}, fmt.Errorf("responses: generation failed: %w", err)
 	}
@@ -870,24 +853,24 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				return
 			case "response.failed":
 				failed := event.AsResponseFailed()
-				if failed.Response.Error.Message != "" {
-					yield(StreamChunk{}, fmt.Errorf("response failed: %s (code: %s)", failed.Response.Error.Message, failed.Response.Error.Code))
-				} else {
-					yield(StreamChunk{}, fmt.Errorf("response failed"))
-				}
+				yield(StreamChunk{}, newResponsesStreamAPIError(string(failed.Response.Error.Code), failed.Response.Error.Message, failed.RawJSON()))
 				return
 			case "response.incomplete":
 				yield(StreamChunk{}, MaxGenerationLimitErr)
 				return
 			case "error":
 				errorEvent := event.AsError()
-				yield(StreamChunk{}, fmt.Errorf("stream error: %s", errorEvent.Message))
+				yield(StreamChunk{}, newResponsesStreamAPIError(errorEvent.Code, errorEvent.Message, errorEvent.RawJSON()))
 				return
 			}
 		}
 
 		if stream.Err() != nil {
-			yield(StreamChunk{}, stream.Err())
+			if mapped := mapResponsesRequestError(stream.Err()); mapped != nil {
+				yield(StreamChunk{}, mapped)
+			} else {
+				yield(StreamChunk{}, stream.Err())
+			}
 		}
 	}
 }

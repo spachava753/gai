@@ -77,18 +77,18 @@ func TestRetryGenerator_Generate_RetryAndSucceed(t *testing.T) {
 		expectedCalls int
 	}{
 		{
-			name:          "RateLimitErr",
-			retriableErr:  gai.RateLimitErr("test rate limit"),
+			name:          "ApiErr rate limit",
+			retriableErr:  &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "too many requests"},
 			expectedCalls: 2,
 		},
 		{
 			name:          "ApiErr 429",
-			retriableErr:  gai.ApiErr{StatusCode: http.StatusTooManyRequests, Message: "too many requests"},
+			retriableErr:  &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "too many requests"},
 			expectedCalls: 2,
 		},
 		{
 			name:          "ApiErr 500",
-			retriableErr:  gai.ApiErr{StatusCode: http.StatusInternalServerError, Message: "internal server error"},
+			retriableErr:  &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindServer, StatusCode: http.StatusInternalServerError, Message: "internal server error"},
 			expectedCalls: 2,
 		},
 		{
@@ -155,7 +155,7 @@ func TestRetryGenerator_Generate_ContextCancelled_DuringBackoff(t *testing.T) {
 	callCount := 0
 	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
 		callCount++
-		return gai.Response{}, gai.RateLimitErr("rate limited") // Always return a retriable error
+		return gai.Response{}, &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "rate limited"} // Always return a retriable error
 	}
 
 	bo := backoff.NewExponentialBackOff()
@@ -202,7 +202,7 @@ func TestRetryGenerator_Generate_ContextCancelled_BeforeFirstCall(t *testing.T) 
 }
 
 func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxElapsedTime(t *testing.T) {
-	expectedErr := gai.RateLimitErr("persistent rate limit")
+	expectedErr := &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "persistent rate limit"}
 	m := &mockGenerator{}
 	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
 		return gai.Response{}, expectedErr
@@ -225,7 +225,7 @@ func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxElapsedTime(t *testin
 }
 
 func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxTries(t *testing.T) {
-	expectedErr := gai.RateLimitErr("persistent rate limit again")
+	expectedErr := &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "persistent rate limit again"}
 	m := &mockGenerator{}
 	var attempts uint = 0
 	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
@@ -292,7 +292,7 @@ func TestRetryGenerator_Generate_WithDefaultSettings(t *testing.T) {
 	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
 		callCount++
 		if callCount < 2 {
-			return gai.Response{}, gai.RateLimitErr("transient error")
+			return gai.Response{}, &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "transient error"}
 		}
 		return gai.Response{Candidates: []gai.Message{{Role: gai.Assistant, Blocks: []gai.Block{gai.TextBlock("Success")}}}}, nil
 	}

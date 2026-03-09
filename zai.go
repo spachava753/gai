@@ -144,7 +144,7 @@ func (g *ZaiGenerator) buildMessages(dialog Dialog) ([]any, error) {
 				messages = append(messages, oai.UserMessage(msg.Blocks[0].Content.String()))
 				continue
 			}
-			
+
 			var textContent strings.Builder
 			for _, blk := range msg.Blocks {
 				if blk.BlockType != Content {
@@ -229,7 +229,7 @@ func (g *ZaiGenerator) buildMessages(dialog Dialog) ([]any, error) {
 
 func (g *ZaiGenerator) getRequestOptions() []option.RequestOption {
 	var opts []option.RequestOption
-	
+
 	// Add thinking configuration
 	thinkingType := "enabled"
 	if !g.thinkingEnabled {
@@ -239,10 +239,10 @@ func (g *ZaiGenerator) getRequestOptions() []option.RequestOption {
 		"type":           thinkingType,
 		"clear_thinking": g.clearThinking,
 	}))
-	
+
 	// Add Accept-Language header for Z.AI
 	opts = append(opts, option.WithHeader("Accept-Language", "en-US,en"))
-	
+
 	return opts
 }
 
@@ -399,21 +399,21 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 		if len(choice.Message.ToolCalls) > 0 {
 			hasToolCalls = true
 			for _, tc := range choice.Message.ToolCalls {
-					var params map[string]any
-					if tc.Function.Arguments != "" {
-						_ = json.Unmarshal([]byte(tc.Function.Arguments), &params)
-					}
-					tj, _ := json.Marshal(ToolCallInput{
-						Name:       tc.Function.Name,
-						Parameters: params,
-					})
-					blocks = append(blocks, Block{
-						ID:           tc.ID,
-						BlockType:    ToolCall,
-						ModalityType: Text,
-						MimeType:     "application/json",
-						Content:      Str(tj),
-					})
+				var params map[string]any
+				if tc.Function.Arguments != "" {
+					_ = json.Unmarshal([]byte(tc.Function.Arguments), &params)
+				}
+				tj, _ := json.Marshal(ToolCallInput{
+					Name:       tc.Function.Name,
+					Parameters: params,
+				})
+				blocks = append(blocks, Block{
+					ID:           tc.ID,
+					BlockType:    ToolCall,
+					ModalityType: Text,
+					MimeType:     "application/json",
+					Content:      Str(tj),
+				})
 			}
 		}
 		result.Candidates = append(result.Candidates, Message{Role: Assistant, Blocks: blocks})
@@ -665,19 +665,12 @@ func (g *ZaiGenerator) mapError(err error) error {
 	if err == nil {
 		return nil
 	}
-	errStr := err.Error()
-	
-	// Map common error patterns
-	if strings.Contains(errStr, "401") || strings.Contains(errStr, "authentication") {
-		return AuthenticationErr(errStr)
+	if mapped := mapOpenAICompatibleError(ProviderZAI, err); mapped != nil {
+		return mapped
 	}
-	if strings.Contains(errStr, "429") || strings.Contains(errStr, "rate limit") {
-		return RateLimitErr(errStr)
+	if mapped := newZAIHeuristicAPIError(err); mapped != nil {
+		return mapped
 	}
-	if strings.Contains(errStr, "1113") {
-		return RateLimitErr(errStr)
-	}
-	
 	return err
 }
 

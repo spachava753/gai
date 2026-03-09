@@ -473,9 +473,7 @@
 //   - ContextLengthExceededErr - Input dialog exceeds model's context length
 //   - ContentPolicyErr - Content violates usage policies
 //   - EmptyDialogErr - No messages provided
-//   - AuthenticationErr - Authentication/authorization issues
-//   - RateLimitErr - API request rate limits exceeded
-//   - ApiErr - Other API errors with status code, type, and message
+//   - ApiErr - Provider/server errors with normalized provider, kind, status, and message fields
 //
 // Example error handling:
 //
@@ -489,16 +487,15 @@
 //		case errors.Is(err, gai.EmptyDialogErr):
 //			fmt.Println("Empty dialog provided")
 //
-//		// Type-specific errors
-//		case errors.As(err, &gai.RateLimitErr{}):
-//			fmt.Println("Rate limit exceeded:", err)
 //		case errors.As(err, &gai.ContentPolicyErr{}):
 //			fmt.Println("Content policy violation:", err)
-//		case errors.As(err, &gai.ApiErr{}):
-//			apiErr := err.(gai.ApiErr)
-//			fmt.Printf("API error: %d %s - %s\n", apiErr.StatusCode, apiErr.Type, apiErr.Message)
 //		default:
-//			fmt.Println("Unexpected error:", err)
+//			var apiErr *gai.ApiErr
+//			if errors.As(err, &apiErr) {
+//				fmt.Printf("API error: provider=%s kind=%s status=%d message=%s\n", apiErr.Provider, apiErr.Kind, apiErr.StatusCode, apiErr.Message)
+//			} else {
+//				fmt.Println("Unexpected error:", err)
+//			}
 //		}
 //		return
 //	}
@@ -561,7 +558,8 @@
 //		&gai.FallbackConfig{
 //			ShouldFallback: func(err error) bool {
 //				// Custom fallback logic
-//				return gai.IsRateLimitError(err) || gai.IsServerError(err)
+//				var apiErr *gai.ApiErr
+//				return errors.As(err, &apiErr) && apiErr.Retryable()
 //			},
 //		},
 //	)

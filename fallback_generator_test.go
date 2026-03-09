@@ -147,7 +147,7 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 		{
 			name: "first generator fails with rate limit, second succeeds",
 			generators: []Generator{
-				&mockGenerator{response: Response{}, err: RateLimitErr("rate limit exceeded")},
+				&mockGenerator{response: Response{}, err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}},
 				&mockGenerator{response: fallbackResponse, err: nil},
 			},
 			config:  nil,
@@ -161,7 +161,7 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 			generators: []Generator{
 				&mockGenerator{
 					response: Response{},
-					err:      ApiErr{StatusCode: 500, Type: "server_error", Message: "internal server error"},
+					err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServer, StatusCode: 500, Message: "internal server error"},
 				},
 				&mockGenerator{response: fallbackResponse, err: nil},
 			},
@@ -176,7 +176,7 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 			generators: []Generator{
 				&mockGenerator{
 					response: Response{},
-					err:      ApiErr{StatusCode: 400, Type: "invalid_request", Message: "bad request"},
+					err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 400, Message: "bad request"},
 				},
 				&mockGenerator{response: fallbackResponse, err: nil},
 			},
@@ -191,13 +191,13 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 			generators: []Generator{
 				&mockGenerator{
 					response: Response{},
-					err:      ApiErr{StatusCode: 400, Type: "invalid_request", Message: "bad request"},
+					err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 400, Message: "bad request"},
 				},
 				&mockGenerator{response: fallbackResponse, err: nil},
 			},
 			config: &FallbackConfig{
 				ShouldFallback: func(err error) bool {
-					var apiErr ApiErr
+					var apiErr *ApiErr
 					return errors.As(err, &apiErr) && apiErr.StatusCode == 400
 				},
 			},
@@ -209,10 +209,10 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 		{
 			name: "all generators fail with fallback errors",
 			generators: []Generator{
-				&mockGenerator{response: Response{}, err: RateLimitErr("rate limit exceeded")},
+				&mockGenerator{response: Response{}, err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}},
 				&mockGenerator{
 					response: Response{},
-					err:      ApiErr{StatusCode: 500, Type: "server_error", Message: "internal server error"},
+					err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServer, StatusCode: 500, Message: "internal server error"},
 				},
 			},
 			config:  nil,
@@ -226,7 +226,7 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 			generators: []Generator{
 				&mockGenerator{
 					response: Response{},
-					err:      ApiErr{StatusCode: 429, Type: "too_many_requests", Message: "too many requests"},
+					err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "too many requests"},
 				},
 				&mockGenerator{response: fallbackResponse, err: nil},
 			},
@@ -239,7 +239,7 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 		{
 			name: "Rate limit only config works",
 			generators: []Generator{
-				&mockGenerator{response: Response{}, err: RateLimitErr("rate limit exceeded")},
+				&mockGenerator{response: Response{}, err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}},
 				&mockGenerator{response: fallbackResponse, err: nil},
 			},
 			config:  &FallbackConfig{ShouldFallback: NewRateLimitOnlyFallbackConfig().ShouldFallback},
@@ -297,26 +297,26 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 func TestNewHTTPStatusFallbackConfig(t *testing.T) {
 	config := NewHTTPStatusFallbackConfig(400, 429)
 
-	// Should fallback on rate limit errors
-	if !config.ShouldFallback(RateLimitErr("rate limit exceeded")) {
+	// Should fallback on rate limit API errors.
+	if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}) {
 		t.Error("Expected to fallback on rate limit errors")
 	}
 
-	// Should fallback on specified status codes
-	if !config.ShouldFallback(ApiErr{StatusCode: 400}) {
+	// Should fallback on specified status codes.
+	if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 400}) {
 		t.Error("Expected to fallback on status code 400")
 	}
 
-	if !config.ShouldFallback(ApiErr{StatusCode: 429}) {
+	if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429}) {
 		t.Error("Expected to fallback on status code 429")
 	}
 
-	// Should not fallback on other status codes
-	if config.ShouldFallback(ApiErr{StatusCode: 404}) {
+	// Should not fallback on other status codes.
+	if config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindNotFound, StatusCode: 404}) {
 		t.Error("Expected not to fallback on status code 404")
 	}
 
-	if config.ShouldFallback(ApiErr{StatusCode: 500}) {
+	if config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServer, StatusCode: 500}) {
 		t.Error("Expected not to fallback on status code 500 when not specified")
 	}
 }
@@ -324,19 +324,19 @@ func TestNewHTTPStatusFallbackConfig(t *testing.T) {
 func TestNewRateLimitOnlyFallbackConfig(t *testing.T) {
 	config := NewRateLimitOnlyFallbackConfig()
 
-	// Should fallback on rate limit errors
-	if !config.ShouldFallback(RateLimitErr("rate limit exceeded")) {
+	// Should fallback on rate limit API errors.
+	if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}) {
 		t.Error("Expected to fallback on rate limit errors")
 	}
 
-	// Should not fallback on other errors
+	// Should not fallback on other errors.
 	if config.ShouldFallback(errors.New("some other error")) {
 		t.Error("Expected not to fallback on non-rate-limit errors")
 	}
 
-	// Should not fallback on API errors, even with 429 status code
-	if config.ShouldFallback(ApiErr{StatusCode: 429}) {
-		t.Error("Expected not to fallback on API errors with 429 status code")
+	// Should not fallback on non-rate-limit API errors, even with other status codes.
+	if config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 429}) {
+		t.Error("Expected not to fallback on non-rate-limit API errors")
 	}
 }
 
