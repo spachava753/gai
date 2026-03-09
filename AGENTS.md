@@ -15,6 +15,7 @@ GAI is a Go library for interacting with LLM providers (OpenAI, Anthropic, Googl
 - Tests: colocated `*_test.go` for each area, plus provider-specific tests
 - Samples: `sample.jpg`, `sample.pdf`, `sample.wav` for multimodal tests/examples
 - Scripts: `scripts/` includes docs-generation helper
+- `README.md` is generated from `doc.go` via `go run ./scripts/generate-readme.go`; do not edit `README.md` directly
 
 Conventions
 - Single module, no internal/ submodules yet
@@ -32,7 +33,7 @@ Common commands
 - Run tests with race: `go test -race ./...`
 - Run a single test file: `go test -run TestName ./...`
 - Examples as docs: `go test ./...` executes `*_example_test.go`
-- Generate README from script (if desired): `go run ./scripts/generate-readme.go` or `bash ./scripts/generate-readme.sh`
+- Generate README from script (if desired): `go run ./scripts/generate-readme.go`
 
 Dev tips
 - Use `RG_COLOR=never` if your environment requires plain output

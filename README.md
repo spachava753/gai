@@ -147,7 +147,7 @@ func main() {
 
 	// Generate a response
 	response, err := generator.Generate(context.Background(), dialog, &gai.GenOpts{
-		Temperature: 0.7,
+		Temperature: Ptr(0.7),
 	})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -166,6 +166,30 @@ func main() {
 	if outputTokens, ok := gai.OutputTokens(response.UsageMetadata); ok {
 		fmt.Printf("Output tokens: %d\n", outputTokens)
 	}
+}
+```
+
+## Prompt Caching with ResponsesGenerator
+
+The OpenAI Responses generator supports explicit prompt cache routing through [GenOpts.ExtraArgs]. Set [ResponsesPromptCacheKeyParam] to a stable key for requests that share the same long static prompt prefix. Keep repeated instructions, schemas, and tool definitions at the beginning of the prompt, and put request-specific content near the end.
+
+```go
+client := openai.NewClient()
+gen := gai.NewResponsesGenerator(
+	&client.Responses,
+	openai.ChatModelGPT5Mini,
+	"You are a helpful assistant that summarizes support incidents.",
+)
+opts := &gai.GenOpts{ExtraArgs: map[string]any{
+	gai.ResponsesPromptCacheKeyParam: "support-incident-summary:v1",
+}}
+resp, err := gen.Generate(ctx, dialog, opts)
+if err != nil {
+	fmt.Printf("Error: %v\n", err)
+	return
+}
+if cached, ok := gai.CacheReadTokens(resp.UsageMetadata); ok {
+	fmt.Printf("cached tokens: %d\n", cached)
 }
 ```
 
@@ -314,7 +338,7 @@ func main() {
 
 	// Generate a response using the fallback strategy
 	response, err := fallbackGen.Generate(context.Background(), dialog, &gai.GenOpts{
-		Temperature: 0.7,
+		Temperature: Ptr(0.7),
 	})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -498,9 +522,7 @@ The package provides standardized error types for consistent error handling acro
 - ContextLengthExceededErr - Input dialog exceeds model's context length
 - ContentPolicyErr - Content violates usage policies
 - EmptyDialogErr - No messages provided
-- AuthenticationErr - Authentication/authorization issues
-- RateLimitErr - API request rate limits exceeded
-- ApiErr - Other API errors with status code, type, and message
+- ApiErr - Provider/server errors with normalized provider, kind, status, and message fields
 
 Example error handling:
 
@@ -515,16 +537,15 @@ if err != nil {
 	case errors.Is(err, gai.EmptyDialogErr):
 		fmt.Println("Empty dialog provided")
 
-	// Type-specific errors
-	case errors.As(err, &gai.RateLimitErr{}):
-		fmt.Println("Rate limit exceeded:", err)
 	case errors.As(err, &gai.ContentPolicyErr{}):
 		fmt.Println("Content policy violation:", err)
-	case errors.As(err, &gai.ApiErr{}):
-		apiErr := err.(gai.ApiErr)
-		fmt.Printf("API error: %d %s - %s\n", apiErr.StatusCode, apiErr.Type, apiErr.Message)
 	default:
-		fmt.Println("Unexpected error:", err)
+		var apiErr *gai.ApiErr
+		if errors.As(err, &apiErr) {
+			fmt.Printf("API error: provider=%s kind=%s status=%d message=%s\n", apiErr.Provider, apiErr.Kind, apiErr.StatusCode, apiErr.Message)
+		} else {
+			fmt.Println("Unexpected error:", err)
+		}
 	}
 	return
 }
@@ -560,7 +581,7 @@ toolGen.Register(stockPriceTool, &StockAPI{})
 completeDialog, err := toolGen.Generate(ctx, dialog, func(d gai.Dialog) *gai.GenOpts {
 	return &gai.GenOpts{
 		ToolChoice: gai.ToolChoiceAuto,
-		Temperature: 0.7,
+		Temperature: Ptr(0.7),
 	}
 })
 ```
@@ -590,7 +611,8 @@ fallbackGen, err := gai.NewFallbackGenerator(
 	&gai.FallbackConfig{
 		ShouldFallback: func(err error) bool {
 			// Custom fallback logic
-			return gai.IsRateLimitError(err) || gai.IsServerError(err)
+			var apiErr *gai.ApiErr
+			return errors.As(err, &apiErr) && apiErr.Retryable()
 		},
 	},
 )

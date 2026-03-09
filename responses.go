@@ -19,6 +19,11 @@ import (
 // are returned from the OpenAI Responses API. One of `auto`, `concise`, or `detailed`.
 const ResponsesThoughtSummaryDetailParam = "responses_thought_summary_detail"
 
+// ResponsesPromptCacheKeyParam is a key used in GenOpts.ExtraArgs to set the OpenAI
+// Responses API prompt_cache_key request field. Reuse the same key across requests that
+// share a long static prefix to improve cache routing and hit rates.
+const ResponsesPromptCacheKeyParam = "responses_prompt_cache_key"
+
 // ResponsesExtraFieldReasoningID is the key used in Block.ExtraFields for Thinking blocks
 // to store the reasoning item's unique ID from the Responses API. This is needed to reconstruct
 // reasoning input items when passing back in multi-turn conversations.
@@ -445,6 +450,17 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 		}
 		if options.MaxGenerationTokens != nil {
 			params.MaxOutputTokens = openai.Opt(int64(*options.MaxGenerationTokens))
+		}
+		if options.ExtraArgs != nil {
+			if val, ok := options.ExtraArgs[ResponsesPromptCacheKeyParam]; ok {
+				key, ok := val.(string)
+				if !ok {
+					return params, fmt.Errorf("responses prompt cache key must be a string")
+				}
+				if key != "" {
+					params.PromptCacheKey = openai.Opt(key)
+				}
+			}
 		}
 		if options.ToolChoice != "" {
 			switch options.ToolChoice {

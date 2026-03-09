@@ -137,12 +137,15 @@ func ExampleResponsesGenerator_Generate_thinking() {
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Are LLMs conscious? Think it through and give a comprehensive answer")}}}
 	opts := GenOpts{ThinkingBudget: "medium", Temperature: Ptr(1.0), ExtraArgs: map[string]any{
 		ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
+		ResponsesPromptCacheKeyParam:       "responses-thinking-example:v1",
 	}}
 	resp, err := gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
 		panic(err.Error())
 	}
 	fmt.Println("Response received")
+	// Reuse the same prompt cache key on the follow-up request because both turns
+	// share the same system instructions and overall prompt prefix shape.
 	// The generator is stateless: just append the assistant response and continue.
 	// Reasoning blocks with encrypted content are automatically reconstructed as
 	// input reasoning items on the next call.

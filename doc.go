@@ -152,6 +152,32 @@
 //		}
 //	}
 //
+// # Prompt Caching with ResponsesGenerator
+//
+// The OpenAI Responses generator supports explicit prompt cache routing through
+// [GenOpts.ExtraArgs]. Set [ResponsesPromptCacheKeyParam] to a stable key for requests
+// that share the same long static prompt prefix. Keep repeated instructions, schemas,
+// and tool definitions at the beginning of the prompt, and put request-specific content
+// near the end.
+//
+//	client := openai.NewClient()
+//	gen := gai.NewResponsesGenerator(
+//		&client.Responses,
+//		openai.ChatModelGPT5Mini,
+//		"You are a helpful assistant that summarizes support incidents.",
+//	)
+//	opts := &gai.GenOpts{ExtraArgs: map[string]any{
+//		gai.ResponsesPromptCacheKeyParam: "support-incident-summary:v1",
+//	}}
+//	resp, err := gen.Generate(ctx, dialog, opts)
+//	if err != nil {
+//		fmt.Printf("Error: %v\n", err)
+//		return
+//	}
+//	if cached, ok := gai.CacheReadTokens(resp.UsageMetadata); ok {
+//		fmt.Printf("cached tokens: %d\n", cached)
+//	}
+//
 // # Tool Usage Example
 //
 // Using tools with a language model:
