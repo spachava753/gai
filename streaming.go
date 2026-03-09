@@ -240,7 +240,12 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 			if blk.ModalityType != Text {
 				return nil, fmt.Errorf("content block type %q does not have text modality (got %q)", blk.BlockType, blk.ModalityType)
 			}
-			// Group all consecutive thinking blocks
+			// Group all consecutive thinking blocks.
+			//
+			// For the OpenAI Responses streaming path, this relies on the current API
+			// behavior that a single streamed response yields at most one reasoning
+			// item whose deltas arrive consecutively; see the detailed note in
+			// responses.go for the empirical validation and caveat.
 			j := i + 1
 			joined := blk.Content.String()
 			extraFields := make(map[string]interface{})

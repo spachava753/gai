@@ -737,6 +737,20 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 					}
 				}
 			case "response.reasoning_text.delta":
+				// Empirical note for future maintainers: on 2026-03-09 we probed the raw
+				// Responses streaming API directly (gpt-5.4, high reasoning, repeated
+				// difficult HLE-style prompts) to verify whether one streamed response can
+				// produce multiple distinct reasoning items. Across the observed runs, every
+				// reasoning-related delta belonged to a single stable reasoning item ID, and
+				// encrypted_content only appeared on the final response.output_item.done
+				// event for that item. Some runs emitted no reasoning deltas at all but still
+				// ended with one completed reasoning item carrying encrypted_content.
+				//
+				// Because of that observed API behavior, we stream reasoning deltas as plain
+				// Thinking chunks here and attach the replay-critical reasoning ID and
+				// encrypted content when the reasoning item completes below. If OpenAI ever
+				// starts emitting multiple reasoning items within one streamed response,
+				// revisit both this logic and StreamingAdapter thinking-block compression.
 				reasoningDelta := event.AsResponseReasoningTextDelta()
 				if reasoningDelta.Delta != "" {
 					if !yield(StreamChunk{
@@ -775,18 +789,21 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 					}
 				}
 			case "response.output_item.done":
-				// When a reasoning item completes, emit a zero-content thinking
-				// chunk carrying the encrypted content and reasoning ID in
-				// ExtraFields. compressStreamingBlocks merges ExtraFields across
-				// consecutive thinking chunks via maps.Copy, so the final
-				// compressed block will carry the encrypted content needed for
-				// stateless multi-turn function calling.
+				// When a reasoning item completes, emit a zero-content thinking chunk
+				// carrying the encrypted content and reasoning ID in ExtraFields.
+				// compressStreamingBlocks merges ExtraFields across consecutive
+				// thinking chunks via maps.Copy, so the final compressed block will
+				// carry the encrypted content needed for stateless multi-turn
+				// function calling.
 				//
-				// Note: if the API ever returns multiple reasoning items in a
-				// single response (not observed in practice — one per turn is
-				// the norm), consecutive thinking chunks would be merged into
-				// one block and only the last item's encrypted content would
-				// survive. The Generate path does not have this limitation.
+				// Raw SDK probes run on 2026-03-09 against gpt-5.4 with high reasoning
+				// observed that one streamed response yielded at most one completed
+				// reasoning item, while many reasoning summary deltas all shared that
+				// same item_id. That is the behavior this merge strategy relies on.
+				// If OpenAI ever returns multiple completed reasoning items in one
+				// streamed response, consecutive thinking chunks would collapse into a
+				// single block and only the last item's replay metadata would survive.
+				// The non-streaming Generate path does not have this limitation.
 				item := event.AsResponseOutputItemDone().Item
 				switch item.Type {
 				case "message":
