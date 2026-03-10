@@ -39,8 +39,8 @@ import (
 //   - Don't override → GeneratorWrapper delegates directly to Inner (transparent pass-through)
 //
 // For example, a logging wrapper might override both Generate and Count to log both
-// operations, while a retry wrapper only overrides Generate (retrying Count doesn't
-// make sense for most use cases).
+// operations, while a retry wrapper might override Generate and Stream but still
+// leave Count as a transparent pass-through.
 //
 // # Supported Interfaces
 //
@@ -94,7 +94,7 @@ import (
 //	gen := gai.Wrap(baseGenerator,
 //	    WithLogging(logger),     // Outermost: logs all calls
 //	    WithMetrics(collector),  // Middle: collects metrics
-//	    WithRetry(nil),          // Innermost: retries failed Generate calls
+//	    WithRetry(nil),          // Innermost: retries Generate and pre-output Stream failures
 //	)
 //
 //	// Now gen.Generate() flows: Logging → Metrics → Retry → base

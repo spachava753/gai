@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"errors"
+	"iter"
 	"time"
 
 	"github.com/cenkalti/backoff/v5"
@@ -16,14 +17,21 @@ const (
 	defaultGenRetryMaxElapsedTime = 1 * time.Minute
 )
 
-// RetryGenerator is a Generator that wraps another Generator and retries the
-// Generate call according to a specified base backoff policy and retry options.
+// RetryGenerator is a Generator that wraps another Generator and retries failed
+// Generate calls and Stream startup failures according to a specified base backoff
+// policy and retry options.
 //
 // It retries on specific errors:
-//   - context.DeadlineExceeded (from the Generate call itself, not the overall context)
+//   - context.DeadlineExceeded (from the Generate/Stream call itself, not the overall context)
 //   - gai.ApiErr values classified as retryable (rate limits and transient upstream errors)
+//
+// Streaming retries are intentionally conservative: once a stream chunk has been
+// emitted to the caller, subsequent errors are returned as-is rather than retried,
+// because retrying after partial output would duplicate already-observed content.
+// If the consumer stops iteration by returning false from yield, the stream ends
+// successfully without surfacing an error, following the standard iter.Seq2 contract.
 type RetryGenerator struct {
-	GeneratorWrapper                       // Embed for default Count/Register/Stream delegation
+	GeneratorWrapper                       // Embed for default Count/Register delegation and unsupported Stream fallback.
 	baseBackOff      backoff.BackOff       // The core backoff strategy (e.g., *ExponentialBackOff).
 	retryOptions     []backoff.RetryOption // User-provided options for the backoff.Retry call (e.g., MaxElapsedTime, Notify).
 }
@@ -66,61 +74,114 @@ func NewRetryGenerator(generator Generator, baseBo backoff.BackOff, opts ...back
 	}
 }
 
+func (rg *RetryGenerator) wrapRetryError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	var apiErr *ApiErr
+	if errors.As(err, &apiErr) && apiErr.Retryable() {
+		return err
+	}
+	if errors.Is(err, context.Canceled) {
+		return backoff.Permanent(err)
+	}
+	return backoff.Permanent(err)
+}
+
+func (rg *RetryGenerator) retryCallOptions() []backoff.RetryOption {
+	rg.baseBackOff.Reset()
+
+	callOpts := make([]backoff.RetryOption, 0, 1+len(rg.retryOptions))
+	callOpts = append(callOpts, backoff.WithBackOff(rg.baseBackOff))
+	callOpts = append(callOpts, rg.retryOptions...)
+	return callOpts
+}
+
+func unwrapPermanentRetryError(err error) error {
+	var permanent *backoff.PermanentError
+	if errors.As(err, &permanent) {
+		return permanent.Err
+	}
+	return err
+}
+
 // Generate calls the underlying Generator's Generate method, retrying on
 // specific errors according to the configured backoff policy and options.
 // The provided context (ctx) is respected by the retry loop: if ctx is
 // cancelled, retries will stop.
 func (rg *RetryGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
 	operation := func() (Response, error) {
-		// First, check if the overarching context (ctx) has been cancelled or has met its deadline.
 		if err := ctx.Err(); err != nil {
 			return Response{}, backoff.Permanent(err)
 		}
 
 		resp, err := rg.Inner.Generate(ctx, dialog, options)
 		if err != nil {
-			// Analyze the error to determine if it's retriable.
-			if errors.Is(err, context.DeadlineExceeded) {
-				return resp, err // Retriable
-			}
-			var apiErr *ApiErr
-			if errors.As(err, &apiErr) && apiErr.Retryable() {
-				return resp, err // Retriable
-			}
-			// context.Canceled from the operation itself is treated as permanent.
-			if errors.Is(err, context.Canceled) {
-				return resp, backoff.Permanent(err)
-			}
-			// All other errors are considered permanent for the retry mechanism.
-			return resp, backoff.Permanent(err)
+			return resp, rg.wrapRetryError(err)
 		}
-		// Successful call
 		return resp, nil
 	}
 
-	// Reset the state of the base backoff policy (e.g., for ExponentialBackOff).
-	rg.baseBackOff.Reset()
-
-	// Combine the base backoff policy (via WithBackOff) with other configured retry options.
-	// The user-supplied rg.retryOptions might include WithMaxElapsedTime, WithMaxTries, etc.
-	// We always prepend WithBackOff using rg.baseBackOff.
-	callOpts := make([]backoff.RetryOption, 0, 1+len(rg.retryOptions))
-	callOpts = append(callOpts, backoff.WithBackOff(rg.baseBackOff))
-	callOpts = append(callOpts, rg.retryOptions...)
-
-	resp, err := backoff.Retry(ctx, operation, callOpts...)
-
+	resp, err := backoff.Retry(ctx, operation, rg.retryCallOptions()...)
 	if err != nil {
-		var permanent *backoff.PermanentError
-		if errors.As(err, &permanent) {
-			return resp, permanent.Err
-		}
-		return resp, err
+		return resp, unwrapPermanentRetryError(err)
 	}
 	return resp, nil
 }
 
-// Compile-time interface checks - inherited methods from GeneratorWrapper
+// Stream calls the underlying StreamingGenerator's Stream method, retrying only
+// failures that occur before the first chunk is emitted. Once output has been
+// observed by the caller, the stream becomes non-retriable to avoid duplicating
+// partial content on a subsequent attempt. If yield returns false, Stream stops
+// immediately and reports success rather than converting the early stop into an error.
+func (rg *RetryGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
+	return func(yield func(StreamChunk, error) bool) {
+		sg, ok := rg.Inner.(StreamingGenerator)
+		if !ok {
+			for chunk, err := range rg.GeneratorWrapper.Stream(ctx, dialog, options) {
+				if !yield(chunk, err) {
+					return
+				}
+			}
+			return
+		}
+
+		operation := func() (struct{}, error) {
+			if err := ctx.Err(); err != nil {
+				return struct{}{}, backoff.Permanent(err)
+			}
+
+			emittedAny := false
+			for chunk, err := range sg.Stream(ctx, dialog, options) {
+				if err != nil {
+					if emittedAny {
+						return struct{}{}, backoff.Permanent(err)
+					}
+					return struct{}{}, rg.wrapRetryError(err)
+				}
+
+				emittedAny = true
+				if !yield(chunk, nil) {
+					return struct{}{}, nil
+				}
+			}
+
+			return struct{}{}, nil
+		}
+
+		_, err := backoff.Retry(ctx, operation, rg.retryCallOptions()...)
+		if err == nil {
+			return
+		}
+
+		yield(StreamChunk{}, unwrapPermanentRetryError(err))
+	}
+}
+
+// Compile-time interface checks.
 var (
 	_ Generator            = (*RetryGenerator)(nil)
 	_ TokenCounter         = (*RetryGenerator)(nil)
