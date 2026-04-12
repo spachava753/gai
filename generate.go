@@ -163,14 +163,14 @@ type Response struct {
 // or utilizing a special feature specific to an implementation of Generator.
 //
 // A Generator implementation may return several types of errors:
-//   - [MaxGenerationLimitErr] when the maximum token generation limit is exceeded
+//   - [ErrMaxGenerationLimit] when the maximum token generation limit is exceeded
 //   - [UnsupportedInputModalityErr] when encountering an unsupported input modality
 //   - [UnsupportedOutputModalityErr] when requested to generate an unsupported output modality
 //   - [InvalidToolChoiceErr] when an invalid tool choice is specified
 //   - [InvalidParameterErr] when generation parameters are invalid or out of range
-//   - [ContextLengthExceededErr] when input dialog is too long
+//   - [ErrContextLengthExceeded] when input dialog is too long
 //   - [ContentPolicyErr] when content violates usage policies
-//   - [EmptyDialogErr] when no messages are provided in the dialog
+//   - [ErrEmptyDialog] when no messages are provided in the dialog
 //   - [ApiErr] when a provider returns a server/API error
 type Generator interface {
 	Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error)

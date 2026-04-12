@@ -210,7 +210,7 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 
 	// Check for empty dialog
 	if len(dialog) == 0 {
-		return Response{}, EmptyDialogErr
+		return Response{}, ErrEmptyDialog
 	}
 
 	// Convert each message to OpenAI format
@@ -510,7 +510,7 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 			result.FinishReason = EndTurn
 		case "length":
 			result.FinishReason = MaxGenerationLimit
-			return result, MaxGenerationLimitErr
+			return result, ErrMaxGenerationLimit
 		case "tool_calls":
 			result.FinishReason = ToolUse
 		case "content_filter":

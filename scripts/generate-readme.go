@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"go/ast"
 	"go/doc"
 	"go/parser"
 	"go/token"
@@ -12,23 +13,17 @@ import (
 )
 
 func main() {
-	// Parse the current directory
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", nil, parser.ParseComments)
+	docFile, err := parser.ParseFile(fset, "doc.go", nil, parser.ParseComments)
 	if err != nil {
-		log.Fatalf("Failed to parse directory: %v", err)
+		log.Fatalf("Failed to parse doc.go: %v", err)
 	}
 
-	// Find the gai package
-	pkg, exists := pkgs["gai"]
-	if !exists {
-		log.Fatal("Could not find gai package")
+	docPkg, err := doc.NewFromFiles(fset, []*ast.File{docFile}, "./")
+	if err != nil {
+		log.Fatalf("Failed to build package documentation: %v", err)
 	}
 
-	// Create documentation from AST
-	docPkg := doc.New(pkg, "./", 0)
-
-	// Extract the package documentation
 	packageDoc := docPkg.Doc
 	if packageDoc == "" {
 		log.Fatal("No package documentation found")

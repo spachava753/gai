@@ -392,7 +392,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 	// Check for empty dialog
 	if len(dialog) == 0 {
-		return Response{}, EmptyDialogErr
+		return Response{}, ErrEmptyDialog
 	}
 
 	// Convert each message to OpenAI format
@@ -642,9 +642,9 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 			result.FinishReason = EndTurn
 		case "length":
 			result.FinishReason = MaxGenerationLimit
-			// Return MaxGenerationLimitErr when the model reaches its token limit,
+			// Return ErrMaxGenerationLimit when the model reaches its token limit,
 			// regardless of whether MaxGenerationTokens was explicitly set
-			return result, MaxGenerationLimitErr
+			return result, ErrMaxGenerationLimit
 		case "tool_calls":
 			result.FinishReason = ToolUse
 		case "content_filter":
@@ -678,7 +678,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 		// Check for empty dialog
 		if len(dialog) == 0 {
-			yield(StreamChunk{}, EmptyDialogErr)
+			yield(StreamChunk{}, ErrEmptyDialog)
 			return
 		}
 
@@ -854,7 +854,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 			switch chunk.Choices[0].FinishReason {
 			case "length":
-				yield(StreamChunk{}, MaxGenerationLimitErr)
+				yield(StreamChunk{}, ErrMaxGenerationLimit)
 				return
 			case "content_filter":
 				yield(StreamChunk{}, ContentPolicyErr("could not produce response"))
@@ -1258,7 +1258,7 @@ func (g *OpenAiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 	}
 
 	if len(dialog) == 0 {
-		return 0, EmptyDialogErr
+		return 0, ErrEmptyDialog
 	}
 
 	tke, err := tiktoken.EncodingForModel(g.model)

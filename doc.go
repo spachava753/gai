@@ -491,14 +491,14 @@
 //
 // The package provides standardized error types for consistent error handling across providers:
 //
-//   - MaxGenerationLimitErr - Maximum token generation limit reached
+//   - ErrMaxGenerationLimit - Maximum token generation limit reached
 //   - UnsupportedInputModalityErr - Model doesn't support the requested input modality
 //   - UnsupportedOutputModalityErr - Model doesn't support the requested output modality
 //   - InvalidToolChoiceErr - Invalid tool choice specified
 //   - InvalidParameterErr - Invalid generation parameter
-//   - ContextLengthExceededErr - Input dialog exceeds model's context length
+//   - ErrContextLengthExceeded - Input dialog exceeds model's context length
 //   - ContentPolicyErr - Content violates usage policies
-//   - EmptyDialogErr - No messages provided
+//   - ErrEmptyDialog - No messages provided
 //   - ApiErr - Provider/server errors with normalized provider, kind, status, and message fields
 //
 // Example error handling:
@@ -506,11 +506,11 @@
 //	response, err := generator.Generate(ctx, dialog, options)
 //	if err != nil {
 //		switch {
-//		case errors.Is(err, gai.MaxGenerationLimitErr):
+//		case errors.Is(err, gai.ErrMaxGenerationLimit):
 //			fmt.Println("Maximum generation limit reached")
-//		case errors.Is(err, gai.ContextLengthExceededErr):
+//		case errors.Is(err, gai.ErrContextLengthExceeded):
 //			fmt.Println("Context length exceeded")
-//		case errors.Is(err, gai.EmptyDialogErr):
+//		case errors.Is(err, gai.ErrEmptyDialog):
 //			fmt.Println("Empty dialog provided")
 //
 //		case errors.As(err, &gai.ContentPolicyErr{}):

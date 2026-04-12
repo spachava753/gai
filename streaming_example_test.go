@@ -350,7 +350,7 @@ func (c *customStreamingGenerator) Stream(ctx context.Context, dialog Dialog, op
 	return func(yield func(StreamChunk, error) bool) {
 		// Validate input
 		if len(dialog) == 0 {
-			yield(StreamChunk{}, EmptyDialogErr)
+			yield(StreamChunk{}, ErrEmptyDialog)
 			return
 		}
 

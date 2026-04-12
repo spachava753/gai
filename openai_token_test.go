@@ -83,6 +83,9 @@ func TestOpenAiGenerator_calculateImageTokens(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error calculating image tokens from actual image data: %v", err)
 	}
+	if tokens <= 0 {
+		t.Errorf("Expected positive token count for actual image data, got %d", tokens)
+	}
 
 	// Test case for image without dimensions
 	blockWithoutDimensions := Block{

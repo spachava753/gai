@@ -139,6 +139,7 @@ When adding new configuration
 
 - Default branch: `main`; use feature branches for changes
 - Keep commits small, focused, and with descriptive messages
+- This module is pre-`v1.0.0`; breaking API changes are acceptable when they improve the package, though they should still be intentional and documented in code/tests/docs as appropriate
 - Ensure `go fmt`, `go vet`, and `go test ./...` pass before pushing
 - Avoid force pushes on `main`; use `--force-with-lease` only on feature branches
 

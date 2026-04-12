@@ -281,7 +281,7 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 		return Response{}, fmt.Errorf("zai: client not initialized")
 	}
 	if len(dialog) == 0 {
-		return Response{}, EmptyDialogErr
+		return Response{}, ErrEmptyDialog
 	}
 
 	messages, err := g.buildMessages(dialog)
@@ -425,7 +425,7 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 			result.FinishReason = EndTurn
 		case "length":
 			result.FinishReason = MaxGenerationLimit
-			return result, MaxGenerationLimitErr
+			return result, ErrMaxGenerationLimit
 		case "tool_calls":
 			result.FinishReason = ToolUse
 		case "content_filter":
@@ -459,7 +459,7 @@ func (g *ZaiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOp
 			return
 		}
 		if len(dialog) == 0 {
-			yield(StreamChunk{}, EmptyDialogErr)
+			yield(StreamChunk{}, ErrEmptyDialog)
 			return
 		}
 
@@ -556,7 +556,7 @@ func (g *ZaiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOp
 
 			switch choice.FinishReason {
 			case "length":
-				yield(StreamChunk{}, MaxGenerationLimitErr)
+				yield(StreamChunk{}, ErrMaxGenerationLimit)
 				return
 			case "content_filter", "sensitive":
 				yield(StreamChunk{}, ContentPolicyErr("content filtered"))

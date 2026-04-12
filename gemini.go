@@ -167,7 +167,7 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		return Response{}, fmt.Errorf("gemini: client not initialized")
 	}
 	if len(dialog) == 0 {
-		return Response{}, EmptyDialogErr
+		return Response{}, ErrEmptyDialog
 	}
 
 	// We'll keep a mapping of toolCallID -> functionName for this call.
@@ -402,7 +402,7 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		}
 
 		if len(dialog) == 0 {
-			yield(StreamChunk{}, EmptyDialogErr)
+			yield(StreamChunk{}, ErrEmptyDialog)
 			return
 		}
 
@@ -799,7 +799,7 @@ func (g *GeminiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 		return 0, fmt.Errorf("gemini: client not initialized")
 	}
 	if len(dialog) == 0 {
-		return 0, EmptyDialogErr
+		return 0, ErrEmptyDialog
 	}
 
 	// We'll need a map to track tool call IDs to function names, even though we are not executing tools.

@@ -5,10 +5,10 @@ import (
 	"fmt"
 )
 
-// MaxGenerationLimitErr is returned when a Generator has generated the maximum number of tokens
+// ErrMaxGenerationLimit is returned when a Generator has generated the maximum number of tokens
 // specified by GenOpts.MaxGenerationTokens. This error indicates that the generation was terminated
 // due to reaching the token limit rather than natural completion.
-var MaxGenerationLimitErr = errors.New("maximum generation limit reached")
+var ErrMaxGenerationLimit = errors.New("maximum generation limit reached")
 
 // UnsupportedInputModalityErr is returned when a Generator encounters an input Message
 // with a Block that contains an unsupported Modality. The string value of this error
@@ -64,10 +64,10 @@ func (i InvalidParameterErr) Error() string {
 	return fmt.Sprintf("invalid parameter %s: %s", i.Parameter, i.Reason)
 }
 
-// ContextLengthExceededErr is returned when the total number of tokens in the input Dialog
+// ErrContextLengthExceeded is returned when the total number of tokens in the input Dialog
 // exceeds the maximum context length supported by the Generator. Different Generator
 // implementations may have different context length limits.
-var ContextLengthExceededErr = errors.New("context length exceeded")
+var ErrContextLengthExceeded = errors.New("context length exceeded")
 
 // ContentPolicyErr is returned when the input or generated content violates the Generator's
 // content policy. This can include:
@@ -105,9 +105,9 @@ func (t ToolRegistrationErr) Unwrap() error {
 	return t.Cause
 }
 
-// EmptyDialogErr is returned when an empty Dialog is provided to Generate.
+// ErrEmptyDialog is returned when an empty Dialog is provided to Generate.
 // At least one Message must be present in the Dialog.
-var EmptyDialogErr = errors.New("empty dialog: at least one message required")
+var ErrEmptyDialog = errors.New("empty dialog: at least one message required")
 
 // Provider identifies the upstream service that returned an API/server error.
 type Provider string

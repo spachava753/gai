@@ -286,7 +286,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 	// Check for empty dialog
 	if len(dialog) == 0 {
-		return Response{}, EmptyDialogErr
+		return Response{}, ErrEmptyDialog
 	}
 
 	// Convert each message to Anthropic format
@@ -524,9 +524,9 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		result.FinishReason = EndTurn
 	case a.StopReasonMaxTokens:
 		result.FinishReason = MaxGenerationLimit
-		// Return MaxGenerationLimitErr when the model reaches its token limit,
+		// Return ErrMaxGenerationLimit when the model reaches its token limit,
 		// regardless of whether MaxGenerationTokens was explicitly set
-		return result, MaxGenerationLimitErr
+		return result, ErrMaxGenerationLimit
 	case a.StopReasonStopSequence:
 		result.FinishReason = StopSequence
 	case a.StopReasonToolUse:
@@ -547,7 +547,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 
 		// Check for empty dialog
 		if len(dialog) == 0 {
-			yield(StreamChunk{}, EmptyDialogErr)
+			yield(StreamChunk{}, ErrEmptyDialog)
 			return
 		}
 
@@ -924,7 +924,7 @@ func (g *AnthropicGenerator) Count(ctx context.Context, dialog Dialog) (uint, er
 	}
 
 	if len(dialog) == 0 {
-		return 0, EmptyDialogErr
+		return 0, ErrEmptyDialog
 	}
 
 	var messages []a.MessageParam

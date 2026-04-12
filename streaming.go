@@ -114,7 +114,7 @@ type StreamChunk struct {
 //	    return func(yield func(StreamChunk, error) bool) {
 //	        // Validate inputs
 //	        if len(dialog) == 0 {
-//	            yield(StreamChunk{}, EmptyDialogErr)
+//	            yield(StreamChunk{}, ErrEmptyDialog)
 //	            return
 //	        }
 //
@@ -170,14 +170,14 @@ type StreamChunk struct {
 //	}
 //
 // A Generator implementation may return several types of errors:
-//   - [MaxGenerationLimitErr] when the maximum token generation limit is exceeded
+//   - [ErrMaxGenerationLimit] when the maximum token generation limit is exceeded
 //   - [UnsupportedInputModalityErr] when encountering an unsupported input modality
 //   - [UnsupportedOutputModalityErr] when requested to generate an unsupported output modality
 //   - [InvalidToolChoiceErr] when an invalid tool choice is specified
 //   - [InvalidParameterErr] when generation parameters are invalid or out of range
-//   - [ContextLengthExceededErr] when input dialog is too long
+//   - [ErrContextLengthExceeded] when input dialog is too long
 //   - [ContentPolicyErr] when content violates usage policies
-//   - [EmptyDialogErr] when no messages are provided in the dialog
+//   - [ErrEmptyDialog] when no messages are provided in the dialog
 //   - [ApiErr] when a provider returns a server/API error
 type StreamingGenerator interface {
 	Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error]

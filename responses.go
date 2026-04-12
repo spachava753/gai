@@ -593,7 +593,7 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 		return Response{}, fmt.Errorf("responses: client not initialized")
 	}
 	if len(dialog) == 0 {
-		return Response{}, EmptyDialogErr
+		return Response{}, ErrEmptyDialog
 	}
 
 	inputItems, err := r.buildInputItems(dialog)
@@ -640,7 +640,7 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 	if res.IncompleteDetails.Reason == "max_output_tokens" {
 		result.FinishReason = MaxGenerationLimit
-		return result, MaxGenerationLimitErr
+		return result, ErrMaxGenerationLimit
 	}
 	if res.IncompleteDetails.Reason == "content_filter" || refusal != "" {
 		result.FinishReason = Unknown
@@ -664,7 +664,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			return
 		}
 		if len(dialog) == 0 {
-			yield(StreamChunk{}, EmptyDialogErr)
+			yield(StreamChunk{}, ErrEmptyDialog)
 			return
 		}
 
@@ -889,7 +889,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				yield(StreamChunk{}, newResponsesStreamAPIError(string(failed.Response.Error.Code), failed.Response.Error.Message, failed.RawJSON()))
 				return
 			case "response.incomplete":
-				yield(StreamChunk{}, MaxGenerationLimitErr)
+				yield(StreamChunk{}, ErrMaxGenerationLimit)
 				return
 			case "error":
 				errorEvent := event.AsError()

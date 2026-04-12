@@ -281,7 +281,7 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 		return Response{}, fmt.Errorf("cerebras: missing API key")
 	}
 	if len(dialog) == 0 {
-		return Response{}, EmptyDialogErr
+		return Response{}, ErrEmptyDialog
 	}
 
 	msgs, err := g.buildMessages(dialog)
@@ -457,7 +457,7 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 			result.FinishReason = EndTurn
 		case "length":
 			result.FinishReason = MaxGenerationLimit
-			return result, MaxGenerationLimitErr
+			return result, ErrMaxGenerationLimit
 		case "tool_calls":
 			result.FinishReason = ToolUse
 		default:

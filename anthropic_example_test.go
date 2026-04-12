@@ -22,7 +22,7 @@ func ExampleAnthropicGenerator_Generate() {
 	svc := NewAnthropicServiceWrapper(&client.Messages, EnableSystemCaching)
 
 	// Instantiate an Anthropic Generator
-	gen := NewAnthropicGenerator(svc, string(a.ModelClaude3_5HaikuLatest), "You are a helpful assistant")
+	gen := NewAnthropicGenerator(svc, string(a.ModelClaudeHaiku4_5), "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -47,7 +47,7 @@ func ExampleAnthropicGenerator_Generate() {
 
 	// Customize generation parameters
 	opts := GenOpts{
-		Temperature: Ptr(0.7),
+		Temperature:         Ptr(0.7),
 		MaxGenerationTokens: Ptr(1024),
 	}
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
@@ -68,7 +68,7 @@ func ExampleAnthropicGenerator_Stream() {
 	svc := NewAnthropicServiceWrapper(&client.Messages, EnableSystemCaching)
 
 	// Instantiate an Anthropic Generator
-	gen := NewAnthropicGenerator(svc, string(a.ModelClaude3_5HaikuLatest), "You are a helpful assistant")
+	gen := NewAnthropicGenerator(svc, string(a.ModelClaudeHaiku4_5), "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -120,7 +120,7 @@ func ExampleAnthropicGenerator_Generate_thinking() {
 
 	// Use thinking
 	opts := GenOpts{
-		Temperature: Ptr(1.0),
+		Temperature:         Ptr(1.0),
 		MaxGenerationTokens: Ptr(9000),
 		ThinkingBudget:      "5000",
 	}
