@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
 	oaissestream "github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/pkoukk/tiktoken-go" // Added for token counting
 
@@ -513,7 +514,9 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 				}
 
 				params.Audio = oai.ChatCompletionAudioParam{
-					Voice:  oai.ChatCompletionAudioParamVoice(options.AudioConfig.VoiceName),
+					Voice: oai.ChatCompletionAudioParamVoiceUnion{
+						OfString: param.NewOpt(options.AudioConfig.VoiceName),
+					},
 					Format: oai.ChatCompletionAudioParamFormat(options.AudioConfig.Format),
 				}
 			}
@@ -804,7 +807,9 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 						return
 					}
 					params.Audio = oai.ChatCompletionAudioParam{
-						Voice:  oai.ChatCompletionAudioParamVoice(options.AudioConfig.VoiceName),
+						Voice: oai.ChatCompletionAudioParamVoiceUnion{
+							OfString: param.NewOpt(options.AudioConfig.VoiceName),
+						},
 						Format: oai.ChatCompletionAudioParamFormat(options.AudioConfig.Format),
 					}
 				}
