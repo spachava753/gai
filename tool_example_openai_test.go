@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"testing"
 
 	"github.com/openai/openai-go/v3"
 
@@ -81,7 +82,9 @@ func (t TickerTool) Call(ctx context.Context, parametersJSON json.RawMessage, to
 
 var _ ToolCallback = (*TickerTool)(nil)
 
-func ExampleToolGenerator_Generate() {
+func TestToolGenerator_Generate_Example(t *testing.T) {
+	skipOnMissingEnv(t, "OPENAI_API_KEY")
+
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -90,15 +93,13 @@ func ExampleToolGenerator_Generate() {
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("generate ticker schema: %v", err)
 			}
 			return schema
 		}(),
 	}
 
 	client := openai.NewClient()
-
-	// Instantiate a OpenAI Generator
 	gen := NewOpenAiGenerator(
 		&client.Chat.Completions,
 		openai.ChatModelGPT4oMini,
@@ -113,51 +114,28 @@ Only output the price, like
 </example>
 `,
 	)
-
-	tg := ToolGenerator{
-		G: &gen,
+	tg := ToolGenerator{G: &gen}
+	if err := tg.Register(tickerTool, &TickerTool{ticketPrices: map[string]float64{"AAPL": 435.56}}); err != nil {
+		t.Fatalf("register ticker tool: %v", err)
 	}
 
-	// Register tools
-	if err := tg.Register(
-		tickerTool,
-		&TickerTool{
-			ticketPrices: map[string]float64{
-				"AAPL": 435.56,
-			},
-		},
-	); err != nil {
-		panic(err.Error())
-	}
-
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("What is the price of Apple stock?"),
-				},
-			},
-		},
-	}
-
-	// Generate a response
-	newDialog, err := tg.Generate(context.Background(), dialog, func(d Dialog) *GenOpts {
-		return nil
-	})
+	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}}}
+	newDialog, err := tg.Generate(context.Background(), dialog, func(d Dialog) *GenOpts { return nil })
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("Generate returned error: %v", err)
 	}
-	fmt.Printf("len of the new dialog: %d\n", len(newDialog))
-	fmt.Printf("%s\n", newDialog[len(newDialog)-1].Blocks[0].Content)
-
-	// Output: len of the new dialog: 4
-	// 435.56
+	if len(newDialog) != 4 {
+		t.Fatalf("dialog length = %d, want 4", len(newDialog))
+	}
+	content := requireContentBlock(t, requireBlock(t, newDialog[len(newDialog)-1], 0))
+	if got, want := content, "435.56"; got != want {
+		t.Fatalf("final content = %q, want %q", got, want)
+	}
 }
 
-func ExampleToolGenerator_Generate_responses() {
+func TestToolGenerator_Generate_responses_Example(t *testing.T) {
+	skipOnMissingEnv(t, "OPENAI_API_KEY")
+
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -166,15 +144,13 @@ func ExampleToolGenerator_Generate_responses() {
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("generate ticker schema: %v", err)
 			}
 			return schema
 		}(),
 	}
 
 	client := openai.NewClient()
-
-	// Instantiate a Responses Generator (stateless, no adapter needed)
 	gen := NewResponsesGenerator(
 		&client.Responses,
 		openai.ChatModelGPT5Mini,
@@ -189,53 +165,28 @@ Only output the price, like
 </example>
 `,
 	)
-
-	tg := ToolGenerator{
-		G: &gen,
+	tg := ToolGenerator{G: &gen}
+	if err := tg.Register(tickerTool, &TickerTool{ticketPrices: map[string]float64{"AAPL": 435.56}}); err != nil {
+		t.Fatalf("register ticker tool: %v", err)
 	}
 
-	// Register tools
-	if err := tg.Register(
-		tickerTool,
-		&TickerTool{
-			ticketPrices: map[string]float64{
-				"AAPL": 435.56,
-			},
-		},
-	); err != nil {
-		panic(err.Error())
-	}
-
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("What is the price of Apple stock?"),
-				},
-			},
-		},
-	}
-
-	// Generate a response
-	newDialog, err := tg.Generate(context.Background(), dialog, func(d Dialog) *GenOpts {
-		return nil
-	})
+	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}}}
+	newDialog, err := tg.Generate(context.Background(), dialog, func(d Dialog) *GenOpts { return nil })
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("Generate returned error: %v", err)
 	}
-	fmt.Printf("len of the new dialog: %d\n", len(newDialog))
-	// Find the first Content block (reasoning models may produce Thinking blocks first)
+	if len(newDialog) != 4 {
+		t.Fatalf("dialog length = %d, want 4", len(newDialog))
+	}
+
 	lastMsg := newDialog[len(newDialog)-1]
 	for _, blk := range lastMsg.Blocks {
 		if blk.BlockType == Content {
-			fmt.Printf("%s\n", blk.Content)
-			break
+			if got, want := blk.Content.String(), "435.56"; got != want {
+				t.Fatalf("final content = %q, want %q", got, want)
+			}
+			return
 		}
 	}
-
-	// Output: len of the new dialog: 4
-	// 435.56
+	t.Fatalf("final response has no content block: %#v", lastMsg.Blocks)
 }

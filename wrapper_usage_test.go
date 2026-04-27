@@ -1,11 +1,12 @@
 package gai_test
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
-	"os"
+	"slices"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/spachava753/gai"
@@ -127,60 +128,50 @@ func (m *simpleMockGen) Count(ctx context.Context, dialog gai.Dialog) (uint, err
 
 // This example demonstrates how wrappers that override different methods
 // create independent call chains for each method.
-func Example_selectiveOverride() {
-	// LoggingGenerator only overrides Generate
-	// MetricsGenerator overrides both Generate AND Count
+func Test_selectiveOverride(t *testing.T) {
+	var logs bytes.Buffer
+	var metrics []string
 
 	base := &simpleMockGen{tokenCount: 100}
-
-	// Stack: Logging (outer) → Metrics (inner) → base
 	gen := gai.Wrap(base,
-		WithLogging(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-				// Remove time for reproducible output
-				if a.Key == slog.TimeKey {
-					return slog.Attr{}
-				}
-				// Simplify duration
-				if a.Key == "duration" {
-					return slog.String("duration", "Xms")
-				}
-				return a
-			},
-		}))),
+		WithLogging(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{}))),
 		WithMetrics(func(op string, d time.Duration, err error) {
-			fmt.Printf("metric: %s took some time\n", op)
+			metrics = append(metrics, op)
 		}),
 	)
 
-	fmt.Println("=== Calling Generate ===")
-	fmt.Println("Flow: Logging.Generate → Metrics.Generate → base.Generate")
-	_, _ = gen.Generate(context.Background(), gai.Dialog{}, nil)
+	resp, err := gen.Generate(context.Background(), gai.Dialog{}, nil)
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if resp.FinishReason != gai.EndTurn {
+		t.Fatalf("FinishReason = %v, want %v", resp.FinishReason, gai.EndTurn)
+	}
+	if !slices.Equal(metrics, []string{"generate"}) {
+		t.Fatalf("metrics after Generate = %v, want [generate]", metrics)
+	}
+	if got := logs.String(); !strings.Contains(got, "generate: starting") || !strings.Contains(got, "generate: finished") {
+		t.Fatalf("logs did not contain Generate start and finish entries: %q", got)
+	}
 
-	fmt.Println("\n=== Calling Count ===")
-	fmt.Println("Flow: Metrics.Count → base.Count (Logging has no Count override)")
-	_, _ = gen.(gai.TokenCounter).Count(context.Background(), gai.Dialog{})
-
-	// Output:
-	// === Calling Generate ===
-	// Flow: Logging.Generate → Metrics.Generate → base.Generate
-	// level=INFO msg="generate: starting" messages=0
-	// metric: generate took some time
-	// level=INFO msg="generate: finished" duration=Xms error=<nil>
-	//
-	// === Calling Count ===
-	// Flow: Metrics.Count → base.Count (Logging has no Count override)
-	// metric: count took some time
+	count, err := gen.(gai.TokenCounter).Count(context.Background(), gai.Dialog{})
+	if err != nil {
+		t.Fatalf("Count returned error: %v", err)
+	}
+	if count != 100 {
+		t.Fatalf("Count = %d, want 100", count)
+	}
+	if !slices.Equal(metrics, []string{"generate", "count"}) {
+		t.Fatalf("metrics after Count = %v, want [generate count]", metrics)
+	}
 }
 
 // This example shows the complete call flow through a middleware stack,
 // demonstrating the "onion" pattern where calls flow in and responses flow out.
-func Example_middlewareCallFlow() {
-	// CallTracker records the order of calls to visualize the flow
+func Test_middlewareCallFlow(t *testing.T) {
 	var calls []string
 	record := func(s string) { calls = append(calls, s) }
 
-	// Create wrappers that record before/after
 	withAlpha := func(g gai.Generator) gai.Generator {
 		return &alphaWrapper{
 			GeneratorWrapper: gai.GeneratorWrapper{Inner: g},
@@ -194,31 +185,30 @@ func Example_middlewareCallFlow() {
 		}
 	}
 
-	// Base generator also uses the same record function
 	base := &trackingMockGen{record: record, tokenCount: 42}
-
-	// Stack: Alpha (outer) → Beta (inner) → base
 	gen := gai.Wrap(base, withAlpha, withBeta)
 
-	// Call Generate
-	_, _ = gen.Generate(context.Background(), gai.Dialog{}, nil)
+	_, err := gen.Generate(context.Background(), gai.Dialog{}, nil)
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	wantGenerate := []string{"alpha:before", "beta:before", "base:Generate", "beta:after", "alpha:after"}
+	if !slices.Equal(calls, wantGenerate) {
+		t.Fatalf("Generate call flow = %v, want %v", calls, wantGenerate)
+	}
 
-	fmt.Println("Generate call flow:")
-	fmt.Println("  " + strings.Join(calls, " → "))
-
-	// Reset and call Count
 	calls = nil
-	_, _ = gen.(gai.TokenCounter).Count(context.Background(), gai.Dialog{})
-
-	fmt.Println("\nCount call flow:")
-	fmt.Println("  " + strings.Join(calls, " → "))
-
-	// Output:
-	// Generate call flow:
-	//   alpha:before → beta:before → base:Generate → beta:after → alpha:after
-	//
-	// Count call flow:
-	//   alpha:before → beta:before → base:Count → beta:after → alpha:after
+	count, err := gen.(gai.TokenCounter).Count(context.Background(), gai.Dialog{})
+	if err != nil {
+		t.Fatalf("Count returned error: %v", err)
+	}
+	if count != 42 {
+		t.Fatalf("Count = %d, want 42", count)
+	}
+	wantCount := []string{"alpha:before", "beta:before", "base:Count", "beta:after", "alpha:after"}
+	if !slices.Equal(calls, wantCount) {
+		t.Fatalf("Count call flow = %v, want %v", calls, wantCount)
+	}
 }
 
 // alphaWrapper and betaWrapper are helpers for Example_middlewareCallFlow
@@ -261,23 +251,24 @@ func (b *betaWrapper) Count(ctx context.Context, d gai.Dialog) (uint, error) {
 }
 
 // This example shows the recommended pattern for creating a reusable wrapper.
-func Example_creatingAWrapper() {
-	fmt.Println("To create a middleware wrapper:")
-	fmt.Println("")
-	fmt.Println("1. Define a struct that embeds gai.GeneratorWrapper")
-	fmt.Println("2. Override only the methods you want to intercept")
-	fmt.Println("3. Call GeneratorWrapper.Method() to delegate to the next in chain")
-	fmt.Println("4. Create a WithXxx() function that returns gai.WrapperFunc")
-	fmt.Println("")
-	fmt.Println("Methods you DON'T override pass through automatically.")
+func Test_creatingAWrapper(t *testing.T) {
+	var metrics []string
+	base := &simpleMockGen{tokenCount: 7}
+	gen := gai.Wrap(base, WithMetrics(func(op string, d time.Duration, err error) {
+		metrics = append(metrics, op)
+	}))
 
-	// Output:
-	// To create a middleware wrapper:
-	//
-	// 1. Define a struct that embeds gai.GeneratorWrapper
-	// 2. Override only the methods you want to intercept
-	// 3. Call GeneratorWrapper.Method() to delegate to the next in chain
-	// 4. Create a WithXxx() function that returns gai.WrapperFunc
-	//
-	// Methods you DON'T override pass through automatically.
+	if _, err := gen.Generate(context.Background(), gai.Dialog{}, nil); err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	count, err := gen.(gai.TokenCounter).Count(context.Background(), gai.Dialog{})
+	if err != nil {
+		t.Fatalf("Count returned error: %v", err)
+	}
+	if count != 7 {
+		t.Fatalf("Count = %d, want 7", count)
+	}
+	if !slices.Equal(metrics, []string{"generate", "count"}) {
+		t.Fatalf("metrics = %v, want [generate count]", metrics)
+	}
 }

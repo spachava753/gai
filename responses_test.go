@@ -3,30 +3,22 @@ package gai
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
-	"os"
-	"strings"
-
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
-
-	"github.com/google/jsonschema-go/jsonschema"
+	"os"
+	"strings"
+	"testing"
 )
 
-func ExampleResponsesGenerator_Generate_pdf() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
-		return
-	}
-
+func TestResponsesGenerator_Generate_pdf(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 	pdfBytes, err := os.ReadFile("sample.pdf")
 	if err != nil {
-		fmt.Println("[Skipped: could not open sample.pdf]")
+		t.Skip("could not open sample.pdf")
 		return
 	}
-
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, "You are a helpful assistant.")
 	dialog := Dialog{
@@ -40,32 +32,26 @@ func ExampleResponsesGenerator_Generate_pdf() {
 	}
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{ThinkingBudget: "low"})
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
 	// Find the first Content block (skip Thinking blocks from reasoning)
 	for _, blk := range resp.Candidates[0].Blocks {
 		if blk.BlockType == Content {
-			fmt.Println(blk.Content)
+			if got := blk.Content.String(); got == "" {
+				t.Fatal("expected non-empty content")
+			}
 			break
 		}
 	}
-	// Output: Attention Is All You Need
 }
-
-func ExampleResponsesGenerator_Generate_image() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
-		return
-	}
+func TestResponsesGenerator_Generate_image(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
-		fmt.Println("[Skipped: could not open sample.jpg]")
+		t.Skip("could not open sample.jpg")
 		return
 	}
 	imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))
-
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, "You are a helpful assistant.")
 	dialog := Dialog{
@@ -88,50 +74,39 @@ func ExampleResponsesGenerator_Generate_image() {
 	}
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(512), ThinkingBudget: "high"})
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(resp.Candidates) != 1 {
-		panic("Expected 1 candidate, got " + fmt.Sprint(len(resp.Candidates)))
+		t.Fatalf("candidates = %d, want 1", len(resp.Candidates))
 	}
 	if len(resp.Candidates[0].Blocks) == 0 {
-		panic("Expected at least 1 block")
+		t.Fatal("expected at least one block")
 	}
 	// Find the first Content block (skip Thinking blocks from reasoning)
 	for _, blk := range resp.Candidates[0].Blocks {
 		if blk.BlockType == Content {
-			fmt.Println(strings.Contains(blk.Content.String(), "Guy"))
+			if !strings.Contains(blk.Content.String(), "Guy") {
+				t.Fatalf("content does not contain Guy")
+			}
 			break
 		}
 	}
-	// Output: true
 }
-
-func ExampleResponsesGenerator_Generate() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
-		return
-	}
+func TestResponsesGenerator_Generate(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, "You are a helpful assistant")
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Hi!")}}}
 	resp, err := gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println("Response received")
-	fmt.Println(len(resp.Candidates))
-	// Output: Response received
-	// 1
+	if got := len(resp.Candidates); got == 0 {
+		t.Fatal("expected at least one item")
+	}
 }
-
-func ExampleResponsesGenerator_Generate_thinking() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
-		return
-	}
+func TestResponsesGenerator_Generate_thinking(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5, "You are a helpful assistant")
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Are LLMs conscious? Think it through and give a comprehensive answer")}}}
@@ -141,9 +116,8 @@ func ExampleResponsesGenerator_Generate_thinking() {
 	}}
 	resp, err := gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println("Response received")
 	// Reuse the same prompt cache key on the follow-up request because both turns
 	// share the same system instructions and overall prompt prefix shape.
 	// The generator is stateless: just append the assistant response and continue.
@@ -152,22 +126,16 @@ func ExampleResponsesGenerator_Generate_thinking() {
 	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("What can you do?")}})
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println(len(resp.Candidates))
-	// Output: Response received
-	// 1
+	if got := len(resp.Candidates); got == 0 {
+		t.Fatal("expected at least one item")
+	}
 }
-
-func ExampleResponsesGenerator_Register() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
-		return
-	}
+func TestResponsesGenerator_Register(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that returns the price of a stock and nothing else.
-
 Only output the price, like
 <example>
 435.56
@@ -184,19 +152,19 @@ Only output the price, like
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
 	}
 	if err := gen.Register(tickerTool); err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}}}
 	opts := GenOpts{ToolChoice: "get_stock_price"}
 	resp, err := gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
 	// Find the first ToolCall block (reasoning models may produce Thinking blocks before tool calls)
 	var toolCallBlock Block
@@ -206,35 +174,31 @@ Only output the price, like
 			break
 		}
 	}
-	fmt.Println(toolCallBlock.Content)
+	if got := toolCallBlock.Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
 	// Append the assistant's response and the tool result. The generator is stateless
 	// and manages conversation context through the dialog.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlock.ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}})
 	resp, err = gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
 	// Find the first Content block in the final response
 	for _, blk := range resp.Candidates[0].Blocks {
 		if blk.BlockType == Content {
-			fmt.Println(blk.Content)
+			if got := blk.Content.String(); got == "" {
+				t.Fatal("expected non-empty content")
+			}
 			break
 		}
 	}
-	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
-	// 123.45
 }
-
-func ExampleResponsesGenerator_Register_parallelToolUse() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
-		return
-	}
+func TestResponsesGenerator_Register_parallelToolUse(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater.
 Only mentioned the ticker and nothing else.
-
 Only output the price, like
 <example>
 User: Which one is more expensive? Apple or NVidia?
@@ -251,18 +215,18 @@ Assistant: Nvidia
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
 	}
 	if err := gen.Register(tickerTool); err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Which stock, Apple vs. Microsoft, is more expensive?")}}}
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{ThinkingBudget: "medium"})
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
 	// Collect ToolCall blocks (reasoning models may produce Thinking blocks before tool calls)
 	var toolCallBlocks []Block
@@ -271,64 +235,57 @@ Assistant: Nvidia
 			toolCallBlocks = append(toolCallBlocks, blk)
 		}
 	}
-	fmt.Println(toolCallBlocks[0].Content)
-	fmt.Println(toolCallBlocks[1].Content)
+	if got := toolCallBlocks[0].Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
+	if got := toolCallBlocks[1].Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
 	// Append the assistant's response and tool results. The generator is stateless
 	// and manages conversation context through the dialog.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[0].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}}, Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[1].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("678.45")}}})
 	resp, err = gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
 	// Find the first Content block in the final response
 	for _, blk := range resp.Candidates[0].Blocks {
 		if blk.BlockType == Content {
-			fmt.Println(blk.Content)
+			if got := blk.Content.String(); got == "" {
+				t.Fatal("expected non-empty content")
+			}
 			break
 		}
 	}
-	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
-	// {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
-	// MSFT
 }
 
 // ExampleStreamingAdapter_responses demonstrates using StreamingAdapter with
 // the ResponsesGenerator for stateless multi-turn conversation. The adapter
 // compresses streaming chunks into complete Response objects, making it easy
 // to append the assistant's response to the dialog for subsequent turns.
-func ExampleStreamingAdapter_responses() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
-		return
-	}
+func TestStreamingAdapter_responses(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-
 	// Create the generator and wrap it with StreamingAdapter.
 	// StreamingAdapter.Generate streams internally, then compresses chunks into
 	// a standard Response — identical to what ResponsesGenerator.Generate returns.
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
 	adapter := &StreamingAdapter{S: &gen}
-
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Hi!")}}}
-
 	resp, err := adapter.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println("Response received")
-
 	// The adapter produces a complete Response with Candidates, just like Generate.
 	// Append the assistant's message and continue the conversation statelessly.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("What can you help me with?")}})
-
 	resp, err = adapter.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println(len(resp.Candidates))
-	// Output: Response received
-	// 1
+	if got := len(resp.Candidates); got == 0 {
+		t.Fatal("expected at least one item")
+	}
 }
 
 // ExampleStreamingAdapter_responses_toolUse demonstrates using StreamingAdapter
@@ -336,15 +293,10 @@ func ExampleStreamingAdapter_responses() {
 // call chunks into complete blocks, preserving IDs and Thinking block ExtraFields
 // so the dialog can be passed back for subsequent turns without any manual chunk
 // reconstruction.
-func ExampleStreamingAdapter_responses_toolUse() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
-		return
-	}
+func TestStreamingAdapter_responses_toolUse(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that returns the price of a stock and nothing else.
-
 Only output the price, like
 <example>
 435.56
@@ -361,27 +313,23 @@ Only output the price, like
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
 	}
 	if err := gen.Register(tickerTool); err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	// StreamingAdapter wraps the generator so we get compressed Response objects
 	// instead of raw streaming chunks.
 	adapter := &StreamingAdapter{S: &gen}
-
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Which stock, Apple vs. Microsoft, is more expensive?")}}}
-
 	// Turn 1: the model should call get_stock_price for both tickers.
 	resp, err := adapter.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	// Collect the tool call blocks from the compressed response.
 	var toolCallBlocks []Block
 	for _, blk := range resp.Candidates[0].Blocks {
@@ -389,9 +337,12 @@ Only output the price, like
 			toolCallBlocks = append(toolCallBlocks, blk)
 		}
 	}
-	fmt.Println(toolCallBlocks[0].Content)
-	fmt.Println(toolCallBlocks[1].Content)
-
+	if got := toolCallBlocks[0].Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
+	if got := toolCallBlocks[1].Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
 	// Append the full assistant message (including any Thinking blocks with encrypted
 	// reasoning content) and tool results. This is the key advantage of StreamingAdapter:
 	// the compressed Candidates[0] is directly usable in the dialog.
@@ -399,21 +350,19 @@ Only output the price, like
 		Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[0].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}},
 		Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[1].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("678.45")}}},
 	)
-
 	// Turn 2: the model responds with the answer.
 	resp, err = adapter.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, blk := range resp.Candidates[0].Blocks {
 		if blk.BlockType == Content {
-			fmt.Println(blk.Content)
+			if got := blk.Content.String(); got == "" {
+				t.Fatal("expected non-empty content")
+			}
 			break
 		}
 	}
-	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
-	// {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
-	// MSFT
 }
 
 // ExampleResponsesGenerator_Stream_thinking demonstrates consuming the raw
@@ -422,15 +371,10 @@ Only output the price, like
 // block carries usage information. This example also shows how to build a
 // dialog-ready assistant message from the streamed blocks using
 // compressStreamingBlocks (via StreamingAdapter) for a follow-up turn.
-func ExampleResponsesGenerator_Stream_thinking() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENAI_API_KEY env]")
-		return
-	}
+func TestResponsesGenerator_Stream_thinking(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
-
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the capital of France? Reply with just the city name.")}}}
 	opts := &GenOpts{
 		ThinkingBudget: "low",
@@ -438,17 +382,14 @@ func ExampleResponsesGenerator_Stream_thinking() {
 			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
 		},
 	}
-
 	// Use StreamingAdapter so the streamed output is automatically compressed
 	// into a proper Response with Thinking blocks carrying ExtraFields (including
 	// encrypted reasoning content for stateless multi-turn conversations).
 	adapter := &StreamingAdapter{S: &gen}
-
 	resp, err := adapter.Generate(context.Background(), dialog, opts)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	// The compressed response preserves Thinking blocks from the reasoning model.
 	hasThinking := false
 	for _, blk := range resp.Candidates[0].Blocks {
@@ -457,25 +398,24 @@ func ExampleResponsesGenerator_Stream_thinking() {
 			break
 		}
 	}
-	fmt.Println("Has thinking blocks:", hasThinking)
-
+	if !hasThinking {
+		t.Fatal("expected compressed response to preserve at least one thinking block")
+	}
 	// Append the full assistant message to the dialog. Thinking blocks with
 	// encrypted content are included, so the next call can reconstruct reasoning
 	// input items automatically.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("And what country is that in?")}})
-
 	resp, err = adapter.Generate(context.Background(), dialog, opts)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	// Find the content block in the follow-up response.
 	for _, blk := range resp.Candidates[0].Blocks {
 		if blk.BlockType == Content {
-			fmt.Println(strings.Contains(blk.Content.String(), "France"))
+			if !strings.Contains(blk.Content.String(), "France") {
+				t.Fatalf("content does not contain France")
+			}
 			break
 		}
 	}
-	// Output: Has thinking blocks: true
-	// true
 }

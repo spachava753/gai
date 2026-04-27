@@ -22,7 +22,7 @@ import (
 //   - Preserved thinking: reasoning context can be retained across turns
 //   - Streaming with Server-Sent Events (SSE)
 //
-// Supported models include glm-4.7, glm-4.6, glm-4.5, and variants.
+// Supported models include glm-5.1, glm-5, glm-4.7, glm-4.6, glm-4.5, and variants.
 type ZaiGenerator struct {
 	client             ZaiCompletionService
 	model              string

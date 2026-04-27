@@ -4,28 +4,21 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"fmt"
-	"os"
-	"strings"
-
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"os"
+	"strings"
+	"testing"
 )
 
-func ExampleOpenRouterGenerator_Generate() {
+func TestOpenRouterGenerator_Generate(t *testing.T) {
 	// Create an OpenAI client configured for OpenRouter
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENROUTER_API_KEY env]")
-		return
-	}
-
+	apiKey := skipOnMissingEnv(t, "OPENROUTER_API_KEY")
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 		option.WithAPIKey(apiKey),
 	)
-
 	// Instantiate an OpenRouter Generator
 	gen := NewOpenRouterGenerator(&client.Chat.Completions, "z-ai/glm-4.6:exacto", "You are a helpful assistant")
 	dialog := Dialog{
@@ -40,55 +33,42 @@ func ExampleOpenRouterGenerator_Generate() {
 			},
 		},
 	}
-
 	// Generate a response
 	resp, err := gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
 	// The exact response text may vary, so we'll just print a placeholder
-	fmt.Println("Response received")
-
 	// Customize generation parameters
 	opts := GenOpts{
 		MaxGenerationTokens: Ptr(10000),
 	}
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println(len(resp.Candidates))
-
-	// Output: Response received
-	// 1
+	if got := len(resp.Candidates); got == 0 {
+		t.Fatal("expected at least one item")
+	}
 }
-
-func ExampleOpenRouterGenerator_Generate_image() {
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENROUTER_API_KEY env]")
-		return
-	}
-
+func TestOpenRouterGenerator_Generate_image(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENROUTER_API_KEY")
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
-		fmt.Println("[Skipped: could not open sample.jpg]")
+		t.Skip("could not open sample.jpg")
 		return
 	}
 	imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))
-
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 		option.WithAPIKey(apiKey),
 	)
-
 	// Use a vision-capable model through OpenRouter
 	gen := NewOpenRouterGenerator(
 		&client.Chat.Completions,
 		"qwen/qwen3-vl-235b-a22b-instruct",
 		"You are a helpful assistant.",
 	)
-
 	dialog := Dialog{
 		{
 			Role: User,
@@ -107,40 +87,31 @@ func ExampleOpenRouterGenerator_Generate_image() {
 			},
 		},
 	}
-
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(512)})
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(resp.Candidates) != 1 {
-		panic("Expected 1 candidate, got " + fmt.Sprint(len(resp.Candidates)))
+		t.Fatalf("candidates = %d, want 1", len(resp.Candidates))
 	}
 	if len(resp.Candidates[0].Blocks) < 1 {
-		panic("Expected at least 1 block, got " + fmt.Sprint(len(resp.Candidates[0].Blocks)))
+		t.Fatalf("blocks = %d, want at least 1", len(resp.Candidates[0].Blocks))
 	}
-	fmt.Println(strings.Contains(resp.Candidates[0].Blocks[0].Content.String(), "Crood"))
-	// Output: true
+	if !strings.Contains(resp.Candidates[0].Blocks[0].Content.String(), "Crood") {
+		t.Fatalf("content does not contain Crood")
+	}
 }
-
-func ExampleOpenRouterGenerator_Register() {
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENROUTER_API_KEY env]")
-		return
-	}
-
+func TestOpenRouterGenerator_Register(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENROUTER_API_KEY")
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 		option.WithAPIKey(apiKey),
 	)
-
 	gen := NewOpenRouterGenerator(
 		&client.Chat.Completions,
 		"moonshotai/kimi-k2-0905:exacto",
 		"You are a helpful assistant that returns the price of a stock and nothing else.",
 	)
-
 	// Register a tool
 	tickerTool := Tool{
 		Name:        "get_stock_price",
@@ -150,31 +121,26 @@ func ExampleOpenRouterGenerator_Register() {
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
 	}
 	if err := gen.Register(tickerTool); err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}},
 	}
-
 	// Force the tool call
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{ToolChoice: "get_stock_price"})
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Blocks) == 0 {
-		fmt.Println("Error: empty response")
+		t.Fatal("empty response")
 		return
 	}
-
 	// Find and print the tool call JSON
 	var toolCall Block
 	for _, b := range resp.Candidates[0].Blocks {
@@ -183,8 +149,9 @@ func ExampleOpenRouterGenerator_Register() {
 			break
 		}
 	}
-	fmt.Println(toolCall.Content)
-
+	if got := toolCall.Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
 	// Append tool result and continue the conversation
 	dialog = append(dialog, resp.Candidates[0], Message{
 		Role: ToolResult,
@@ -192,32 +159,22 @@ func ExampleOpenRouterGenerator_Register() {
 			{ID: toolCall.ID, BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")},
 		},
 	})
-
 	resp, err = gen.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Blocks) > 0 {
-		fmt.Println(resp.Candidates[0].Blocks[0].Content)
+		if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
 	}
-
-	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
-	// 123.45
 }
-
-func ExampleOpenRouterGenerator_Generate_reasoningModel() {
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENROUTER_API_KEY env]")
-		return
-	}
-
+func TestOpenRouterGenerator_Generate_reasoningModel(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENROUTER_API_KEY")
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 		option.WithAPIKey(apiKey),
 	)
-
 	// Use a reasoning model through OpenRouter
 	// NOTE: Models that support reasoning (like those with extended thinking)
 	// will automatically return reasoning_details which are extracted as Thinking blocks
@@ -226,7 +183,6 @@ func ExampleOpenRouterGenerator_Generate_reasoningModel() {
 		"z-ai/glm-4.6:exacto",
 		"You are a helpful assistant.",
 	)
-
 	dialog := Dialog{
 		{
 			Role: User,
@@ -239,14 +195,11 @@ func ExampleOpenRouterGenerator_Generate_reasoningModel() {
 			},
 		},
 	}
-
 	// Generate response - reasoning models may return thinking blocks automatically
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{ThinkingBudget: "low"})
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Blocks) > 0 {
 		// Check if we have thinking blocks (from reasoning_details)
 		hasThinking := false
@@ -259,23 +212,18 @@ func ExampleOpenRouterGenerator_Generate_reasoningModel() {
 				}
 			}
 		}
-
 		if hasThinking {
-			fmt.Println("Thinking blocks found")
 		}
-
 		// Find the main content block (not thinking)
 		for _, block := range resp.Candidates[0].Blocks {
 			if block.BlockType == Content {
 				content := block.Content.String()
 				if strings.Contains(content, "12") {
-					fmt.Println("Correct answer found")
 				}
 				break
 			}
 		}
 	}
-
 	dialog = append(dialog, resp.Candidates[0], Message{
 		Role: User,
 		Blocks: []Block{
@@ -286,14 +234,11 @@ func ExampleOpenRouterGenerator_Generate_reasoningModel() {
 			},
 		},
 	})
-
 	// Generate response - reasoning models may return thinking blocks automatically
 	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{ThinkingBudget: "low"})
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Blocks) > 0 {
 		// Check if we have thinking blocks (from reasoning_details)
 		hasThinking := false
@@ -306,44 +251,28 @@ func ExampleOpenRouterGenerator_Generate_reasoningModel() {
 				}
 			}
 		}
-
 		if hasThinking {
-			fmt.Println("Thinking blocks found")
 		}
-
 		// Find the main content block (not thinking)
 		for _, block := range resp.Candidates[0].Blocks {
 			if block.BlockType == Content {
 				content := block.Content.String()
 				if strings.Contains(content, "15") {
-					fmt.Println("Correct answer found")
 				}
 				break
 			}
 		}
 	}
-
-	// Output: Thinking blocks found
-	// Correct answer found
-	// Thinking blocks found
-	// Correct answer found
 }
-
-func ExampleOpenRouterGenerator_Generate_invalidModel() {
+func TestOpenRouterGenerator_Generate_invalidModel(t *testing.T) {
 	// This example demonstrates handling of invalid model IDs with OpenRouter.
 	// OpenRouter returns a 400 status code with error details in the response body
 	// for invalid requests like nonsense model IDs.
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set OPENROUTER_API_KEY env]")
-		return
-	}
-
+	apiKey := skipOnMissingEnv(t, "OPENROUTER_API_KEY")
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 		option.WithAPIKey(apiKey),
 	)
-
 	// Use a nonsense model ID to trigger an error
 	gen := NewOpenRouterGenerator(&client.Chat.Completions, "invalid/model-does-not-exist", "You are helpful")
 	dialog := Dialog{
@@ -358,18 +287,12 @@ func ExampleOpenRouterGenerator_Generate_invalidModel() {
 			},
 		},
 	}
-
 	_, err := gen.Generate(context.Background(), dialog, nil)
-	if err != nil {
-		var apiErr *ApiErr
-		if errors.As(err, &apiErr) {
-			fmt.Println("Handled error")
-		} else {
-			fmt.Println("Unexpected error type")
-		}
-		return
+	if err == nil {
+		t.Fatal("expected invalid model to return an error")
 	}
-	panic("unreachable")
-
-	// Output: Handled error
+	var apiErr *ApiErr
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T, want *ApiErr", err)
+	}
 }

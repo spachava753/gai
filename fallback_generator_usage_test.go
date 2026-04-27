@@ -3,11 +3,12 @@ package gai_test
 import (
 	"context"
 	"fmt"
+	"testing"
 
 	"github.com/spachava753/gai"
 )
 
-func ExampleFallbackGenerator_Generate() {
+func TestFallbackGenerator_Generate_Example(t *testing.T) {
 	// This example shows how to create a fallback generator that first tries a primary generator,
 	// and if that fails with rate limiting or 5xx errors, falls back to a secondary generator.
 
@@ -22,8 +23,7 @@ func ExampleFallbackGenerator_Generate() {
 		nil, // Use default config
 	)
 	if err != nil {
-		fmt.Println("Error creating fallback generator:", err)
-		return
+		t.Fatalf("create fallback generator: %v", err)
 	}
 
 	// Create a dialog
@@ -45,17 +45,18 @@ func ExampleFallbackGenerator_Generate() {
 	// it will automatically try the secondary generator instead.
 	response, err := fallbackGen.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Generation failed:", err)
-		return
+		t.Fatalf("generate response: %v", err)
 	}
 
-	// Print the response
-	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
-		fmt.Println("Response:", response.Candidates[0].Blocks[0].Content)
+	if len(response.Candidates) == 0 || len(response.Candidates[0].Blocks) == 0 {
+		t.Fatal("expected response with at least one block")
+	}
+	if got, want := response.Candidates[0].Blocks[0].Content.String(), "Response from Primary Generator"; got != want {
+		t.Fatalf("response content = %q, want %q", got, want)
 	}
 }
 
-func ExampleFallbackGenerator_Generate_customFallbackConfig() {
+func TestFallbackGenerator_Generate_customFallbackConfig(t *testing.T) {
 	// This example shows how to create a fallback generator with a custom configuration
 	// that falls back on specific HTTP status codes including 400 errors.
 
@@ -72,8 +73,7 @@ func ExampleFallbackGenerator_Generate_customFallbackConfig() {
 		&customConfig,
 	)
 	if err != nil {
-		fmt.Println("Error creating fallback generator:", err)
-		return
+		t.Fatalf("create fallback generator: %v", err)
 	}
 
 	// Use the fallback generator
@@ -92,13 +92,14 @@ func ExampleFallbackGenerator_Generate_customFallbackConfig() {
 
 	response, err := fallbackGen.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Generation failed:", err)
-		return
+		t.Fatalf("generate response: %v", err)
 	}
 
-	// Print the response
-	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
-		fmt.Println("Response:", response.Candidates[0].Blocks[0].Content)
+	if len(response.Candidates) == 0 || len(response.Candidates[0].Blocks) == 0 {
+		t.Fatal("expected response with at least one block")
+	}
+	if got, want := response.Candidates[0].Blocks[0].Content.String(), "Response from Primary Generator"; got != want {
+		t.Fatalf("response content = %q, want %q", got, want)
 	}
 }
 

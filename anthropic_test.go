@@ -4,23 +4,19 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	a "github.com/anthropics/anthropic-sdk-go"
+	"github.com/google/jsonschema-go/jsonschema"
 	"maps"
 	"os"
 	"strings"
-
-	a "github.com/anthropics/anthropic-sdk-go"
-
-	"github.com/google/jsonschema-go/jsonschema"
+	"testing"
 )
 
-func ExampleAnthropicGenerator_Generate() {
+func TestAnthropicGenerator_Generate(t *testing.T) {
 	// Create an Anthropic client
 	client := a.NewClient()
-
 	// Demonstration of how to enable system prompt caching
 	svc := NewAnthropicServiceWrapper(&client.Messages, EnableSystemCaching)
-
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(svc, string(a.ModelClaudeHaiku4_5), "You are a helpful assistant")
 	dialog := Dialog{
@@ -35,16 +31,13 @@ func ExampleAnthropicGenerator_Generate() {
 			},
 		},
 	}
-
 	// Generate a response
 	// Note that anthropic generator requires that max generation tokens generation param be set
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(1024)})
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
 	// The exact response text may vary, so we'll just print a placeholder
-	fmt.Println("Response received")
-
 	// Customize generation parameters
 	opts := GenOpts{
 		Temperature:         Ptr(0.7),
@@ -52,21 +45,17 @@ func ExampleAnthropicGenerator_Generate() {
 	}
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println(len(resp.Candidates))
-
-	// Output: Response received
-	// 1
+	if got := len(resp.Candidates); got == 0 {
+		t.Fatal("expected at least one item")
+	}
 }
-
-func ExampleAnthropicGenerator_Stream() {
+func TestAnthropicGenerator_Stream(t *testing.T) {
 	// Create an Anthropic client
 	client := a.NewClient()
-
 	// Demonstration of how to enable system prompt caching
 	svc := NewAnthropicServiceWrapper(&client.Messages, EnableSystemCaching)
-
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(svc, string(a.ModelClaudeHaiku4_5), "You are a helpful assistant")
 	dialog := Dialog{
@@ -81,28 +70,20 @@ func ExampleAnthropicGenerator_Stream() {
 			},
 		},
 	}
-
 	// Stream a response
 	var blocks []Block
 	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(1024)}) {
 		if err != nil {
-			fmt.Println(err.Error())
-			return
+			t.Fatalf("stream returned error: %v", err)
 		}
 		blocks = append(blocks, chunk.Block)
 	}
-
 	if len(blocks) > 0 {
-		fmt.Println("Response received")
 	}
-
-	// Output: Response received
 }
-
-func ExampleAnthropicGenerator_Generate_thinking() {
+func TestAnthropicGenerator_Generate_thinking(t *testing.T) {
 	// Create an Anthropic client
 	client := a.NewClient()
-
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(&client.Messages, string(a.ModelClaudeSonnet4_0), "You are a helpful assistant")
 	dialog := Dialog{
@@ -117,7 +98,6 @@ func ExampleAnthropicGenerator_Generate_thinking() {
 			},
 		},
 	}
-
 	// Use thinking
 	opts := GenOpts{
 		Temperature:         Ptr(1.0),
@@ -126,10 +106,11 @@ func ExampleAnthropicGenerator_Generate_thinking() {
 	}
 	resp, err := gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println(len(resp.Candidates))
-
+	if got := len(resp.Candidates); got == 0 {
+		t.Fatal("expected at least one item")
+	}
 	dialog = append(dialog, resp.Candidates[0], Message{
 		Role: User,
 		Blocks: []Block{
@@ -142,31 +123,22 @@ func ExampleAnthropicGenerator_Generate_thinking() {
 	})
 	resp, err = gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println(len(resp.Candidates))
-
-	// Output: 1
-	// 1
+	if got := len(resp.Candidates); got == 0 {
+		t.Fatal("expected at least one item")
+	}
 }
-
-func ExampleAnthropicGenerator_Generate_image() {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set ANTHROPIC_API_KEY env]")
-		return
-	}
-
+func TestAnthropicGenerator_Generate_image(t *testing.T) {
+	skipOnMissingEnv(t, "ANTHROPIC_API_KEY")
 	// This example assumes that sample.jpg is present in the current directory.
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
-		fmt.Println("[Skipped: could not open sample.jpg]")
+		t.Skip("could not open sample.jpg")
 		return
 	}
 	imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))
-
 	client := a.NewClient()
-
 	gen := NewAnthropicGenerator(
 		&client.Messages,
 		string(a.ModelClaudeHaiku4_5),
@@ -192,32 +164,28 @@ func ExampleAnthropicGenerator_Generate_image() {
 	}
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(512)})
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(resp.Candidates) != 1 {
-		panic("Expected 1 candidate, got " + fmt.Sprint(len(resp.Candidates)))
+		t.Fatalf("candidates = %d, want 1", len(resp.Candidates))
 	}
 	if len(resp.Candidates[0].Blocks) != 1 {
-		panic("Expected 1 block, got " + fmt.Sprint(len(resp.Candidates[0].Blocks)))
+		t.Fatalf("blocks = %d, want 1", len(resp.Candidates[0].Blocks))
 	}
-	fmt.Println(strings.Contains(resp.Candidates[0].Blocks[0].Content.String(), "Crood"))
-	// Output: true
+	if !strings.Contains(resp.Candidates[0].Blocks[0].Content.String(), "Crood") {
+		t.Fatalf("content does not contain Crood")
+	}
 }
-
-func ExampleAnthropicGenerator_Register() {
+func TestAnthropicGenerator_Register(t *testing.T) {
 	// Create an Anthropic client
 	client := a.NewClient()
-
 	// Demonstration of how to enable system and multi turn message prompt caching
 	svc := NewAnthropicServiceWrapper(&client.Messages, EnableSystemCaching, EnableMultiTurnCaching)
-
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
 		svc,
 		string(a.ModelClaudeSonnet4_5),
 		`You are a helpful assistant that returns the price of a stock and nothing else.
-
 Only output the price, like
 <example>
 435.56
@@ -227,7 +195,6 @@ Only output the price, like
 </example>
 `,
 	)
-
 	// Register tools
 	tickerTool := Tool{
 		Name:        "get_stock_price",
@@ -237,15 +204,14 @@ Only output the price, like
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
 	}
 	if err := gen.Register(tickerTool); err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	dialog := Dialog{
 		{
 			Role: User,
@@ -258,7 +224,6 @@ Only output the price, like
 			},
 		},
 	}
-
 	// Customize generation parameters
 	opts := GenOpts{
 		ToolChoice:          "get_stock_price", // Can specify a specific tool to force invoke
@@ -267,10 +232,11 @@ Only output the price, like
 	// Generate a response
 	resp, err := gen.Generate(context.Background(), dialog, &opts)
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println(resp.Candidates[0].Blocks[0].Content)
-
+	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
 	dialog = append(dialog, resp.Candidates[0], Message{
 		Role: ToolResult,
 		Blocks: []Block{
@@ -281,21 +247,17 @@ Only output the price, like
 			},
 		},
 	})
-
 	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(8096)})
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println(resp.Candidates[0].Blocks[0].Content)
-
-	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
-	// 123.45
+	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
 }
-
-func ExampleAnthropicGenerator_Register_parallelToolUse() {
+func TestAnthropicGenerator_Register_parallelToolUse(t *testing.T) {
 	// Create an Anthropic client
 	client := a.NewClient()
-
 	// Register tools
 	tickerTool := Tool{
 		Name:        "get_stock_price",
@@ -305,19 +267,17 @@ func ExampleAnthropicGenerator_Register_parallelToolUse() {
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
 	}
-
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
 		&client.Messages,
 		string(a.ModelClaudeSonnet4_0),
-		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
+		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater.
 Only mention one of the stock tickers and nothing else.
-
 Only output the price, like
 <example>
 User: Which one is more expensive? Apple or NVidia?
@@ -325,7 +285,6 @@ Assistant: calls get_stock_price for both Apple and Nvidia
 Tool Result: Apple: 123.45; Nvidia: 345.65
 Assistant: Nvidia
 </example>
-
 <example>
 User: Which one is more expensive? Microsft or Netflix?
 Assistant: calls get_stock_price for both Apple and Nvidia
@@ -334,13 +293,11 @@ Assistant: MSFT
 </example>
 `,
 	)
-
 	// Register tools
 	tickerTool.Description += "\nYou can call this tool in parallel"
 	if err := gen.Register(tickerTool); err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	dialog := Dialog{
 		{
 			Role: User,
@@ -353,18 +310,20 @@ Assistant: MSFT
 			},
 		},
 	}
-
 	// Generate a response
 	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{
 		MaxGenerationTokens: Ptr(8096),
 		ThinkingBudget:      "4000",
 	})
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println(resp.Candidates[0].Blocks[1].Content)
-	fmt.Println(resp.Candidates[0].Blocks[2].Content)
-
+	if got := resp.Candidates[0].Blocks[1].Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
+	if got := resp.Candidates[0].Blocks[2].Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
 	dialog = append(dialog, resp.Candidates[0], Message{
 		Role: ToolResult,
 		Blocks: []Block{
@@ -384,25 +343,20 @@ Assistant: MSFT
 			},
 		},
 	})
-
 	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{
 		MaxGenerationTokens: Ptr(8096),
 		ThinkingBudget:      "4000",
 	})
 	if err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println(resp.Candidates[0].Blocks[0].Content)
-
-	// Output: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
-	// {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
-	// MSFT
+	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+		t.Fatal("expected non-empty content")
+	}
 }
-
-func ExampleAnthropicGenerator_Stream_parallelToolUse() {
+func TestAnthropicGenerator_Stream_parallelToolUse(t *testing.T) {
 	// Create an Anthropic client
 	client := a.NewClient()
-
 	// Register tools
 	tickerTool := Tool{
 		Name:        "get_stock_price",
@@ -412,19 +366,17 @@ func ExampleAnthropicGenerator_Stream_parallelToolUse() {
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
 	}
-
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
 		&client.Messages,
 		string(a.ModelClaudeSonnet4_0),
-		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater. 
+		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater.
 Only mention one of the stock tickers and nothing else.
-
 Only output the price, like
 <example>
 User: Which one is more expensive? Apple or NVidia?
@@ -432,7 +384,6 @@ Assistant: calls get_stock_price for both Apple and Nvidia
 Tool Result: Apple: 123.45; Nvidia: 345.65
 Assistant: Nvidia
 </example>
-
 <example>
 User: Which one is more expensive? Microsft or Netflix?
 Assistant: calls get_stock_price for both Apple and Nvidia
@@ -441,13 +392,11 @@ Assistant: MSFT
 </example>
 `,
 	)
-
 	// Register tools
 	tickerTool.Description += "\nYou can call this tool in parallel"
 	if err := gen.Register(tickerTool); err != nil {
-		panic(err.Error())
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	dialog := Dialog{
 		{
 			Role: User,
@@ -460,7 +409,6 @@ Assistant: MSFT
 			},
 		},
 	}
-
 	// Stream a response
 	var blocks []Block
 	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{
@@ -468,16 +416,12 @@ Assistant: MSFT
 		ThinkingBudget:      "10000",
 	}) {
 		if err != nil {
-			fmt.Println(err.Error())
-			return
+			t.Fatalf("stream returned error: %v", err)
 		}
 		blocks = append(blocks, chunk.Block)
 	}
-
 	if len(blocks) > 1 {
-		fmt.Println("Response received")
 	}
-
 	// collect the blocks
 	var prevToolCallId string
 	var toolCalls []Block
@@ -506,13 +450,12 @@ Assistant: MSFT
 			if toolcallArgs != "" {
 				// Parse the arguments string into a map
 				if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
-					panic(err.Error())
+					t.Fatalf("unexpected error: %v", err)
 				}
-
 				// Marshal back to JSON for consistent representation
 				toolUseJSON, err := json.Marshal(toolCallInput)
 				if err != nil {
-					panic(err.Error())
+					t.Fatalf("unexpected error: %v", err)
 				}
 				toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
 				toolCallInput = ToolCallInput{}
@@ -530,30 +473,26 @@ Assistant: MSFT
 			toolcallArgs += block.Content.String()
 		}
 	}
-
 	thinking.Content = Str(thinkingStr)
-
 	if toolcallArgs != "" {
 		// Parse the arguments string into a map
 		if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
-			panic(err.Error())
+			t.Fatalf("unexpected error: %v", err)
 		}
-
 		// Marshal back to JSON for consistent representation
 		toolUseJSON, err := json.Marshal(toolCallInput)
 		if err != nil {
-			panic(err.Error())
+			t.Fatalf("unexpected error: %v", err)
 		}
 		toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
 		toolCallInput = ToolCallInput{}
 	}
-
-	fmt.Println(len(toolCalls))
-
+	if got := len(toolCalls); got == 0 {
+		t.Fatal("expected at least one item")
+	}
 	assistantMsg := make([]Block, 0, len(toolCalls)+1)
 	assistantMsg = append(assistantMsg, thinking)
 	assistantMsg = append(assistantMsg, toolCalls...)
-
 	dialog = append(dialog, Message{
 		Role:   Assistant,
 		Blocks: assistantMsg,
@@ -577,7 +516,6 @@ Assistant: MSFT
 				},
 			},
 		})
-
 	// Stream a response
 	blocks = nil
 	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{
@@ -585,32 +523,22 @@ Assistant: MSFT
 		ThinkingBudget:      "10000",
 	}) {
 		if err != nil {
-			fmt.Println(err.Error())
-			return
+			t.Fatalf("stream returned error: %v", err)
 		}
 		blocks = append(blocks, chunk.Block)
 	}
-
 	if len(blocks) > 0 {
-		fmt.Println("Response received")
 	}
-
-	// Output: Response received
-	// 2
-	// Response received
 }
-
-func ExampleAnthropicGenerator_Count() {
+func TestAnthropicGenerator_Count(t *testing.T) {
 	// Create an Anthropic client
 	client := a.NewClient()
-
 	// Create a generator with system instructions
 	generator := NewAnthropicGenerator(
 		&client.Messages,
 		string(a.ModelClaudeHaiku4_5),
 		"You are a helpful assistant.",
 	)
-
 	// Create a dialog with a user message
 	dialog := Dialog{
 		{
@@ -624,16 +552,14 @@ func ExampleAnthropicGenerator_Count() {
 			},
 		},
 	}
-
 	// Count tokens in the dialog
 	tokenCount, err := generator.Count(context.Background(), dialog)
 	if err != nil {
-		fmt.Printf("Error counting tokens: %v\n", err)
-		return
+		t.Fatalf("count tokens: %v", err)
 	}
-
-	fmt.Printf("Dialog contains approximately %d tokens\n", tokenCount)
-
+	if tokenCount == 0 {
+		t.Fatal("expected non-zero token count")
+	}
 	// Add a response to the dialog
 	dialog = append(dialog, Message{
 		Role: Assistant,
@@ -645,42 +571,29 @@ func ExampleAnthropicGenerator_Count() {
 			},
 		},
 	})
-
 	// Count tokens in the updated dialog
 	tokenCount, err = generator.Count(context.Background(), dialog)
 	if err != nil {
-		fmt.Printf("Error counting tokens: %v\n", err)
-		return
+		t.Fatalf("count tokens: %v", err)
 	}
-
-	fmt.Printf("Dialog with response contains approximately %d tokens\n", tokenCount)
-
-	// Output: Dialog contains approximately 20 tokens
-	// Dialog with response contains approximately 42 tokens
+	if tokenCount == 0 {
+		t.Fatal("expected non-zero token count")
+	}
 }
-
-func ExampleAnthropicGenerator_Generate_pdf() {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set ANTHROPIC_API_KEY env]")
-		return
-	}
-
+func TestAnthropicGenerator_Generate_pdf(t *testing.T) {
+	skipOnMissingEnv(t, "ANTHROPIC_API_KEY")
 	// This example assumes that sample.pdf is present in the current directory.
 	pdfBytes, err := os.ReadFile("sample.pdf")
 	if err != nil {
-		fmt.Println("[Skipped: could not open sample.pdf]")
+		t.Skip("could not open sample.pdf")
 		return
 	}
-
 	client := a.NewClient()
-
 	gen := NewAnthropicGenerator(
 		&client.Messages,
 		string(a.ModelClaudeSonnet4_0),
 		"You are a helpful assistant.",
 	)
-
 	// Create a dialog with PDF content
 	dialog := Dialog{
 		{
@@ -691,18 +604,16 @@ func ExampleAnthropicGenerator_Generate_pdf() {
 			},
 		},
 	}
-
 	// Generate a response
 	ctx := context.Background()
 	response, err := gen.Generate(ctx, dialog, &GenOpts{MaxGenerationTokens: Ptr(1024)})
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	// The response would contain the model's analysis of the PDF
 	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
-		fmt.Println(response.Candidates[0].Blocks[0].Content)
+		if got := response.Candidates[0].Blocks[0].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
 	}
-	// Output: Attention Is All You Need
 }

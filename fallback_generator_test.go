@@ -3,7 +3,6 @@ package gai
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 )
 
@@ -340,73 +339,26 @@ func TestNewRateLimitOnlyFallbackConfig(t *testing.T) {
 	}
 }
 
-func ExampleFallbackGenerator() {
-	// This is just an example, in a real case you would use actual generators
-	openAIGen := &mockGenerator{
-		response: Response{
-			Candidates: []Message{
-				{
-					Role: Assistant,
-					Blocks: []Block{
-						{
-							BlockType:    Content,
-							ModalityType: Text,
-							Content:      Str("Response from OpenAI"),
-						},
-					},
-				},
-			},
-		},
-	}
+func TestFallbackGenerator(t *testing.T) {
+	openAIGen := &mockGenerator{response: Response{Candidates: []Message{{Role: Assistant, Blocks: []Block{TextBlock("Response from OpenAI")}}}}}
+	anthropicGen := &mockGenerator{response: Response{Candidates: []Message{{Role: Assistant, Blocks: []Block{TextBlock("Response from Anthropic")}}}}}
 
-	anthropicGen := &mockGenerator{
-		response: Response{
-			Candidates: []Message{
-				{
-					Role: Assistant,
-					Blocks: []Block{
-						{
-							BlockType:    Content,
-							ModalityType: Text,
-							Content:      Str("Response from Anthropic"),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	// Create a fallback generator that will try OpenAI first, then fallback to Anthropic
-	// This example makes it fallback on 400 errors too, not just 500s
-	fallbackGen, _ := NewFallbackGenerator(
+	fallbackGen, err := NewFallbackGenerator(
 		[]Generator{openAIGen, anthropicGen},
-		&FallbackConfig{
-			ShouldFallback: NewHTTPStatusFallbackConfig(400, 429, 500, 502, 503, 504).ShouldFallback,
-		},
+		&FallbackConfig{ShouldFallback: NewHTTPStatusFallbackConfig(400, 429, 500, 502, 503, 504).ShouldFallback},
 	)
-
-	// Now we can use the fallback generator just like any other generator
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Tell me about AI fallback strategies"),
-				},
-			},
-		},
+	if err != nil {
+		t.Fatalf("NewFallbackGenerator returned error: %v", err)
 	}
 
+	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Tell me about AI fallback strategies")}}}
 	resp, err := fallbackGen.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("Generate returned error: %v", err)
 	}
 
-	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Blocks) > 0 {
-		fmt.Println(resp.Candidates[0].Blocks[0].Content)
+	content := requireContentBlock(t, requireBlock(t, requireCandidate(t, resp), 0))
+	if got, want := content, "Response from OpenAI"; got != want {
+		t.Fatalf("content = %q, want %q", got, want)
 	}
-	// Output: Response from OpenAI
 }

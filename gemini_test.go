@@ -3,23 +3,16 @@ package gai
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
+	"github.com/google/jsonschema-go/jsonschema"
+	"google.golang.org/genai"
 	"os"
 	"strings"
+	"testing"
 	"time"
-
-	"google.golang.org/genai"
-
-	"github.com/google/jsonschema-go/jsonschema"
 )
 
-func ExampleGeminiGenerator_Generate() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
-		return
-	}
-
+func TestGeminiGenerator_Generate(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -28,33 +21,22 @@ func ExampleGeminiGenerator_Generate() {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-
 	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant. You respond to the user with plain text format.")
 	if err != nil {
-		fmt.Println("Error creating GeminiGenerator:", err)
-		return
+		t.Fatalf("create Gemini generator: %v", err)
 	}
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("What is the blooms taxonomy, and how does it related to the psychology of child development?")}}},
 	}
 	response, err := g.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
-		fmt.Println("Got text")
 	}
-	// Output: Got text
 }
-
-func ExampleGeminiGenerator_Stream() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
-		return
-	}
-
+func TestGeminiGenerator_Stream(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -63,36 +45,27 @@ func ExampleGeminiGenerator_Stream() {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-
 	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant. You respond to the user with plain text format.")
 	if err != nil {
-		fmt.Println("Error creating GeminiGenerator:", err)
-		return
+		t.Fatalf("create Gemini generator: %v", err)
 	}
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("What is the capital of France?")}}},
 	}
+	var content strings.Builder
 	for chunk, err := range g.Stream(context.Background(), dialog, nil) {
 		if err != nil {
-			fmt.Println("Error:", err)
-			return
+			t.Fatalf("stream returned error: %v", err)
 		}
-		// Skip metadata blocks
 		if chunk.Block.BlockType == MetadataBlockType {
 			continue
 		}
-		fmt.Println(chunk.Block.Content.String())
+		content.WriteString(chunk.Block.Content.String())
 	}
-	// Output: The capital of France is Paris.
+	requireTextContains(t, content.String(), "Paris")
 }
-
-func ExampleGeminiGenerator_Register() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
-		return
-	}
-
+func TestGeminiGenerator_Register(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -101,16 +74,14 @@ func ExampleGeminiGenerator_Register() {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-
 	g, err := NewGeminiGenerator(
 		client,
 		"models/gemini-3-pro-preview",
-		`You are a helpful assistant. You can call tools in parallel. 
+		`You are a helpful assistant. You can call tools in parallel.
 When a user asks for the server time, always call the server time tool, don't use previously returned results`,
 	)
 	if err != nil {
-		fmt.Println("Error creating GeminiGenerator:", err)
-		return
+		t.Fatalf("create Gemini generator: %v", err)
 	}
 	stockTool := Tool{
 		Name:        "get_stock_price",
@@ -120,7 +91,7 @@ When a user asks for the server time, always call the server time tool, don't us
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
@@ -131,13 +102,11 @@ When a user asks for the server time, always call the server time tool, don't us
 	}
 	err = g.Register(stockTool)
 	if err != nil {
-		fmt.Println("Error registering tool:", err)
-		return
+		t.Fatalf("register tool: %v", err)
 	}
 	err = g.Register(getServerTimeTool)
 	if err != nil {
-		fmt.Println("Error registering tool:", err)
-		return
+		t.Fatalf("register tool: %v", err)
 	}
 	dialog := Dialog{
 		{
@@ -149,20 +118,17 @@ When a user asks for the server time, always call the server time tool, don't us
 			}},
 		},
 	}
-
 	// Expect tool call for both tools
 	response, err := g.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println("tool calling response:")
-	for _, block := range response.Candidates[0].Blocks {
-		fmt.Printf("Block type: %s | ID: %s | Content: %s\n", block.BlockType, block.ID, block.Content)
+	calls := collectToolCalls(t, requireCandidate(t, response).Blocks)
+	if len(calls) < 2 {
+		t.Fatalf("tool calls = %d, want at least 2", len(calls))
 	}
-
+	requireToolCallWithParam(t, calls, "get_stock_price", "ticker", "AAPL")
 	dialog = append(dialog, response.Candidates[0])
-
 	// Simulate tool result for tool calls
 	dialog = append(dialog,
 		Message{
@@ -186,20 +152,12 @@ When a user asks for the server time, always call the server time tool, don't us
 			}},
 		},
 	)
-
 	response, err = g.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	toolResult := response.Candidates[0].Blocks[0].Content.String()
-
-	fmt.Println("Response has tool results:", strings.Contains(toolResult, "AAPL") &&
-		strings.Contains(toolResult, "200.00") &&
-		strings.Contains(toolResult, time.Time{}.String()),
-	)
-
+	toolResult := requireContentBlock(t, requireBlock(t, requireCandidate(t, response), 0))
+	requireTextContains(t, toolResult, "AAPL", "200.00", time.Time{}.String())
 	dialog = append(dialog, response.Candidates[0], Message{
 		Role: User,
 		Blocks: []Block{{
@@ -208,19 +166,16 @@ When a user asks for the server time, always call the server time tool, don't us
 			Content:      Str("What is the stock price for MSFT, and also tell me the server time again?"),
 		}},
 	})
-
 	response, err = g.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println("tool calling response:")
-	for _, block := range response.Candidates[0].Blocks {
-		fmt.Printf("Block type: %s | ID: %s | Content: %s\n", block.BlockType, block.ID, block.Content)
+	calls = collectToolCalls(t, requireCandidate(t, response).Blocks)
+	if len(calls) < 2 {
+		t.Fatalf("tool calls = %d, want at least 2", len(calls))
 	}
-
+	requireToolCallWithParam(t, calls, "get_stock_price", "ticker", "MSFT")
 	dialog = append(dialog, response.Candidates[0])
-
 	// Simulate tool result for tool calls
 	dialog = append(dialog,
 		Message{
@@ -244,46 +199,20 @@ When a user asks for the server time, always call the server time tool, don't us
 			}},
 		},
 	)
-
 	response, err = g.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Println("Response has tool results:", strings.Contains(
-		response.Candidates[0].Blocks[0].Content.String(),
-		"MSFT",
-	) && strings.Contains(
-		response.Candidates[0].Blocks[0].Content.String(),
-		"300",
-	) && strings.Contains(
-		response.Candidates[0].Blocks[0].Content.String(),
-		"UTC",
-	))
-
-	// Output: tool calling response:
-	// Block type: tool_call | ID: toolcall-1 | Content: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
-	// Block type: tool_call | ID: toolcall-2 | Content: {"name":"get_server_time","parameters":{}}
-	// Response has tool results: true
-	// tool calling response:
-	// Block type: tool_call | ID: toolcall-3 | Content: {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
-	// Block type: tool_call | ID: toolcall-4 | Content: {"name":"get_server_time","parameters":{}}
-	// Response has tool results: true
+	requireTextContains(t, requireContentBlock(t, requireBlock(t, requireCandidate(t, response), 0)), "MSFT", "300", "UTC")
 }
-
-func ExampleGeminiGenerator_Generate_image() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
-		return
-	}
-
+func TestGeminiGenerator_Generate_image(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
 	// ---
 	// This example assumes that sample.jpg is present in the current directory.
 	// Place a JPEG image named sample.jpg in the same directory as this file (or adjust the path).
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
-		fmt.Println("[Skipped: could not open sample.jpg]")
+		t.Skip("could not open sample.jpg")
 		return
 	}
 	// Encode as base64 for API usage
@@ -294,7 +223,6 @@ func ExampleGeminiGenerator_Generate_image() {
 		// This mirrors how other examples do it.
 		base64.StdEncoding.EncodeToString(imgBytes),
 	)
-
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -303,11 +231,9 @@ func ExampleGeminiGenerator_Generate_image() {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-
 	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
 	if err != nil {
-		fmt.Println("Error creating GeminiGenerator:", err)
-		return
+		t.Fatalf("create Gemini generator: %v", err)
 	}
 	dialog := Dialog{
 		{
@@ -327,38 +253,29 @@ func ExampleGeminiGenerator_Generate_image() {
 			},
 		},
 	}
-
 	response, err := g.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(response.Candidates) != 1 {
-		panic("Expected 1 candidate, got " + fmt.Sprint(len(response.Candidates)))
+		t.Fatalf("candidates = %d, want 1", len(response.Candidates))
 	}
 	if len(response.Candidates[0].Blocks) != 1 {
-		panic("Expected 1 block, got " + fmt.Sprint(len(response.Candidates[0].Blocks)))
+		t.Fatalf("blocks = %d, want 1", len(response.Candidates[0].Blocks))
 	}
-	fmt.Println(strings.Contains(response.Candidates[0].Blocks[0].Content.String(), "Crood"))
-
-	// Output: true
+	if !strings.Contains(response.Candidates[0].Blocks[0].Content.String(), "Crood") {
+		t.Fatalf("content does not contain Crood")
+	}
 }
-
-func ExampleGeminiGenerator_Generate_audio() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
-		return
-	}
-
+func TestGeminiGenerator_Generate_audio(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
 	audioBytes, err := os.ReadFile("sample.wav")
 	if err != nil {
-		fmt.Println("[Skipped: could not open sample.wav]")
+		t.Skip("could not open sample.wav")
 		return
 	}
 	// Encode as base64 for inline audio usage
 	audioBase64 := Str(base64.StdEncoding.EncodeToString(audioBytes))
-
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -367,13 +284,10 @@ func ExampleGeminiGenerator_Generate_audio() {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-
 	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
 	if err != nil {
-		fmt.Println("Error creating GeminiGenerator:", err)
-		return
+		t.Fatalf("create Gemini generator: %v", err)
 	}
-
 	// Using inline audio data
 	dialog := Dialog{
 		{
@@ -393,26 +307,18 @@ func ExampleGeminiGenerator_Generate_audio() {
 			},
 		},
 	}
-
 	response, err := g.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
-		fmt.Println(strings.ToLower(response.Candidates[0].Blocks[0].Content.String()))
+		if got := strings.ToLower(response.Candidates[0].Blocks[0].Content.String()); !strings.Contains(got, "friday") {
+			t.Fatalf("content = %q, want it to contain friday", got)
+		}
 	}
-
-	// Output: friday
 }
-
-func ExampleGeminiGenerator_Register_parallelToolUse() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
-		return
-	}
-
+func TestGeminiGenerator_Register_parallelToolUse(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -421,13 +327,10 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-
 	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant.")
 	if err != nil {
-		fmt.Println("Error creating GeminiGenerator:", err)
-		return
+		t.Fatalf("create Gemini generator: %v", err)
 	}
-
 	// Register the get_stock_price tool
 	stockTool := Tool{
 		Name:        "get_stock_price",
@@ -437,42 +340,32 @@ func ExampleGeminiGenerator_Register_parallelToolUse() {
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
 	}
 	err = g.Register(stockTool)
 	if err != nil {
-		fmt.Println("Error registering tool:", err)
-		return
+		t.Fatalf("register tool: %v", err)
 	}
-
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Give me the current prices for AAPL, MSFT, and TSLA.")}}},
 	}
 	response, err := g.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-	for _, cand := range response.Candidates {
-		for _, block := range cand.Blocks {
-			fmt.Printf("Block type: %s | ID: %s | Content: %s\n", block.BlockType, block.ID, block.Content)
-		}
+	calls := collectToolCalls(t, requireCandidate(t, response).Blocks)
+	if len(calls) < 3 {
+		t.Fatalf("tool calls = %d, want at least 3", len(calls))
 	}
-	// Output: Block type: tool_call | ID: toolcall-1 | Content: {"name":"get_stock_price","parameters":{"ticker":"AAPL"}}
-	// Block type: tool_call | ID: toolcall-2 | Content: {"name":"get_stock_price","parameters":{"ticker":"MSFT"}}
-	// Block type: tool_call | ID: toolcall-3 | Content: {"name":"get_stock_price","parameters":{"ticker":"TSLA"}}
+	requireToolCallWithParam(t, calls, "get_stock_price", "ticker", "AAPL")
+	requireToolCallWithParam(t, calls, "get_stock_price", "ticker", "MSFT")
+	requireToolCallWithParam(t, calls, "get_stock_price", "ticker", "TSLA")
 }
-
-func ExampleGeminiGenerator_Stream_parallelToolUse() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
-		return
-	}
-
+func TestGeminiGenerator_Stream_parallelToolUse(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -481,13 +374,10 @@ func ExampleGeminiGenerator_Stream_parallelToolUse() {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-
 	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant.")
 	if err != nil {
-		fmt.Println("Error creating GeminiGenerator:", err)
-		return
+		t.Fatalf("create Gemini generator: %v", err)
 	}
-
 	// Register the get_stock_price tool
 	stockTool := Tool{
 		Name:        "get_stock_price",
@@ -497,48 +387,36 @@ func ExampleGeminiGenerator_Stream_parallelToolUse() {
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
 	}
 	err = g.Register(stockTool)
 	if err != nil {
-		fmt.Println("Error registering tool:", err)
-		return
+		t.Fatalf("register tool: %v", err)
 	}
-
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Give me the current prices for AAPL, MSFT, and TSLA.")}}},
 	}
+	var toolCallCount int
 	for chunk, err := range g.Stream(context.Background(), dialog, nil) {
 		if err != nil {
-			fmt.Println("Error:", err)
-			return
+			t.Fatalf("stream returned error: %v", err)
 		}
-		// Skip metadata blocks
 		if chunk.Block.BlockType == MetadataBlockType {
 			continue
 		}
-		fmt.Printf("Block type: %s | ID: %s | Content: %s\n", chunk.Block.BlockType, chunk.Block.ID, chunk.Block.Content)
+		if chunk.Block.BlockType == ToolCall {
+			toolCallCount++
+		}
 	}
-	// Output: Block type: tool_call | ID: toolcall-1 | Content: get_stock_price
-	// Block type: tool_call | ID:  | Content: {"ticker":"AAPL"}
-	// Block type: tool_call | ID: toolcall-2 | Content: get_stock_price
-	// Block type: tool_call | ID:  | Content: {"ticker":"MSFT"}
-	// Block type: tool_call | ID: toolcall-3 | Content: get_stock_price
-	// Block type: tool_call | ID:  | Content: {"ticker":"TSLA"}
+	if toolCallCount == 0 {
+		t.Fatal("expected at least one streamed tool call")
+	}
 }
-
-func ExampleGeminiGenerator_Count() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
-		fmt.Println("Dialog contains approximately 25 tokens")
-		fmt.Println("Dialog with image contains approximately 400 tokens")
-		return
-	}
-
+func TestGeminiGenerator_Count(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -547,14 +425,11 @@ func ExampleGeminiGenerator_Count() {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-
 	// Create a generator
 	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
 	if err != nil {
-		fmt.Println("Error creating GeminiGenerator:", err)
-		return
+		t.Fatalf("create Gemini generator: %v", err)
 	}
-
 	// Create a dialog with a user message
 	dialog := Dialog{
 		{
@@ -568,24 +443,21 @@ func ExampleGeminiGenerator_Count() {
 			},
 		},
 	}
-
 	// Count tokens in the dialog
 	tokenCount, err := g.Count(context.Background(), dialog)
 	if err != nil {
-		fmt.Printf("Error counting tokens: %v\n", err)
-		return
+		t.Fatalf("count tokens: %v", err)
 	}
-
-	fmt.Printf("Dialog contains approximately %d tokens\n", tokenCount)
-
+	if tokenCount == 0 {
+		t.Fatal("expected non-zero token count")
+	}
 	// Try to load an image to add to the dialog
 	imgPath := "sample.jpg"
 	imgBytes, err := os.ReadFile(imgPath)
 	if err != nil {
-		fmt.Printf("Image file not found, skipping image token count example\n")
+		t.Skip("could not open sample.jpg")
 		return
 	}
-
 	// Add an image to the dialog
 	dialog = Dialog{
 		{
@@ -605,27 +477,17 @@ func ExampleGeminiGenerator_Count() {
 			},
 		},
 	}
-
 	// Count tokens with the image included
 	tokenCount, err = g.Count(context.Background(), dialog)
 	if err != nil {
-		fmt.Printf("Error counting tokens: %v\n", err)
-		return
+		t.Fatalf("count tokens: %v", err)
 	}
-
-	fmt.Printf("Dialog with image contains approximately %d tokens\n", tokenCount)
-
-	// Output: Dialog contains approximately 15 tokens
-	// Dialog with image contains approximately 270 tokens
+	if tokenCount == 0 {
+		t.Fatal("expected non-zero token count")
+	}
 }
-
-func ExampleGeminiGenerator_Generate_pdf() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
-		return
-	}
-
+func TestGeminiGenerator_Generate_pdf(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -634,20 +496,16 @@ func ExampleGeminiGenerator_Generate_pdf() {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-
 	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant.")
 	if err != nil {
-		fmt.Println("Error creating GeminiGenerator:", err)
-		return
+		t.Fatalf("create Gemini generator: %v", err)
 	}
-
 	// This example assumes that sample.pdf is present in the current directory.
 	pdfBytes, err := os.ReadFile("sample.pdf")
 	if err != nil {
-		fmt.Println("[Skipped: could not open sample.pdf]")
+		t.Skip("could not open sample.pdf")
 		return
 	}
-
 	// Create a dialog with PDF content
 	dialog := Dialog{
 		{
@@ -658,28 +516,20 @@ func ExampleGeminiGenerator_Generate_pdf() {
 			},
 		},
 	}
-
 	// Generate a response
 	response, err := g.Generate(ctx, dialog, &GenOpts{MaxGenerationTokens: Ptr(1024)})
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	// The response would contain the model's analysis of the PDF
 	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
-		fmt.Println(response.Candidates[0].Blocks[0].Content)
+		if got := response.Candidates[0].Blocks[0].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
 	}
-	// Output: Attention Is All You Need
 }
-
-func ExampleGeminiGenerator_Register_parallelToolUse_multimedia() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		fmt.Println("[Skipped: set GEMINI_API_KEY env]")
-		return
-	}
-
+func TestGeminiGenerator_Register_parallelToolUse_multimedia(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -688,13 +538,10 @@ func ExampleGeminiGenerator_Register_parallelToolUse_multimedia() {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-
 	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant that can view files.")
 	if err != nil {
-		fmt.Println("Error creating GeminiGenerator:", err)
-		return
+		t.Fatalf("create Gemini generator: %v", err)
 	}
-
 	// Register a tool to view files
 	viewFileTool := Tool{
 		Name:        "view_file",
@@ -703,40 +550,31 @@ func ExampleGeminiGenerator_Register_parallelToolUse_multimedia() {
 			schema, err := GenerateSchema[struct {
 				FilePath string `json:"file_path" jsonschema:"required" jsonschema_description:"The path to the file to view"`
 			}]()
-				if err != nil {
-					panic(err)
-				}
-				return schema
-			}(),
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			return schema
+		}(),
 	}
 	err = g.Register(viewFileTool)
 	if err != nil {
-		fmt.Println("Error registering tool:", err)
-		return
+		t.Fatalf("register tool: %v", err)
 	}
-
 	// User asks to view multiple files
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Please view sample.jpg and README.md, and tell me what character is in the image, and what is gai from the README")}}},
 	}
-	
 	// Model makes parallel tool calls
 	response, err := g.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-	
-	fmt.Println("Tool calls made:")
 	for _, block := range response.Candidates[0].Blocks {
 		if block.BlockType == Thinking {
 			continue
 		}
-		fmt.Printf("Block type: %s | ID: %s | Content: %s\n", block.BlockType, block.ID, block.Content)
 	}
-
 	dialog = append(dialog, response.Candidates[0])
-	
 	// Find tool call blocks (skip thinking blocks)
 	toolCallBlocks := []Block{}
 	for _, block := range response.Candidates[0].Blocks {
@@ -744,26 +582,22 @@ func ExampleGeminiGenerator_Register_parallelToolUse_multimedia() {
 			toolCallBlocks = append(toolCallBlocks, block)
 		}
 	}
-	
 	if len(toolCallBlocks) < 2 {
-		fmt.Println("Error: Expected at least 2 tool calls")
+		t.Fatal("Expected at least 2 tool calls")
 		return
 	}
-	
 	// Simulate tool results - first for sample.jpg (image)
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
-		fmt.Println("[Skipped: could not open sample.jpg]")
+		t.Skip("could not open sample.jpg")
 		return
 	}
-	
 	// Simulate tool results - for README.md (text)
 	readmeBytes, err := os.ReadFile("README.md")
 	if err != nil {
-		fmt.Println("[Skipped: could not open README.md]")
+		t.Skip("could not open README.md")
 		return
 	}
-
 	// Add both tool results in parallel
 	dialog = append(dialog,
 		Message{
@@ -787,22 +621,11 @@ func ExampleGeminiGenerator_Register_parallelToolUse_multimedia() {
 			}},
 		},
 	)
-
 	// Get final response with tool results
 	response, err = g.Generate(context.Background(), dialog, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	fmt.Println("Response received with tool results")
-	fmt.Println("Response contains image content:", strings.Contains(response.Candidates[0].Blocks[0].Content.String(), "Crood"))
-	fmt.Println("Response contains README content:", strings.Contains(response.Candidates[0].Blocks[0].Content.String(), "gai"))
-
-	// Output: Tool calls made:
-	// Block type: tool_call | ID: toolcall-1 | Content: {"name":"view_file","parameters":{"file_path":"sample.jpg"}}
-	// Block type: tool_call | ID: toolcall-2 | Content: {"name":"view_file","parameters":{"file_path":"README.md"}}
-	// Response received with tool results
-	// Response contains image content: true
-	// Response contains README content: true
+	content := requireContentBlock(t, requireBlock(t, requireCandidate(t, response), 0))
+	requireTextContains(t, content, "Crood", "gai")
 }

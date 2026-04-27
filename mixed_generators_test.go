@@ -2,34 +2,32 @@ package gai
 
 import (
 	"context"
-	"fmt"
-
 	a "github.com/anthropics/anthropic-sdk-go"
-	"github.com/openai/openai-go/v3"
-
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/openai/openai-go/v3"
+	"testing"
 )
 
 // ExampleMixGenerators demonstrates how to mix different AI model providers
 // in a single conversation, switching between Anthropic and OpenAI models.
-func Example_mixGenerators() {
+func Test_mixGenerators(t *testing.T) {
+	skipOnMissingEnv(t, "ANTHROPIC_API_KEY")
+	skipOnMissingEnv(t, "OPENAI_API_KEY")
+
 	// Initialize clients for both providers
 	anthropicClient := a.NewClient()
 	openaiClient := openai.NewClient()
-
 	// Create generators for each provider
 	anthropicGen := NewAnthropicGenerator(
 		&anthropicClient.Messages,
 		string(a.ModelClaudeHaiku4_5),
 		"You are Claude, a helpful AI assistant from Anthropic. Always mention you are Claude in your responses.",
 	)
-
 	openaiGen := NewOpenAiGenerator(
 		&openaiClient.Chat.Completions,
 		openai.ChatModelGPT4oMini,
 		"You are GPT-4o Mini, a helpful AI assistant from OpenAI. Always mention you are GPT-4o Mini in your responses.",
 	)
-
 	// Start a conversation with a user message
 	dialog := Dialog{
 		{
@@ -43,21 +41,19 @@ func Example_mixGenerators() {
 			},
 		},
 	}
-
 	// First turn: Use Anthropic's Claude model
-	fmt.Println("Generating response with Claude...")
 	claudeResp, err := anthropicGen.Generate(
 		context.Background(),
 		dialog,
 		&GenOpts{MaxGenerationTokens: Ptr(1024)}, // Claude requires MaxGenerationTokens
 	)
 	if err != nil {
-		panic(err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-
+	claudeMsg := requireCandidate(t, claudeResp)
+	requireContentBlock(t, requireBlock(t, claudeMsg, 0))
 	// Add Claude's response to the conversation
-	dialog = append(dialog, claudeResp.Candidates[0])
-
+	dialog = append(dialog, claudeMsg)
 	// User asks a follow-up question
 	dialog = append(dialog, Message{
 		Role: User,
@@ -69,21 +65,19 @@ func Example_mixGenerators() {
 			},
 		},
 	})
-
 	// Second turn: Use OpenAI's GPT model for the follow-up
-	fmt.Println("Generating response with GPT-4o Mini...")
 	gptResp, err := openaiGen.Generate(
 		context.Background(),
 		dialog,
 		&GenOpts{MaxGenerationTokens: Ptr(1024)},
 	)
 	if err != nil {
-		panic(err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-
+	gptMsg := requireCandidate(t, gptResp)
+	requireContentBlock(t, requireBlock(t, gptMsg, 0))
 	// Add GPT's response to the conversation
-	dialog = append(dialog, gptResp.Candidates[0])
-
+	dialog = append(dialog, gptMsg)
 	// Example with tool usage between different models
 	// Register the same tool with both generators
 	stockTool := Tool{
@@ -94,20 +88,17 @@ func Example_mixGenerators() {
 				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
 			}]()
 			if err != nil {
-				panic(err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			return schema
 		}(),
 	}
-
 	if err := anthropicGen.Register(stockTool); err != nil {
-		panic(err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if err := openaiGen.Register(stockTool); err != nil {
-		panic(err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	// Start a new conversation about stocks
 	stockDialog := Dialog{
 		{
@@ -121,9 +112,7 @@ func Example_mixGenerators() {
 			},
 		},
 	}
-
 	// First turn: Use OpenAI's GPT model with tool choice
-	fmt.Println("Using GPT with tool...")
 	gptToolResp, err := openaiGen.Generate(
 		context.Background(),
 		stockDialog,
@@ -133,48 +122,39 @@ func Example_mixGenerators() {
 		},
 	)
 	if err != nil {
-		panic(err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-
+	gptToolMsg := requireCandidate(t, gptToolResp)
+	if len(collectToolCalls(t, gptToolMsg.Blocks)) == 0 {
+		t.Fatalf("expected GPT response to contain a tool call: %#v", gptToolMsg.Blocks)
+	}
 	// Add GPT's tool call to the conversation
-	stockDialog = append(stockDialog, gptToolResp.Candidates[0])
-
+	stockDialog = append(stockDialog, gptToolMsg)
 	// Add mock tool result
 	stockDialog = append(stockDialog, Message{
 		Role: ToolResult,
 		Blocks: []Block{
 			{
-				ID:           gptToolResp.Candidates[0].Blocks[0].ID,
+				ID:           gptToolMsg.Blocks[0].ID,
 				ModalityType: Text,
 				Content:      Str("185.92"),
 			},
 		},
 	})
-
 	// Switch to Claude for final response
-	fmt.Println("Using Claude to interpret tool result...")
 	claudeToolResp, err := anthropicGen.Generate(
 		context.Background(),
 		stockDialog,
 		&GenOpts{MaxGenerationTokens: Ptr(1024)},
 	)
 	if err != nil {
-		panic(err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-
+	claudeToolMsg := requireCandidate(t, claudeToolResp)
+	requireContentBlock(t, requireBlock(t, claudeToolMsg, 0))
 	// Add Claude's response to the conversation
-	stockDialog = append(stockDialog, claudeToolResp.Candidates[0])
-
-	// For the example output, we'll just print success messages
-	// In a real application, you would process the full conversation content
-	fmt.Println("\nSuccessfully completed conversation with mixed models")
-	fmt.Println("Successfully completed stock price conversation with mixed models")
-
-	// Output: Generating response with Claude...
-	// Generating response with GPT-4o Mini...
-	// Using GPT with tool...
-	// Using Claude to interpret tool result...
-	//
-	// Successfully completed conversation with mixed models
-	// Successfully completed stock price conversation with mixed models
+	stockDialog = append(stockDialog, claudeToolMsg)
+	if len(stockDialog) != 4 {
+		t.Fatalf("stock dialog length = %d, want 4", len(stockDialog))
+	}
 }

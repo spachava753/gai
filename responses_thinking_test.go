@@ -3,7 +3,6 @@ package gai
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -16,10 +15,7 @@ import (
 // TestResponsesGenerator_Generate_Thinking_Logging tests that thinking content is returned
 // from the responses generator and logs out the thinking blocks for debugging.
 func TestResponsesGenerator_Generate_Thinking_Logging(t *testing.T) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		t.Skip("OPENAI_API_KEY not set, skipping test")
-	}
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5, "You are a helpful assistant")
@@ -31,7 +27,7 @@ func TestResponsesGenerator_Generate_Thinking_Logging(t *testing.T) {
 
 	opts := GenOpts{
 		ThinkingBudget: "medium",
-		Temperature: Ptr(1.0),
+		Temperature:    Ptr(1.0),
 		ExtraArgs: map[string]any{
 			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
 		},
@@ -85,10 +81,7 @@ func TestResponsesGenerator_Generate_Thinking_Logging(t *testing.T) {
 // TestResponsesGenerator_Stream_Thinking_Logging tests that thinking content is streamed
 // from the responses generator and logs out the thinking chunks for debugging.
 func TestResponsesGenerator_Stream_Thinking_Logging(t *testing.T) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		t.Skip("OPENAI_API_KEY not set, skipping test")
-	}
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
@@ -156,10 +149,7 @@ func TestResponsesGenerator_Stream_Thinking_Logging(t *testing.T) {
 // reasoning items must be correctly stored in Thinking block ExtraFields and reconstructed
 // as input reasoning items on subsequent calls.
 func TestResponsesGenerator_StatelessToolCallWithReasoning(t *testing.T) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		t.Skip("OPENAI_API_KEY not set, skipping test")
-	}
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that uses tools when needed.
@@ -282,10 +272,7 @@ After getting the price, report it to the user.`)
 // through StreamingAdapter compression into Thinking block ExtraFields, enabling
 // stateless multi-turn function calling through the streaming path.
 func TestResponsesGenerator_StreamingToolCallWithReasoning(t *testing.T) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		t.Skip("OPENAI_API_KEY not set, skipping test")
-	}
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that uses tools when needed.
@@ -424,10 +411,7 @@ After getting the price, report it to the user.`)
 //
 // This is a live API test that requires OPENAI_API_KEY to be set.
 func TestResponsesGenerator_ReasoningTokenPreservation_Generate(t *testing.T) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		t.Skip("OPENAI_API_KEY not set, skipping test")
-	}
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that uses tools when needed.
@@ -670,10 +654,7 @@ After getting tool results, report them to the user.`)
 // content captured from response.output_item.done events and compressed into Thinking block
 // ExtraFields correctly preserves reasoning tokens across function-calling turns.
 func TestResponsesGenerator_ReasoningTokenPreservation_Stream(t *testing.T) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		t.Skip("OPENAI_API_KEY not set, skipping test")
-	}
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that uses tools when needed.
@@ -883,10 +864,7 @@ After getting tool results, report them to the user.`)
 // TestResponsesGenerator_StreamMetadata verifies that the streaming path
 // correctly emits a metadata block with usage information as the final chunk.
 func TestResponsesGenerator_StreamMetadata(t *testing.T) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		t.Skip("OPENAI_API_KEY not set, skipping test")
-	}
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
