@@ -8,7 +8,6 @@ import (
 	"iter"
 	"maps"
 	"reflect"
-	"strings"
 )
 
 // StreamChunk represents a single chunk of content yielded during streaming generation.
@@ -17,7 +16,7 @@ import (
 //
 // The Block field contains partial content that depends on the BlockType:
 //   - For "content" blocks: partial text fragments
-//   - For "thinking" blocks: reasoning fragments or summaries
+//   - For "thinking" blocks: partial reasoning fragments
 //   - For "tool_call" blocks: either a header (with ID and tool name) or parameter fragments
 //   - For MetadataBlockType blocks: usage metrics (always the last chunk)
 //
@@ -63,8 +62,8 @@ type StreamChunk struct {
 //
 // 2. Thinking Blocks:
 //   - Yield multiple chunks with BlockType="thinking", ModalityType=Text
-//   - Each chunk contains a reasoning fragment or summary
-//   - Consecutive non-empty thinking chunks will be newline-separated during compression when needed
+//   - Each chunk contains a partial reasoning fragment
+//   - Consecutive thinking chunks will be concatenated during compression
 //   - Must set MimeType="text/plain"
 //
 // 3. Tool Call Blocks:
@@ -81,7 +80,7 @@ type StreamChunk struct {
 //
 // - Consecutive blocks of the same type are merged:
 //   - Multiple "content" chunks -> Single content block with concatenated text
-//   - Multiple "thinking" chunks -> Single thinking block with newline-separated text when needed
+//   - Multiple "thinking" chunks -> Single thinking block with concatenated text
 //
 // - Tool calls are reconstructed:
 //   - Header chunk (with ID) marks the start of a new tool call
@@ -200,16 +199,6 @@ type StreamingAdapter struct {
 	S StreamingGenerator
 }
 
-func appendThinkingContent(base, next string) string {
-	if base == "" || next == "" {
-		return base + next
-	}
-	if strings.HasSuffix(base, "\n") || strings.HasPrefix(next, "\n") {
-		return base + next
-	}
-	return base + "\n" + next
-}
-
 // compressStreamingBlocks takes a flat list of streaming output blocks and "compresses" them into the canonical output blocks list.
 // This function is responsible for merging consecutive chunks of the same type and reconstructing complete blocks
 // from the partial chunks yielded during streaming.
@@ -219,9 +208,8 @@ func appendThinkingContent(base, next string) string {
 //  1. Content blocks: Consecutive "content" blocks with Text modality are concatenated into a single block.
 //     Example: ["Hello, ", "world!"] -> ["Hello, world!"]
 //
-//  2. Thinking blocks: Consecutive "thinking" blocks with Text modality are merged into a single block.
-//     Non-empty chunks are separated by a newline when neither side already provides one.
-//     Example: ["First summary.", "Second summary."] -> ["First summary.\nSecond summary."]
+//  2. Thinking blocks: Consecutive "thinking" blocks with Text modality are concatenated into a single block.
+//     Example: ["I need to ", "calculate..."] -> ["I need to calculate..."]
 //
 // 3. Tool call blocks: Tool calls are reconstructed from a header chunk followed by parameter chunks.
 //   - Header chunk: Has ID set and Content contains the tool name
@@ -266,7 +254,7 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 				if blocks[j].ModalityType != Text {
 					return nil, fmt.Errorf("content block type %q does not have text modality (got %q)", blocks[j].BlockType, blocks[j].ModalityType)
 				}
-				joined = appendThinkingContent(joined, blocks[j].Content.String())
+				joined += blocks[j].Content.String()
 				maps.Copy(extraFields, blocks[j].ExtraFields)
 				j++
 			}

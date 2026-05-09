@@ -10,34 +10,18 @@ import (
 )
 
 func TestStreamingAdapterBlockCompression(t *testing.T) {
-	t.Run("compresses consecutive thinking blocks into one with newline separators", func(t *testing.T) {
+	t.Run("compresses consecutive thinking blocks into one", func(t *testing.T) {
 		blocks := []Block{
-			{BlockType: Thinking, Content: Str("I think")},
-			{BlockType: Thinking, Content: Str("therefore")},
+			{BlockType: Thinking, Content: Str("I think ")},
+			{BlockType: Thinking, Content: Str("therefore ")},
 			{BlockType: Thinking, Content: Str("I am.")},
 		}
 		compressed, err := compressStreamingBlocks(blocks)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(compressed) != 1 || compressed[0].BlockType != Thinking || compressed[0].Content.String() != "I think\ntherefore\nI am." {
-			t.Errorf("expected 1 thinking block with newline-separated content, got %+v", compressed)
-		}
-	})
-
-	t.Run("does not duplicate existing thinking newlines", func(t *testing.T) {
-		blocks := []Block{
-			{BlockType: Thinking, Content: Str("First summary.\n")},
-			{BlockType: Thinking, Content: Str("Second summary.")},
-			{BlockType: Thinking, Content: Str("\nThird summary.")},
-			{BlockType: Thinking, Content: Str("")},
-		}
-		compressed, err := compressStreamingBlocks(blocks)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got, want := compressed[0].Content.String(), "First summary.\nSecond summary.\nThird summary."; got != want {
-			t.Fatalf("compressed thinking content = %q, want %q", got, want)
+		if len(compressed) != 1 || compressed[0].BlockType != Thinking || compressed[0].Content.String() != "I think therefore I am." {
+			t.Errorf("expected 1 thinking block with merged content, got %+v", compressed)
 		}
 	})
 
