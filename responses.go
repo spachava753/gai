@@ -657,6 +657,35 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 	return result, nil
 }
 
+type responsesReasoningSummaryStreamState struct {
+	pendingSeparator           bool
+	previousSummaryEndsNewline bool
+}
+
+func (s *responsesReasoningSummaryStreamState) markDone(text string) {
+	if text == "" {
+		return
+	}
+	s.pendingSeparator = true
+	s.previousSummaryEndsNewline = strings.HasSuffix(text, "\n")
+}
+
+func (s *responsesReasoningSummaryStreamState) clear() {
+	s.pendingSeparator = false
+	s.previousSummaryEndsNewline = false
+}
+
+func (s *responsesReasoningSummaryStreamState) separatorBefore(next string) string {
+	if !s.pendingSeparator || next == "" {
+		return ""
+	}
+	s.pendingSeparator = false
+	if s.previousSummaryEndsNewline || strings.HasPrefix(next, "\n") {
+		return ""
+	}
+	return "\n"
+}
+
 func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
 	return func(yield func(StreamChunk, error) bool) {
 		if r.client == nil {
@@ -681,6 +710,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 		}
 
 		var assistantMessageExtraFields map[string]interface{}
+		var summaryStreamState responsesReasoningSummaryStreamState
 
 		// Start the stream
 		stream := r.client.NewStreaming(ctx, params)
@@ -701,6 +731,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 						return
 					}
 				case "function_call":
+					summaryStreamState.clear()
 					fc := item.AsFunctionCall()
 					id := fc.CallID
 					if id == "" {
@@ -723,6 +754,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			case "response.output_text.delta":
 				textDelta := event.AsResponseOutputTextDelta()
 				if textDelta.Delta != "" {
+					summaryStreamState.clear()
 					if !yield(StreamChunk{
 						Block: Block{
 							BlockType:    Content,
@@ -739,6 +771,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			case "response.function_call_arguments.delta":
 				fcDelta := event.AsResponseFunctionCallArgumentsDelta()
 				if fcDelta.Delta != "" {
+					summaryStreamState.clear()
 					if !yield(StreamChunk{
 						Block: Block{
 							BlockType:    ToolCall,
@@ -769,6 +802,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				// revisit both this logic and StreamingAdapter thinking-block compression.
 				reasoningDelta := event.AsResponseReasoningTextDelta()
 				if reasoningDelta.Delta != "" {
+					summaryStreamState.clear()
 					if !yield(StreamChunk{
 						Block: Block{
 							BlockType:    Thinking,
@@ -788,6 +822,23 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			case "response.reasoning_summary_text.delta":
 				summaryDelta := event.AsResponseReasoningSummaryTextDelta()
 				if summaryDelta.Delta != "" {
+					if separator := summaryStreamState.separatorBefore(summaryDelta.Delta); separator != "" {
+						if !yield(StreamChunk{
+							Block: Block{
+								BlockType:    Thinking,
+								ModalityType: Text,
+								MimeType:     "text/plain",
+								Content:      Str(separator),
+								ExtraFields: map[string]interface{}{
+									ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
+								},
+							},
+							MessageExtraFields: maps.Clone(assistantMessageExtraFields),
+							CandidatesIndex:    0,
+						}, nil) {
+							return
+						}
+					}
 					if !yield(StreamChunk{
 						Block: Block{
 							BlockType:    Thinking,
@@ -804,6 +855,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 						return
 					}
 				}
+			case "response.reasoning_summary_text.done":
+				summaryDone := event.AsResponseReasoningSummaryTextDone()
+				summaryStreamState.markDone(summaryDone.Text)
 			case "response.output_item.done":
 				// When a reasoning item completes, emit a zero-content thinking chunk
 				// carrying the encrypted content and reasoning ID in ExtraFields.

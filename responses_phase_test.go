@@ -12,9 +12,11 @@ import (
 )
 
 type mockResponsesService struct {
-	response *responses.Response
-	err      error
-	lastBody responses.ResponseNewParams
+	response     *responses.Response
+	err          error
+	lastBody     responses.ResponseNewParams
+	streamEvents []ssestream.Event
+	streamErr    error
 }
 
 func (m *mockResponsesService) New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error) {
@@ -23,7 +25,74 @@ func (m *mockResponsesService) New(ctx context.Context, body responses.ResponseN
 }
 
 func (m *mockResponsesService) NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) *ssestream.Stream[responses.ResponseStreamEventUnion] {
-	panic("unimplemented")
+	m.lastBody = body
+	return ssestream.NewStream[responses.ResponseStreamEventUnion](&mockResponsesStreamDecoder{events: m.streamEvents}, m.streamErr)
+}
+
+type mockResponsesStreamDecoder struct {
+	events []ssestream.Event
+	index  int
+	cur    ssestream.Event
+}
+
+func (m *mockResponsesStreamDecoder) Event() ssestream.Event {
+	return m.cur
+}
+
+func (m *mockResponsesStreamDecoder) Next() bool {
+	if m.index >= len(m.events) {
+		return false
+	}
+	m.cur = m.events[m.index]
+	m.index++
+	return true
+}
+
+func (m *mockResponsesStreamDecoder) Close() error {
+	return nil
+}
+
+func (m *mockResponsesStreamDecoder) Err() error {
+	return nil
+}
+
+func mockResponsesSSEEvent(data string) ssestream.Event {
+	return ssestream.Event{Data: []byte(data)}
+}
+
+func TestResponsesGeneratorStreamSeparatesCompletedReasoningSummaries(t *testing.T) {
+	svc := &mockResponsesService{streamEvents: []ssestream.Event{
+		mockResponsesSSEEvent(`{"type":"response.reasoning_summary_text.delta","delta":"I am ","item_id":"rs_1","output_index":0,"summary_index":0,"sequence_number":1}`),
+		mockResponsesSSEEvent(`{"type":"response.reasoning_summary_text.delta","delta":"opening this file.","item_id":"rs_1","output_index":0,"summary_index":0,"sequence_number":2}`),
+		mockResponsesSSEEvent(`{"type":"response.reasoning_summary_text.done","text":"I am opening this file.","item_id":"rs_1","output_index":0,"summary_index":0,"sequence_number":3}`),
+		mockResponsesSSEEvent(`{"type":"response.reasoning_summary_text.delta","delta":"Checking the result.","item_id":"rs_1","output_index":0,"summary_index":1,"sequence_number":4}`),
+		mockResponsesSSEEvent(`{"type":"response.reasoning_summary_text.done","text":"Checking the result.","item_id":"rs_1","output_index":0,"summary_index":1,"sequence_number":5}`),
+	}}
+	gen := NewResponsesGenerator(svc, "gpt-5", "")
+
+	var thinking strings.Builder
+	var chunks []string
+	for chunk, err := range gen.Stream(context.Background(), Dialog{{
+		Role:   User,
+		Blocks: []Block{TextBlock("summarize")},
+	}}, nil) {
+		if err != nil {
+			t.Fatalf("Stream returned error: %v", err)
+		}
+		if chunk.Block.BlockType != Thinking {
+			continue
+		}
+		content := chunk.Block.Content.String()
+		chunks = append(chunks, content)
+		thinking.WriteString(content)
+	}
+
+	if got, want := thinking.String(), "I am opening this file.\nChecking the result."; got != want {
+		t.Fatalf("thinking content = %q, want %q; chunks=%q", got, want, chunks)
+	}
+	if len(chunks) != 4 || chunks[0] != "I am " || chunks[1] != "opening this file." || chunks[2] != "\n" || chunks[3] != "Checking the result." {
+		t.Fatalf("unexpected thinking chunks: %q", chunks)
+	}
 }
 
 func TestResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase(t *testing.T) {
