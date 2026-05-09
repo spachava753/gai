@@ -3,14 +3,165 @@ package gai
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
 )
+
+func TestResponsesGenerator_StreamingAdapter_LiveThinkingSummaryFormatting(t *testing.T) {
+	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+
+	reasoningModel := os.Getenv("GAI_RESPONSES_THINKING_LIVE_MODEL")
+	if reasoningModel == "" {
+		reasoningModel = "gpt-5.5"
+	}
+	verifierModel := os.Getenv("GAI_RESPONSES_THINKING_VERIFIER_MODEL")
+	if verifierModel == "" {
+		verifierModel = "gpt-5.4-nano"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	client := openai.NewClient(option.WithAPIKey(apiKey))
+	gen := NewResponsesGenerator(&client.Responses, reasoningModel, "You solve hard reasoning tasks carefully and expose detailed reasoning summaries when requested.")
+	adapter := StreamingAdapter{S: &gen}
+
+	dialog := Dialog{{
+		Role: User,
+		Blocks: []Block{TextBlock(`Solve this deliberately difficult reasoning problem. You must reason through the constraints carefully before answering.
+
+Five houses stand in a row, numbered 1 through 5 from left to right. Each house has exactly one color, nationality, drink, pet, and hobby. All values in each category are used exactly once.
+
+Colors: red, green, ivory, yellow, blue.
+Nationalities: Englishman, Spaniard, Ukrainian, Norwegian, Japanese.
+Drinks: coffee, tea, milk, orange juice, water.
+Pets: dog, snails, fox, horse, zebra.
+Hobbies: painter, sculptor, diplomat, violinist, doctor.
+
+Constraints:
+1. The Englishman lives in the red house.
+2. The Spaniard owns the dog.
+3. Coffee is drunk in the green house.
+4. The Ukrainian drinks tea.
+5. The green house is immediately to the right of the ivory house.
+6. The sculptor owns snails.
+7. The diplomat lives in the yellow house.
+8. Milk is drunk in the middle house.
+9. The Norwegian lives in the first house.
+10. The doctor lives next to the fox owner.
+11. The diplomat lives next to the horse owner.
+12. The violinist drinks orange juice.
+13. The Japanese is the painter.
+14. The Norwegian lives next to the blue house.
+
+Find who drinks water and who owns the zebra. Keep the final visible answer concise: one sentence for water and one sentence for zebra.`)},
+	}}
+
+	opts := &GenOpts{
+		ThinkingBudget:      "medium",
+		MaxGenerationTokens: Ptr(12000),
+		Temperature:         Ptr(1.0),
+		ExtraArgs: map[string]any{
+			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
+		},
+	}
+
+	resp, err := adapter.Generate(ctx, dialog, opts)
+	if err != nil {
+		t.Fatalf("StreamingAdapter Generate failed: %v", err)
+	}
+	if len(resp.Candidates) != 1 {
+		t.Fatalf("expected 1 candidate, got %d", len(resp.Candidates))
+	}
+
+	var thinking strings.Builder
+	var answer strings.Builder
+	thinkingBlockCount := 0
+	for i, block := range resp.Candidates[0].Blocks {
+		t.Logf("StreamingAdapter block %d: type=%s modality=%s mime=%s len=%d", i, block.BlockType, block.ModalityType, block.MimeType, len(block.Content.String()))
+		switch block.BlockType {
+		case Thinking:
+			thinkingBlockCount++
+			thinking.WriteString(block.Content.String())
+			t.Logf("=== STREAMING ADAPTER THINKING BLOCK %d ===\n%s\n=== END THINKING BLOCK %d ===", thinkingBlockCount, block.Content.String(), thinkingBlockCount)
+		case Content:
+			answer.WriteString(block.Content.String())
+		}
+	}
+	if thinkingBlockCount == 0 || strings.TrimSpace(thinking.String()) == "" {
+		t.Fatalf("expected non-empty thinking summaries from live streaming response; blocks=%+v", resp.Candidates[0].Blocks)
+	}
+	t.Logf("=== STREAMING ADAPTER COMBINED THINKING OUTPUT ===\n%s\n=== END COMBINED THINKING OUTPUT ===", thinking.String())
+	t.Logf("=== STREAMING ADAPTER ANSWER OUTPUT ===\n%s\n=== END ANSWER OUTPUT ===", answer.String())
+
+	verdict, err := verifyThinkingSummaryFormatting(ctx, &client, verifierModel, thinking.String())
+	if err != nil {
+		t.Fatalf("verifier failed: %v", err)
+	}
+	t.Logf("Verifier verdict: %+v", verdict)
+	if !verdict.ProperlyFormatted || verdict.HasWeirdInternalSplintering {
+		t.Fatalf("streaming adapter thinking output formatting rejected: %+v\nThinking output:\n%s", verdict, thinking.String())
+	}
+}
+
+type thinkingSummaryFormattingVerdict struct {
+	ProperlyFormatted           bool   `json:"properly_formatted"`
+	HasWeirdInternalSplintering bool   `json:"has_weird_internal_splintering"`
+	Reason                      string `json:"reason"`
+}
+
+func verifyThinkingSummaryFormatting(ctx context.Context, client *openai.Client, model, thinking string) (thinkingSummaryFormattingVerdict, error) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"properly_formatted":             map[string]any{"type": "boolean"},
+			"has_weird_internal_splintering": map[string]any{"type": "boolean"},
+			"reason":                         map[string]any{"type": "string"},
+		},
+		"required":             []string{"properly_formatted", "has_weird_internal_splintering", "reason"},
+		"additionalProperties": false,
+	}
+
+	prompt := `You are checking the formatting of a compressed reasoning-summary transcript produced by a streaming adapter.
+
+Return properly_formatted=true only if the text reads like coherent completed summary paragraphs or sections. It is OK for separate completed summaries to be separated by newlines. Return has_weird_internal_splintering=true if line breaks appear to split tiny streaming fragments or phrase pieces, such as one or two words per line, mid-sentence line breaks that look like token chunks, or arbitrary all-caps/chopped fragments. Do not judge whether the reasoning is correct; judge formatting only.
+
+Transcript to inspect:
+---
+` + thinking + `
+---`
+
+	resp, err := client.Responses.New(ctx, responses.ResponseNewParams{
+		Model: openai.ResponsesModel(model),
+		Input: responses.ResponseNewParamsInputUnion{OfString: openai.String(prompt)},
+		Text: responses.ResponseTextConfigParam{
+			Format: responses.ResponseFormatTextConfigUnionParam{
+				OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
+					Name:   "thinking_summary_formatting_verdict",
+					Schema: schema,
+					Strict: openai.Bool(true),
+				},
+			},
+		},
+		MaxOutputTokens: openai.Int(512),
+	}, option.WithRequestTimeout(2*time.Minute))
+	if err != nil {
+		return thinkingSummaryFormattingVerdict{}, err
+	}
+
+	var verdict thinkingSummaryFormattingVerdict
+	if err := json.Unmarshal([]byte(resp.OutputText()), &verdict); err != nil {
+		return thinkingSummaryFormattingVerdict{}, err
+	}
+	return verdict, nil
+}
 
 // TestResponsesGenerator_Generate_Thinking_Logging tests that thinking content is returned
 // from the responses generator and logs out the thinking blocks for debugging.
