@@ -177,6 +177,7 @@ type Block struct {
 	//   - ThinkingExtraFieldGeneratorKey: Always set on Thinking blocks to identify the source generator
 	//   - AnthropicExtraFieldThinkingSignature: Signature for Anthropic extended thinking blocks
 	//   - GeminiExtraFieldThoughtSignature: Signature for Gemini thinking blocks
+	//   - ResponsesExtraFieldReasoningID/SummaryIndex/EncryptedContent: OpenAI Responses reasoning metadata
 	//   - OpenRouterExtraFieldReasoningType/Format/Index/Signature: OpenRouter reasoning metadata
 	//   - OpenAIExtraFieldImageWidth/Height/Detail: Image processing hints for OpenAI
 	//   - BlockFieldFilenameKey: Filename for PDF blocks

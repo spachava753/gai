@@ -29,6 +29,10 @@ const ResponsesPromptCacheKeyParam = "responses_prompt_cache_key"
 // reasoning input items when passing back in multi-turn conversations.
 const ResponsesExtraFieldReasoningID = "responses_reasoning_id"
 
+// ResponsesExtraFieldSummaryIndex is the key used in Block.ExtraFields for Responses
+// reasoning summary Thinking blocks to store the summary_index within the reasoning item.
+const ResponsesExtraFieldSummaryIndex = "responses_summary_index"
+
 // ResponsesExtraFieldEncryptedContent is the key used in Block.ExtraFields for Thinking blocks
 // to store the encrypted reasoning content from the Responses API. When using the API in
 // stateless mode (store=false), encrypted reasoning items must be passed back to the API
@@ -562,13 +566,15 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (message 
 			}
 			// Also process summaries as Thinking blocks. Summaries are the closest
 			// we get to the model's reasoning when full traces are unavailable.
-			for _, rc := range reas.Summary {
+			for i, rc := range reas.Summary {
+				summaryExtraFields := maps.Clone(extraFields)
+				summaryExtraFields[ResponsesExtraFieldSummaryIndex] = int64(i)
 				message.Blocks = append(message.Blocks, Block{
 					BlockType:    Thinking,
 					ModalityType: Text,
 					MimeType:     "text/plain",
 					Content:      Str(rc.Text),
-					ExtraFields:  maps.Clone(extraFields),
+					ExtraFields:  summaryExtraFields,
 				})
 			}
 			// If the reasoning item has encrypted content but no visible content/summaries,
@@ -745,20 +751,6 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 					}
 				}
 			case "response.reasoning_text.delta":
-				// Empirical note for future maintainers: on 2026-03-09 we probed the raw
-				// Responses streaming API directly (gpt-5.4, high reasoning, repeated
-				// difficult HLE-style prompts) to verify whether one streamed response can
-				// produce multiple distinct reasoning items. Across the observed runs, every
-				// reasoning-related delta belonged to a single stable reasoning item ID, and
-				// encrypted_content only appeared on the final response.output_item.done
-				// event for that item. Some runs emitted no reasoning deltas at all but still
-				// ended with one completed reasoning item carrying encrypted_content.
-				//
-				// We stream reasoning deltas as Thinking chunks and attach the replay-critical
-				// reasoning ID and encrypted content when the reasoning item completes below.
-				// The response.output_item.done case emits a separator after each completed
-				// item, so the StreamingAdapter can preserve multiple completed reasoning
-				// items as separate Thinking blocks if OpenAI starts returning them.
 				reasoningDelta := event.AsResponseReasoningTextDelta()
 				if reasoningDelta.Delta != "" {
 					if !yield(StreamChunk{
@@ -769,6 +761,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							Content:      Str(reasoningDelta.Delta),
 							ExtraFields: map[string]interface{}{
 								ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
+								ResponsesExtraFieldReasoningID: reasoningDelta.ItemID,
 							},
 						},
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
@@ -786,7 +779,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							MimeType:     "text/plain",
 							Content:      Str(summaryDelta.Delta),
 							ExtraFields: map[string]interface{}{
-								ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
+								ThinkingExtraFieldGeneratorKey:  ThinkingGeneratorResponses,
+								ResponsesExtraFieldReasoningID:  summaryDelta.ItemID,
+								ResponsesExtraFieldSummaryIndex: summaryDelta.SummaryIndex,
 							},
 						},
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
@@ -794,17 +789,17 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 						return
 					}
 				}
+			case "response.reasoning_summary_text.done":
+				// End each streamed summary part with a separator so StreamingAdapter
+				// preserves one Thinking block per Responses summary_index. The Responses
+				// API emits encrypted reasoning content later on response.output_item.done,
+				// so that metadata may become a separate empty Thinking block. That is
+				// intentional: buildInputItems only needs one encrypted-content block per
+				// reasoning ID to reconstruct stateless reasoning context.
+				if !yield(StreamChunk{Block: SeparatorBlock()}, nil) {
+					return
+				}
 			case "response.output_item.done":
-				// When a reasoning item completes, emit a zero-content thinking chunk
-				// carrying the encrypted content and reasoning ID in ExtraFields.
-				// compressStreamingBlocks merges ExtraFields across consecutive
-				// thinking chunks via maps.Copy, so the final compressed block will
-				// carry the encrypted content needed for stateless multi-turn
-				// function calling.
-				//
-				// After handling the completed item, emit a SeparatorBlock. This lets
-				// StreamingAdapter merge deltas within one Responses output item while
-				// keeping adjacent output items of the same block type separate.
 				item := event.AsResponseOutputItemDone().Item
 				switch item.Type {
 				case "message":

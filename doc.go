@@ -343,6 +343,11 @@
 // StreamingAdapter can preserve the same boundaries in the final Message. Separator blocks
 // are internal streaming markers and do not appear in non-streaming Response messages.
 //
+// For OpenAI Responses reasoning summaries, each summary_index is represented as a
+// separate Thinking block. Those blocks include ResponsesExtraFieldReasoningID and
+// ResponsesExtraFieldSummaryIndex in ExtraFields, and may include encrypted replay
+// content under ResponsesExtraFieldEncryptedContent.
+//
 // To identify which generator produced a thinking block, check the ThinkingExtraFieldGeneratorKey
 // in the block's ExtraFields. This allows you to handle provider-specific features:
 //
