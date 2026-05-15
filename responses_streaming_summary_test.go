@@ -70,11 +70,10 @@ func TestResponsesStreamingAdapterPreservesReasoningSummaryParts(t *testing.T) {
 	}
 
 	candidate := requireCandidate(t, resp)
-	if len(candidate.Blocks) != 3 {
-		t.Fatalf("blocks = %d, want 2 summary thinking blocks plus 1 metadata block: %#v", len(candidate.Blocks), candidate.Blocks)
+	if len(candidate.Blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2 summary thinking blocks: %#v", len(candidate.Blocks), candidate.Blocks)
 	}
-	for i := range 2 {
-		block := candidate.Blocks[i]
+	for i, block := range candidate.Blocks {
 		if block.BlockType != Thinking {
 			t.Fatalf("block %d type = %q, want %q", i, block.BlockType, Thinking)
 		}
@@ -85,18 +84,11 @@ func TestResponsesStreamingAdapterPreservesReasoningSummaryParts(t *testing.T) {
 			t.Fatalf("block %d summary index = %v, want %d", i, got, i)
 		}
 	}
-	metadataOnly := candidate.Blocks[2]
-	if metadataOnly.BlockType != Thinking {
-		t.Fatalf("metadata-only block type = %q, want %q", metadataOnly.BlockType, Thinking)
+	if _, ok := candidate.Blocks[0].ExtraFields[ResponsesExtraFieldEncryptedContent]; ok {
+		t.Fatalf("first summary should not have encrypted content merged across separator")
 	}
-	if got := metadataOnly.Content.String(); got != "" {
-		t.Fatalf("metadata-only block content = %q, want empty", got)
-	}
-	if got := metadataOnly.ExtraFields[ResponsesExtraFieldReasoningID]; got != reasoningID {
-		t.Fatalf("metadata-only reasoning ID = %v, want %s", got, reasoningID)
-	}
-	if got := metadataOnly.ExtraFields[ResponsesExtraFieldEncryptedContent]; got != encrypted {
-		t.Fatalf("metadata-only encrypted content = %v, want %s", got, encrypted)
+	if got := candidate.Blocks[1].ExtraFields[ResponsesExtraFieldEncryptedContent]; got != encrypted {
+		t.Fatalf("last summary encrypted content = %v, want %s", got, encrypted)
 	}
 	if got := candidate.Blocks[0].Content.String(); got != "first summary" {
 		t.Fatalf("first summary = %q, want %q", got, "first summary")

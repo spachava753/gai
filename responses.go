@@ -687,6 +687,14 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 		}
 
 		var assistantMessageExtraFields map[string]interface{}
+		var pendingSummarySeparator bool
+		flushPendingSummarySeparator := func() bool {
+			if !pendingSummarySeparator {
+				return true
+			}
+			pendingSummarySeparator = false
+			return yield(StreamChunk{Block: SeparatorBlock()}, nil)
+		}
 
 		// Start the stream
 		stream := r.client.NewStreaming(ctx, params)
@@ -753,6 +761,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			case "response.reasoning_text.delta":
 				reasoningDelta := event.AsResponseReasoningTextDelta()
 				if reasoningDelta.Delta != "" {
+					if !flushPendingSummarySeparator() {
+						return
+					}
 					if !yield(StreamChunk{
 						Block: Block{
 							BlockType:    Thinking,
@@ -772,6 +783,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			case "response.reasoning_summary_text.delta":
 				summaryDelta := event.AsResponseReasoningSummaryTextDelta()
 				if summaryDelta.Delta != "" {
+					if !flushPendingSummarySeparator() {
+						return
+					}
 					if !yield(StreamChunk{
 						Block: Block{
 							BlockType:    Thinking,
@@ -790,19 +804,19 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 					}
 				}
 			case "response.reasoning_summary_text.done":
-				// End each streamed summary part with a separator so StreamingAdapter
-				// preserves one Thinking block per Responses summary_index. The Responses
-				// API emits encrypted reasoning content later on response.output_item.done,
-				// so that metadata may become a separate empty Thinking block. That is
-				// intentional: buildInputItems only needs one encrypted-content block per
-				// reasoning ID to reconstruct stateless reasoning context.
-				if !yield(StreamChunk{Block: SeparatorBlock()}, nil) {
-					return
-				}
+				// Mark a boundary after each summary part, but defer emitting it until
+				// another thinking delta arrives. response.output_item.done carries the
+				// encrypted reasoning payload after the final summary; delaying the final
+				// separator lets that metadata merge into the last summary block instead
+				// of producing an empty metadata-only Thinking block.
+				pendingSummarySeparator = true
 			case "response.output_item.done":
 				item := event.AsResponseOutputItemDone().Item
 				switch item.Type {
 				case "message":
+					if !flushPendingSummarySeparator() {
+						return
+					}
 					msg := item.AsMessage()
 					assistantMessageExtraFields, err = mergeResponsesMessagePhase(assistantMessageExtraFields, string(msg.Phase))
 					if err != nil {
@@ -831,6 +845,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 						}, nil) {
 							return
 						}
+						pendingSummarySeparator = false
 					}
 				}
 				if !yield(StreamChunk{
