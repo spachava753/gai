@@ -83,6 +83,13 @@ const (
 	// MetadataBlockType represents a block containing usage metadata.
 	MetadataBlockType = "metadata"
 
+	// Separator represents a logical boundary between streaming blocks.
+	// StreamingGenerator implementations can emit SeparatorBlock chunks when the
+	// provider signals the end of a logical block. StreamingAdapter uses these
+	// chunks to prevent adjacent same-type chunks from being merged, then omits
+	// separators from the final Response blocks.
+	Separator = "separator"
+
 	// ThinkingExtraFieldGeneratorKey is set in Block.ExtraFields for Thinking blocks to identify
 	// which generator produced the thinking content. All generators that support thinking blocks
 	// set this field automatically.
@@ -143,6 +150,7 @@ type Block struct {
 	// - A Content BlockType represents unstructured content of single Modality, like text, images and audio
 	// - A Thinking BlockType represents the thinking/reasoning a Generator produced
 	// - A ToolCall BlockType represents a tool call by the model
+	// - A Separator BlockType represents an internal streaming boundary and should not appear in final messages
 	//
 	// Note that a Generator can support more block types than the ones listed above,
 	// the above block types are simply a common set of block types that a Generator can return.
@@ -331,6 +339,21 @@ func ToolCallBlock(id, toolName string, parameters map[string]any) (Block, error
 		MimeType:     "text/plain",
 		Content:      Str(data),
 	}, nil
+}
+
+// SeparatorBlock creates a streaming boundary marker.
+//
+// Separator blocks carry no user-visible content. Streaming generators can emit
+// them after a provider reports that a logical content block has ended. The
+// StreamingAdapter drops separator blocks from the final response after using
+// them to avoid merging chunks from separate provider blocks.
+func SeparatorBlock() Block {
+	return Block{
+		BlockType:    Separator,
+		ModalityType: Text,
+		MimeType:     "text/plain",
+		Content:      Str(""),
+	}
 }
 
 // ToolResultMessage creates a message representing the result of a tool execution.

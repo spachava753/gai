@@ -134,6 +134,48 @@ func TestStreamingAdapter_multipleBlocks(t *testing.T) {
 	}
 }
 
+func TestStreamingAdapter_separatorBlocksAreInternal(t *testing.T) {
+	mockGen := &mockStreamingGenerator{
+		chunks: []StreamChunk{
+			{Block: Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str("first "), ExtraFields: map[string]interface{}{"item": "first"}}},
+			{Block: Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str("thinking")}},
+			{Block: SeparatorBlock()},
+			{Block: Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str("second thinking"), ExtraFields: map[string]interface{}{"item": "second"}}},
+		},
+	}
+	adapter := StreamingAdapter{S: mockGen}
+
+	response, err := adapter.Generate(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+
+	candidate := requireCandidate(t, response)
+	if len(candidate.Blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2 thinking blocks: %#v", len(candidate.Blocks), candidate.Blocks)
+	}
+	for i, block := range candidate.Blocks {
+		if block.BlockType == Separator {
+			t.Fatalf("separator leaked into final response at block %d", i)
+		}
+		if block.BlockType != Thinking {
+			t.Fatalf("block %d type = %q, want %q", i, block.BlockType, Thinking)
+		}
+	}
+	if got := candidate.Blocks[0].Content.String(); got != "first thinking" {
+		t.Fatalf("first thinking content = %q, want %q", got, "first thinking")
+	}
+	if got := candidate.Blocks[1].Content.String(); got != "second thinking" {
+		t.Fatalf("second thinking content = %q, want %q", got, "second thinking")
+	}
+	if got := candidate.Blocks[0].ExtraFields["item"]; got != "first" {
+		t.Fatalf("first thinking extra item = %v, want first", got)
+	}
+	if got := candidate.Blocks[1].ExtraFields["item"]; got != "second" {
+		t.Fatalf("second thinking extra item = %v, want second", got)
+	}
+}
+
 // ExampleStreamingAdapter_parallelToolCalls demonstrates how StreamingAdapter handles
 // parallel tool calls, showing the compression of multiple tool call chunks.
 func TestStreamingAdapter_parallelToolCalls(t *testing.T) {

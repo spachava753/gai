@@ -715,7 +715,6 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							Content:      Str(fc.Name),
 						},
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-						CandidatesIndex:    0,
 					}, nil) {
 						return
 					}
@@ -724,14 +723,8 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				textDelta := event.AsResponseOutputTextDelta()
 				if textDelta.Delta != "" {
 					if !yield(StreamChunk{
-						Block: Block{
-							BlockType:    Content,
-							ModalityType: Text,
-							MimeType:     "text/plain",
-							Content:      Str(textDelta.Delta),
-						},
+						Block:              TextBlock(textDelta.Delta),
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-						CandidatesIndex:    0,
 					}, nil) {
 						return
 					}
@@ -747,7 +740,6 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							Content:      Str(fcDelta.Delta),
 						},
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-						CandidatesIndex:    0,
 					}, nil) {
 						return
 					}
@@ -762,11 +754,11 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				// event for that item. Some runs emitted no reasoning deltas at all but still
 				// ended with one completed reasoning item carrying encrypted_content.
 				//
-				// Because of that observed API behavior, we stream reasoning deltas as plain
-				// Thinking chunks here and attach the replay-critical reasoning ID and
-				// encrypted content when the reasoning item completes below. If OpenAI ever
-				// starts emitting multiple reasoning items within one streamed response,
-				// revisit both this logic and StreamingAdapter thinking-block compression.
+				// We stream reasoning deltas as Thinking chunks and attach the replay-critical
+				// reasoning ID and encrypted content when the reasoning item completes below.
+				// The response.output_item.done case emits a separator after each completed
+				// item, so the StreamingAdapter can preserve multiple completed reasoning
+				// items as separate Thinking blocks if OpenAI starts returning them.
 				reasoningDelta := event.AsResponseReasoningTextDelta()
 				if reasoningDelta.Delta != "" {
 					if !yield(StreamChunk{
@@ -780,7 +772,6 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							},
 						},
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-						CandidatesIndex:    0,
 					}, nil) {
 						return
 					}
@@ -799,7 +790,6 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							},
 						},
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-						CandidatesIndex:    0,
 					}, nil) {
 						return
 					}
@@ -812,14 +802,9 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				// carry the encrypted content needed for stateless multi-turn
 				// function calling.
 				//
-				// Raw SDK probes run on 2026-03-09 against gpt-5.4 with high reasoning
-				// observed that one streamed response yielded at most one completed
-				// reasoning item, while many reasoning summary deltas all shared that
-				// same item_id. That is the behavior this merge strategy relies on.
-				// If OpenAI ever returns multiple completed reasoning items in one
-				// streamed response, consecutive thinking chunks would collapse into a
-				// single block and only the last item's replay metadata would survive.
-				// The non-streaming Generate path does not have this limitation.
+				// After handling the completed item, emit a SeparatorBlock. This lets
+				// StreamingAdapter merge deltas within one Responses output item while
+				// keeping adjacent output items of the same block type separate.
 				item := event.AsResponseOutputItemDone().Item
 				switch item.Type {
 				case "message":
@@ -848,11 +833,15 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								ExtraFields:  extra,
 							},
 							MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-							CandidatesIndex:    0,
 						}, nil) {
 							return
 						}
 					}
+				}
+				if !yield(StreamChunk{
+					Block: SeparatorBlock(),
+				}, nil) {
+					return
 				}
 			case "response.refusal.delta":
 				refusalDelta := event.AsResponseRefusalDelta()
@@ -881,7 +870,6 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				yield(StreamChunk{
 					Block:              MetadataBlock(metadata),
 					MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-					CandidatesIndex:    0,
 				}, nil)
 				return
 			case "response.failed":

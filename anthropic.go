@@ -696,6 +696,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 		// Track cumulative usage throughout the stream
 		var finalUsage *a.MessageDeltaUsage
 
+		// TODO: handle redacting thinking
 		for stream.Next() {
 			chunk := stream.Current()
 
@@ -719,7 +720,6 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 						MimeType:     "text/plain",
 						Content:      Str(event.ContentBlock.Name),
 					},
-					CandidatesIndex: 0,
 				}, nil) {
 					return
 				}
@@ -736,7 +736,6 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							MimeType:     "text/plain",
 							Content:      Str(delta.Text),
 						},
-						CandidatesIndex: 0,
 					}, nil) {
 						return
 					}
@@ -752,7 +751,6 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							MimeType:     "text/plain",
 							Content:      Str(delta.PartialJSON),
 						},
-						CandidatesIndex: 0,
 					}, nil) {
 						return
 					}
@@ -770,7 +768,6 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								ThinkingExtraFieldGeneratorKey: ThinkingGeneratorAnthropic,
 							},
 						},
-						CandidatesIndex: 0,
 					}, nil) {
 						return
 					}
@@ -789,7 +786,6 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								AnthropicExtraFieldThinkingSignature: delta.Signature,
 							},
 						},
-						CandidatesIndex: 0,
 					}, nil) {
 						return
 					}
@@ -797,6 +793,15 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 					panic("citation block type not supported")
 				default:
 					panic("unknown block type")
+				}
+			case a.ContentBlockStopEvent:
+				// Anthropic exposes explicit content-block boundaries. Preserve those
+				// boundaries through StreamingAdapter compression so adjacent same-type
+				// blocks, such as multiple thinking blocks, remain distinct.
+				if !yield(StreamChunk{
+					Block: SeparatorBlock(),
+				}, nil) {
+					return
 				}
 			}
 
@@ -835,8 +840,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 
 			if len(metadata) > 0 {
 				yield(StreamChunk{
-					Block:           MetadataBlock(metadata),
-					CandidatesIndex: 0,
+					Block: MetadataBlock(metadata),
 				}, nil)
 			}
 		}

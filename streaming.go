@@ -18,7 +18,8 @@ import (
 //   - For "content" blocks: partial text fragments
 //   - For "thinking" blocks: partial reasoning fragments
 //   - For "tool_call" blocks: either a header (with ID and tool name) or parameter fragments
-//   - For MetadataBlockType blocks: usage metrics (always the last chunk)
+//   - For Separator blocks: a zero-content boundary marker between logical streamed blocks
+//   - For MetadataBlockType blocks: usage metrics (always the last non-boundary chunk)
 //
 // MessageExtraFields carries message-level metadata discovered during streaming.
 // The StreamingAdapter merges these across chunks and stores them on the final
@@ -73,14 +74,22 @@ type StreamChunk struct {
 //   - JSON fragments are concatenated to form complete parameters
 //   - The final concatenated JSON must be valid and parse to map[string]any
 //
+// 4. Separator Blocks:
+//   - Yield SeparatorBlock() when the provider reports the end of a logical output block
+//   - Separators carry no content and are omitted from StreamingAdapter.Generate responses
+//   - Separators prevent adjacent same-type chunks from being compressed into one block
+//
 // # Chunk Compression
 //
 // The StreamingAdapter uses compressStreamingBlocks to convert streaming chunks into
 // canonical blocks for the final Response. The compression follows these rules:
 //
-// - Consecutive blocks of the same type are merged:
+// - Consecutive blocks of the same type are merged unless separated by Separator:
 //   - Multiple "content" chunks -> Single content block with concatenated text
 //   - Multiple "thinking" chunks -> Single thinking block with concatenated text
+//   - "thinking", Separator, "thinking" -> Two thinking blocks
+//
+// - Separator chunks are dropped after acting as merge boundaries.
 //
 // - Tool calls are reconstructed:
 //   - Header chunk (with ID) marks the start of a new tool call
@@ -92,6 +101,7 @@ type StreamChunk struct {
 // 1. Modality Constraints:
 //   - Content and Thinking blocks MUST have ModalityType=Text
 //   - Tool call blocks MUST have ModalityType=Text
+//   - Separator blocks SHOULD have ModalityType=Text and empty content
 //   - Non-text modalities in streaming are not currently supported
 //
 // 2. Tool Call Structure:
@@ -190,8 +200,9 @@ type StreamingGenerator interface {
 // The adapter:
 // 1. Collects all chunks from the StreamingGenerator
 // 2. Uses compressStreamingBlocks to merge consecutive chunks of the same type
-// 3. Constructs a Response with the compressed blocks
-// 4. Sets FinishReason based on whether tool calls are present
+// 3. Uses Separator chunks as merge boundaries and omits them from final messages
+// 4. Constructs a Response with the compressed blocks
+// 5. Sets FinishReason based on whether tool calls are present
 //
 // Note: This adapter currently only supports single candidate responses (N=1).
 // If the streaming generator yields chunks with CandidatesIndex > 0, an error is returned.
@@ -211,7 +222,10 @@ type StreamingAdapter struct {
 //  2. Thinking blocks: Consecutive "thinking" blocks with Text modality are concatenated into a single block.
 //     Example: ["I need to ", "calculate..."] -> ["I need to calculate..."]
 //
-// 3. Tool call blocks: Tool calls are reconstructed from a header chunk followed by parameter chunks.
+//  3. Separator blocks: Separator blocks are dropped, but they break runs of same-type chunks.
+//     Example: ["thinking:a", Separator, "thinking:b"] -> ["thinking:a", "thinking:b"]
+//
+// 4. Tool call blocks: Tool calls are reconstructed from a header chunk followed by parameter chunks.
 //   - Header chunk: Has ID set and Content contains the tool name
 //   - Parameter chunks: Have empty ID and Content contains JSON fragments
 //   - The parameter chunks are concatenated and parsed as JSON to create a ToolCallInput
@@ -223,6 +237,9 @@ type StreamingAdapter struct {
 //   - A content/thinking block doesn't have Text modality
 //   - Tool call parameter chunks don't form valid JSON
 //   - A tool call block is missing its ID in the header chunk
+//
+// Separator blocks are valid only as streaming boundary markers. They are not
+// returned in the compressed block list.
 //
 // See the unit test in streaming_test.go for expected scenarios.
 func compressStreamingBlocks(blocks []Block) ([]Block, error) {
@@ -338,6 +355,12 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 		case MetadataBlockType:
 			// Metadata blocks are passed through as-is, should only appear at the end
 			result = append(result, blk)
+			i++
+			continue
+
+		case Separator:
+			// The merge loops above stop before separators, so dropping the
+			// separator here preserves the logical block boundary.
 			i++
 			continue
 

@@ -356,6 +356,8 @@ func main() {
 
 Many LLM providers support "thinking" or "reasoning" output, where the model shows its internal reasoning process. gai normalizes these into Thinking blocks (BlockType == Thinking).
 
+Some providers can produce multiple logical thinking blocks in one streamed response. Streaming generators may emit SeparatorBlock chunks between those provider blocks so StreamingAdapter can preserve the same boundaries in the final Message. Separator blocks are internal streaming markers and do not appear in non-streaming Response messages.
+
 To identify which generator produced a thinking block, check the ThinkingExtraFieldGeneratorKey in the block's ExtraFields. This allows you to handle provider-specific features:
 
 ```go

@@ -25,6 +25,55 @@ func TestStreamingAdapterBlockCompression(t *testing.T) {
 		}
 	})
 
+	t.Run("separator preserves consecutive thinking block boundaries", func(t *testing.T) {
+		blocks := []Block{
+			{BlockType: Thinking, ModalityType: Text, Content: Str("first "), ExtraFields: map[string]interface{}{"item": "a"}},
+			{BlockType: Thinking, ModalityType: Text, Content: Str("block")},
+			SeparatorBlock(),
+			{BlockType: Thinking, ModalityType: Text, Content: Str("second"), ExtraFields: map[string]interface{}{"item": "b"}},
+		}
+		compressed, err := compressStreamingBlocks(blocks)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(compressed) != 2 {
+			t.Fatalf("expected 2 thinking blocks, got %+v", compressed)
+		}
+		if got := compressed[0].Content.String(); got != "first block" {
+			t.Fatalf("first thinking content = %q, want %q", got, "first block")
+		}
+		if got := compressed[1].Content.String(); got != "second" {
+			t.Fatalf("second thinking content = %q, want %q", got, "second")
+		}
+		if got := compressed[0].ExtraFields["item"]; got != "a" {
+			t.Fatalf("first thinking extra item = %v, want a", got)
+		}
+		if got := compressed[1].ExtraFields["item"]; got != "b" {
+			t.Fatalf("second thinking extra item = %v, want b", got)
+		}
+	})
+
+	t.Run("separator preserves consecutive content block boundaries", func(t *testing.T) {
+		blocks := []Block{
+			TextBlock("first"),
+			SeparatorBlock(),
+			TextBlock("second"),
+		}
+		compressed, err := compressStreamingBlocks(blocks)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(compressed) != 2 {
+			t.Fatalf("expected 2 content blocks, got %+v", compressed)
+		}
+		if got := compressed[0].Content.String(); got != "first" {
+			t.Fatalf("first content = %q, want first", got)
+		}
+		if got := compressed[1].Content.String(); got != "second" {
+			t.Fatalf("second content = %q, want second", got)
+		}
+	})
+
 	t.Run("compresses consecutive text/content blocks into one", func(t *testing.T) {
 		blocks := []Block{
 			{BlockType: Content, Content: Str("Hello, ")},
