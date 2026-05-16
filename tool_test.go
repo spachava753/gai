@@ -943,170 +943,290 @@ func TestToolGenerator_Generate(t *testing.T) {
 	}
 }
 
-func TestToolGenerator_Hooks_BeforeGenerateMutatesDialogAndOptionsEachRound(t *testing.T) {
-	mockGen := newMockToolCapableGenerator()
-	callCount := 0
-	mockGen.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
-		callCount++
-		if options == nil || options.ToolChoice != ToolChoiceAuto {
-			t.Fatalf("ToolChoice = %v, want %q", options, ToolChoiceAuto)
-		}
-		if got := dialog[len(dialog)-1].Blocks[0].Content.String(); got != fmt.Sprintf("hooked-%d", callCount) {
-			t.Fatalf("last dialog content = %q, want hooked-%d", got, callCount)
-		}
+type hookTestState struct {
+	generateCalls int
+}
 
-		if callCount == 1 {
-			return Response{
-				Candidates:   []Message{{Role: Assistant, Blocks: []Block{{ID: "call_1", BlockType: ToolCall, ModalityType: Text, Content: Str(`{"name":"echo","parameters":{}}`)}}}},
-				FinishReason: ToolUse,
-			}, nil
-		}
-		return Response{
-			Candidates:   []Message{{Role: Assistant, Blocks: []Block{TextBlock("done")}}},
-			FinishReason: EndTurn,
-		}, nil
+func TestToolGenerator_Hooks_Mutation(t *testing.T) {
+	tests := []struct {
+		name           string
+		setupGenerator func(*testing.T, *mockToolCapableGenerator, *hookTestState)
+		setupTools     func(*testing.T, *ToolGenerator, *hookTestState)
+		hooks          func(*testing.T, *hookTestState) ToolGeneratorHooks
+		validateDialog func(*testing.T, Dialog, *hookTestState)
+	}{
+		{
+			name: "before generate mutates dialog and options each round",
+			setupGenerator: func(t *testing.T, m *mockToolCapableGenerator, state *hookTestState) {
+				m.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+					state.generateCalls++
+					if options == nil || options.ToolChoice != ToolChoiceAuto {
+						t.Fatalf("ToolChoice = %v, want %q", options, ToolChoiceAuto)
+					}
+					if got := dialog[len(dialog)-1].Blocks[0].Content.String(); got != fmt.Sprintf("hooked-%d", state.generateCalls) {
+						t.Fatalf("last dialog content = %q, want hooked-%d", got, state.generateCalls)
+					}
+
+					if state.generateCalls == 1 {
+						return toolHookTestToolUseResponse("call_1", "echo", `{}`), nil
+					}
+					return toolHookTestFinalResponse("done"), nil
+				}
+			},
+			setupTools: func(t *testing.T, tg *ToolGenerator, state *hookTestState) {
+				if err := tg.Register(Tool{Name: "echo"}, &mockToolCallback{}); err != nil {
+					t.Fatalf("Register: %v", err)
+				}
+			},
+			hooks: func(t *testing.T, state *hookTestState) ToolGeneratorHooks {
+				return ToolGeneratorHooks{
+					BeforeGenerate: func(ctx context.Context, dialog *Dialog, opts *GenOpts) error {
+						opts.ToolChoice = ToolChoiceAuto
+						*dialog = append(*dialog, Message{Role: User, Blocks: []Block{TextBlock(fmt.Sprintf("hooked-%d", state.generateCalls+1))}})
+						return nil
+					},
+				}
+			},
+			validateDialog: func(t *testing.T, dialog Dialog, state *hookTestState) {
+				if state.generateCalls != 2 {
+					t.Fatalf("generator calls = %d, want 2", state.generateCalls)
+				}
+			},
+		},
+		{
+			name: "after generate mutates response",
+			setupGenerator: func(t *testing.T, m *mockToolCapableGenerator, state *hookTestState) {
+				m.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+					return toolHookTestFinalResponse("original"), nil
+				}
+			},
+			hooks: func(t *testing.T, state *hookTestState) ToolGeneratorHooks {
+				return ToolGeneratorHooks{
+					AfterGenerate: func(ctx context.Context, dialog *Dialog, opts *GenOpts, resp *Response) error {
+						resp.Candidates[0].Blocks[0] = TextBlock("mutated")
+						return nil
+					},
+				}
+			},
+			validateDialog: func(t *testing.T, dialog Dialog, state *hookTestState) {
+				if got := dialog[len(dialog)-1].Blocks[0].Content.String(); got != "mutated" {
+					t.Fatalf("final content = %q, want mutated", got)
+				}
+			},
+		},
+		{
+			name: "before tool call mutates request",
+			setupGenerator: func(t *testing.T, m *mockToolCapableGenerator, state *hookTestState) {
+				m.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+					state.generateCalls++
+					if state.generateCalls == 1 {
+						return toolHookTestToolUseResponse("call_1", "alias", `{"value":"old"}`), nil
+					}
+					return toolHookTestFinalResponse("done"), nil
+				}
+			},
+			setupTools: func(t *testing.T, tg *ToolGenerator, state *hookTestState) {
+				err := tg.Register(Tool{Name: "echo"}, ToolCallBackFunc[struct {
+					Value string `json:"value"`
+				}](func(ctx context.Context, params struct {
+					Value string `json:"value"`
+				}) (string, error) {
+					if params.Value != "new" {
+						t.Fatalf("callback value = %q, want new", params.Value)
+					}
+					return params.Value, nil
+				}))
+				if err != nil {
+					t.Fatalf("Register: %v", err)
+				}
+			},
+			hooks: func(t *testing.T, state *hookTestState) ToolGeneratorHooks {
+				return ToolGeneratorHooks{
+					BeforeToolCall: func(ctx context.Context, dialog *Dialog, call *ToolCallRequest) error {
+						if call.Name != "alias" || call.Index != 0 || call.Total != 1 {
+							t.Fatalf("unexpected call metadata: %+v", call)
+						}
+						call.Name = "echo"
+						call.ParametersJSON = json.RawMessage(`{"value":"new"}`)
+						return nil
+					},
+				}
+			},
+			validateDialog: func(t *testing.T, dialog Dialog, state *hookTestState) {
+				if got := dialog[2].Blocks[0].Content.String(); got != "new" {
+					t.Fatalf("tool result = %q, want new", got)
+				}
+			},
+		},
+		{
+			name: "after tool call mutates result",
+			setupGenerator: func(t *testing.T, m *mockToolCapableGenerator, state *hookTestState) {
+				m.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+					state.generateCalls++
+					if state.generateCalls == 1 {
+						return toolHookTestToolUseResponse("call_1", "echo", `{}`), nil
+					}
+					return toolHookTestFinalResponse("done"), nil
+				}
+			},
+			setupTools: func(t *testing.T, tg *ToolGenerator, state *hookTestState) {
+				if err := tg.Register(Tool{Name: "echo"}, &mockToolCallback{}); err != nil {
+					t.Fatalf("Register: %v", err)
+				}
+			},
+			hooks: func(t *testing.T, state *hookTestState) ToolGeneratorHooks {
+				return ToolGeneratorHooks{
+					AfterToolCall: func(ctx context.Context, dialog *Dialog, call ToolCallRequest, result *Message) error {
+						if call.Name != "echo" || len(*dialog) != 2 {
+							t.Fatalf("unexpected hook state: call=%+v dialogLen=%d", call, len(*dialog))
+						}
+						*result = ToolResultMessage(call.ID, TextBlock("rewritten"))
+						return nil
+					},
+				}
+			},
+			validateDialog: func(t *testing.T, dialog Dialog, state *hookTestState) {
+				if got := dialog[2].Blocks[0].Content.String(); got != "rewritten" {
+					t.Fatalf("tool result = %q, want rewritten", got)
+				}
+			},
+		},
 	}
 
-	toolGen := &ToolGenerator{G: mockGen}
-	if err := toolGen.Register(Tool{Name: "echo"}, &mockToolCallback{}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	toolGen.Hooks.BeforeGenerate = func(ctx context.Context, dialog *Dialog, opts *GenOpts) error {
-		opts.ToolChoice = ToolChoiceAuto
-		*dialog = append(*dialog, Message{Role: User, Blocks: []Block{TextBlock(fmt.Sprintf("hooked-%d", callCount+1))}})
-		return nil
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := &hookTestState{}
+			mockGen := newMockToolCapableGenerator()
+			if tt.setupGenerator != nil {
+				tt.setupGenerator(t, mockGen, state)
+			}
 
-	_, err := toolGen.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("start")}}}, nil)
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	if callCount != 2 {
-		t.Fatalf("generator calls = %d, want 2", callCount)
+			toolGen := &ToolGenerator{G: mockGen}
+			if tt.hooks != nil {
+				toolGen.Hooks = tt.hooks(t, state)
+			}
+			if tt.setupTools != nil {
+				tt.setupTools(t, toolGen, state)
+			}
+
+			dialog, err := toolGen.Generate(context.Background(), toolHookTestUserDialog("start"), nil)
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			if tt.validateDialog != nil {
+				tt.validateDialog(t, dialog, state)
+			}
+		})
 	}
 }
 
-func TestToolGenerator_Hooks_AfterGenerateMutatesResponse(t *testing.T) {
-	mockGen := newMockToolCapableGenerator()
-	mockGen.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
-		return Response{
-			Candidates:   []Message{{Role: Assistant, Blocks: []Block{TextBlock("original")}}},
-			FinishReason: EndTurn,
-		}, nil
+func TestToolGenerator_Hooks_Errors(t *testing.T) {
+	tests := []struct {
+		name     string
+		hookName string
+		hooks    func(error) ToolGeneratorHooks
+	}{
+		{
+			name:     "before generate",
+			hookName: "BeforeGenerate",
+			hooks: func(err error) ToolGeneratorHooks {
+				return ToolGeneratorHooks{
+					BeforeGenerate: func(ctx context.Context, dialog *Dialog, opts *GenOpts) error {
+						return err
+					},
+				}
+			},
+		},
+		{
+			name:     "after generate",
+			hookName: "AfterGenerate",
+			hooks: func(err error) ToolGeneratorHooks {
+				return ToolGeneratorHooks{
+					AfterGenerate: func(ctx context.Context, dialog *Dialog, opts *GenOpts, resp *Response) error {
+						return err
+					},
+				}
+			},
+		},
+		{
+			name:     "before tool call",
+			hookName: "BeforeToolCall",
+			hooks: func(err error) ToolGeneratorHooks {
+				return ToolGeneratorHooks{
+					BeforeToolCall: func(ctx context.Context, dialog *Dialog, call *ToolCallRequest) error {
+						return err
+					},
+				}
+			},
+		},
+		{
+			name:     "after tool call",
+			hookName: "AfterToolCall",
+			hooks: func(err error) ToolGeneratorHooks {
+				return ToolGeneratorHooks{
+					AfterToolCall: func(ctx context.Context, dialog *Dialog, call ToolCallRequest, result *Message) error {
+						return err
+					},
+				}
+			},
+		},
 	}
 
-	toolGen := &ToolGenerator{G: mockGen}
-	toolGen.Hooks.AfterGenerate = func(ctx context.Context, dialog *Dialog, opts *GenOpts, resp *Response) error {
-		resp.Candidates[0].Blocks[0] = TextBlock("mutated")
-		return nil
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hookErr := errors.New("boom")
+			mockGen := newMockToolCapableGenerator()
+			callCount := 0
+			mockGen.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+				callCount++
+				if callCount == 1 {
+					return toolHookTestToolUseResponse("call_1", "echo", `{}`), nil
+				}
+				return toolHookTestFinalResponse("done"), nil
+			}
 
-	dialog, err := toolGen.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("start")}}}, nil)
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	if got := dialog[len(dialog)-1].Blocks[0].Content.String(); got != "mutated" {
-		t.Fatalf("final content = %q, want mutated", got)
+			toolGen := &ToolGenerator{G: mockGen, Hooks: tt.hooks(hookErr)}
+			if err := toolGen.Register(Tool{Name: "echo"}, &mockToolCallback{}); err != nil {
+				t.Fatalf("Register: %v", err)
+			}
+
+			_, err := toolGen.Generate(context.Background(), toolHookTestUserDialog("start"), nil)
+			if err == nil {
+				t.Fatal("Generate error = nil, want hook error")
+			}
+			var wrapped *ToolHookErr
+			if !errors.As(err, &wrapped) {
+				t.Fatalf("error %T does not wrap ToolHookErr", err)
+			}
+			if wrapped.Hook != tt.hookName || !errors.Is(err, hookErr) {
+				t.Fatalf("wrapped error = %#v, want %s wrapping hookErr", wrapped, tt.hookName)
+			}
+		})
 	}
 }
 
-func TestToolGenerator_Hooks_BeforeToolCallMutatesRequest(t *testing.T) {
-	mockGen := newMockToolCapableGenerator()
-	callCount := 0
-	mockGen.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
-		callCount++
-		if callCount == 1 {
-			return Response{
-				Candidates:   []Message{{Role: Assistant, Blocks: []Block{{ID: "call_1", BlockType: ToolCall, ModalityType: Text, Content: Str(`{"name":"alias","parameters":{"value":"old"}}`)}}}},
-				FinishReason: ToolUse,
-			}, nil
-		}
-		return Response{Candidates: []Message{{Role: Assistant, Blocks: []Block{TextBlock("done")}}}, FinishReason: EndTurn}, nil
-	}
+func toolHookTestUserDialog(content string) Dialog {
+	return Dialog{{Role: User, Blocks: []Block{TextBlock(content)}}}
+}
 
-	toolGen := &ToolGenerator{G: mockGen}
-	if err := toolGen.Register(Tool{Name: "echo"}, ToolCallBackFunc[struct {
-		Value string `json:"value"`
-	}](func(ctx context.Context, params struct {
-		Value string `json:"value"`
-	}) (string, error) {
-		if params.Value != "new" {
-			t.Fatalf("callback value = %q, want new", params.Value)
-		}
-		return params.Value, nil
-	})); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	toolGen.Hooks.BeforeToolCall = func(ctx context.Context, dialog *Dialog, call *ToolCallRequest) error {
-		if call.Name != "alias" || call.Index != 0 || call.Total != 1 {
-			t.Fatalf("unexpected call metadata: %+v", call)
-		}
-		call.Name = "echo"
-		call.ParametersJSON = json.RawMessage(`{"value":"new"}`)
-		return nil
-	}
-
-	dialog, err := toolGen.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("start")}}}, nil)
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	if got := dialog[2].Blocks[0].Content.String(); got != "new" {
-		t.Fatalf("tool result = %q, want new", got)
+func toolHookTestFinalResponse(content string) Response {
+	return Response{
+		Candidates:   []Message{{Role: Assistant, Blocks: []Block{TextBlock(content)}}},
+		FinishReason: EndTurn,
 	}
 }
 
-func TestToolGenerator_Hooks_AfterToolCallMutatesResult(t *testing.T) {
-	mockGen := newMockToolCapableGenerator()
-	callCount := 0
-	mockGen.generateFunc = func(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
-		callCount++
-		if callCount == 1 {
-			return Response{
-				Candidates:   []Message{{Role: Assistant, Blocks: []Block{{ID: "call_1", BlockType: ToolCall, ModalityType: Text, Content: Str(`{"name":"echo","parameters":{}}`)}}}},
-				FinishReason: ToolUse,
-			}, nil
-		}
-		return Response{Candidates: []Message{{Role: Assistant, Blocks: []Block{TextBlock("done")}}}, FinishReason: EndTurn}, nil
-	}
-
-	toolGen := &ToolGenerator{G: mockGen}
-	if err := toolGen.Register(Tool{Name: "echo"}, &mockToolCallback{}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	toolGen.Hooks.AfterToolCall = func(ctx context.Context, dialog *Dialog, call ToolCallRequest, result *Message) error {
-		if call.Name != "echo" || len(*dialog) != 2 {
-			t.Fatalf("unexpected hook state: call=%+v dialogLen=%d", call, len(*dialog))
-		}
-		*result = ToolResultMessage(call.ID, TextBlock("rewritten"))
-		return nil
-	}
-
-	dialog, err := toolGen.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("start")}}}, nil)
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	if got := dialog[2].Blocks[0].Content.String(); got != "rewritten" {
-		t.Fatalf("tool result = %q, want rewritten", got)
-	}
-}
-
-func TestToolGenerator_Hooks_ErrorIsWrapped(t *testing.T) {
-	mockGen := newMockToolCapableGenerator()
-	toolGen := &ToolGenerator{G: mockGen}
-	hookErr := errors.New("boom")
-	toolGen.Hooks.BeforeGenerate = func(ctx context.Context, dialog *Dialog, opts *GenOpts) error {
-		return hookErr
-	}
-
-	_, err := toolGen.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("start")}}}, nil)
-	if err == nil {
-		t.Fatal("Generate error = nil, want hook error")
-	}
-	var wrapped *ToolHookErr
-	if !errors.As(err, &wrapped) {
-		t.Fatalf("error %T does not wrap ToolHookErr", err)
-	}
-	if wrapped.Hook != "BeforeGenerate" || !errors.Is(err, hookErr) {
-		t.Fatalf("wrapped error = %#v, want BeforeGenerate wrapping hookErr", wrapped)
+func toolHookTestToolUseResponse(id, name, params string) Response {
+	return Response{
+		Candidates: []Message{{
+			Role: Assistant,
+			Blocks: []Block{{
+				ID:           id,
+				BlockType:    ToolCall,
+				ModalityType: Text,
+				Content:      Str(fmt.Sprintf(`{"name":%q,"parameters":%s}`, name, params)),
+			}},
+		}},
+		FinishReason: ToolUse,
 	}
 }
