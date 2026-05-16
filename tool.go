@@ -308,9 +308,14 @@ type ToolGenerator struct {
 }
 
 // ToolGeneratorHooks contains optional lifecycle hooks for observing and mutating
-// ToolGenerator execution. Hooks are called synchronously and should respect ctx
-// cancellation. Returning an error stops generation and returns the partial dialog
-// with a [ToolHookErr].
+// ToolGenerator execution. These hooks customize agent behavior inside the
+// tool-use loop, such as context compaction, tool-call guardrails, observability,
+// and tool-result normalization. Cross-cutting resiliency patterns such as
+// retries, fallbacks, and hedging should be implemented as Generator wrappers
+// around the underlying Generator instead.
+//
+// Hooks are called synchronously and should respect ctx cancellation. Returning
+// an error stops generation and returns the partial dialog with a [ToolHookErr].
 type ToolGeneratorHooks struct {
 	// BeforeGenerate runs before each underlying generator call. It can mutate the
 	// working dialog and generation options for the next request.
@@ -399,8 +404,11 @@ func (t *ToolGenerator) Register(tool Tool, callback ToolCallback) error {
 //
 // Lifecycle hooks on [ToolGenerator.Hooks] can observe and mutate execution at
 // four points: before each generation, after each generation, before each tool
-// callback, and after each tool callback. If a hook returns an error, Generate
-// returns the partial dialog and wraps the error in [ToolHookErr].
+// callback, and after each tool callback. These hooks are for customizing the
+// agent loop itself, not for resiliency policies; implement retries, fallbacks,
+// hedging, and similar cross-cutting behavior as Generator wrappers around the
+// underlying generator. If a hook returns an error, Generate returns the partial
+// dialog and wraps the error in [ToolHookErr].
 //
 // Error Handling:
 // If an error occurs during the looped generation process (e.g., tool callback

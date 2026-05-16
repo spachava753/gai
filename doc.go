@@ -541,6 +541,12 @@
 // callbacks when tools are called, managing the conversation flow during tool use, and
 // handling parallel tool calls. Lifecycle hooks can observe and mutate the working dialog,
 // generation options, tool call parameters, and tool results while execution is in progress.
+// Use these hooks to customize agent behavior inside the tool-use loop, such as context
+// compaction, guardrails, observability, and tool-result normalization.
+//
+// Resiliency patterns such as retries, fallbacks, hedging, and provider failover should be
+// implemented as Generator wrappers around the underlying generator. Keep ToolGenerator hooks
+// focused on agent-state and tool-execution policy rather than transport or provider resilience.
 //
 //	type ToolGenerator struct {
 //		G     ToolCapableGenerator
@@ -566,6 +572,41 @@
 //		ToolChoice:  gai.ToolChoiceAuto,
 //		Temperature: Ptr(0.7),
 //	})
+//
+// Hook examples:
+//
+//	// Compact or truncate context before each model call.
+//	toolGen.Hooks.BeforeGenerate = func(ctx context.Context, dialog *gai.Dialog, opts *gai.GenOpts) error {
+//		if len(*dialog) > 40 {
+//			prefix := append(gai.Dialog{}, (*dialog)[:4]...)
+//			suffix := append(gai.Dialog{}, (*dialog)[len(*dialog)-12:]...)
+//			*dialog = append(prefix, suffix...)
+//		}
+//		opts.ToolChoice = gai.ToolChoiceAuto
+//		return nil
+//	}
+//
+//	// Enforce tool permissions and normalize parameters before callback execution.
+//	toolGen.Hooks.BeforeToolCall = func(ctx context.Context, dialog *gai.Dialog, call *gai.ToolCallRequest) error {
+//		if call.Name == "write_file" && !permissions.CanWrite(call.ParametersJSON) {
+//			return fmt.Errorf("write_file denied")
+//		}
+//		return nil
+//	}
+//
+//	// Log tool-result errors and redact output before it enters the next model call.
+//	toolGen.Hooks.AfterToolCall = func(ctx context.Context, dialog *gai.Dialog, call gai.ToolCallRequest, result *gai.Message) error {
+//		if result.ToolResultError {
+//			logger.Printf("tool %s returned an error", call.Name)
+//		}
+//		*result = redactSensitiveToolResult(*result)
+//		return nil
+//	}
+//
+//	// Persist every provider response before ToolGenerator interprets it.
+//	toolGen.Hooks.AfterGenerate = func(ctx context.Context, dialog *gai.Dialog, opts *gai.GenOpts, resp *gai.Response) error {
+//		return store.SaveGeneration(ctx, *dialog, *opts, *resp)
+//	}
 //
 // Fallback Generator: The FallbackGenerator provides automatic fallback between different providers.
 // It automatically tries each generator in sequence, falls back based on configurable conditions,
@@ -596,36 +637,6 @@
 //			},
 //		},
 //	)
-//
-// # Model Context Protocol (MCP)
-//
-// The package includes MCP (Model Context Protocol) client support for connecting to
-// external tools and data sources. The MCP client allows you to connect to MCP servers
-// via stdio, HTTP, or other transports and use their tools within the gai framework.
-//
-// Note: This MCP implementation does not support JSON-RPC batch requests/responses.
-// All messages are sent and received individually for simplicity and forward compatibility
-// with planned protocol changes.
-//
-// Example MCP usage:
-//
-//	import "github.com/spachava753/gai/mcp"
-//
-//	// Create MCP client
-//	transport := mcp.NewStdio(mcp.StdioConfig{
-//		Command: "python",
-//		Args:    []string{"mcp_server.py"},
-//	})
-//
-//	client, err := mcp.NewClient(ctx, transport, mcp.ClientInfo{
-//		Name:    "gai-client",
-//		Version: "1.0.0",
-//	}, mcp.ClientCapabilities{}, mcp.DefaultOptions())
-//
-//	// Register MCP tools with a tool generator
-//	err = mcp.RegisterMCPToolsWithGenerator(ctx, client, toolGen)
-//
-// For more information and examples, example files in the repository.
 //
 // # License
 //
