@@ -302,7 +302,55 @@ type ToolCapableGenerator interface {
 type ToolGenerator struct {
 	G ToolCapableGenerator
 
+	Hooks ToolGeneratorHooks
+
 	toolCallbacks map[string]ToolCallback
+}
+
+// ToolGeneratorHooks contains optional lifecycle hooks for observing and mutating
+// ToolGenerator execution. Hooks are called synchronously and should respect ctx
+// cancellation. Returning an error stops generation and returns the partial dialog
+// with a [ToolHookErr].
+type ToolGeneratorHooks struct {
+	// BeforeGenerate runs before each underlying generator call. It can mutate the
+	// working dialog and generation options for the next request.
+	BeforeGenerate func(ctx context.Context, dialog *Dialog, opts *GenOpts) error
+
+	// AfterGenerate runs after the underlying generator returns and before the
+	// response is validated, interpreted, or appended to the dialog.
+	AfterGenerate func(ctx context.Context, dialog *Dialog, opts *GenOpts, resp *Response) error
+
+	// BeforeToolCall runs after a tool call block is parsed and before callback
+	// lookup/execution. It can rewrite the tool name or raw parameters.
+	BeforeToolCall func(ctx context.Context, dialog *Dialog, call *ToolCallRequest) error
+
+	// AfterToolCall runs after a callback returns and before the result is
+	// validated or appended to the dialog.
+	AfterToolCall func(ctx context.Context, dialog *Dialog, call ToolCallRequest, result *Message) error
+}
+
+// ToolHookErr wraps errors returned by ToolGenerator lifecycle hooks.
+type ToolHookErr struct {
+	Hook string
+	Err  error
+}
+
+func (e *ToolHookErr) Error() string {
+	return fmt.Sprintf("tool generator hook %q failed: %v", e.Hook, e.Err)
+}
+
+func (e *ToolHookErr) Unwrap() error {
+	return e.Err
+}
+
+// ToolCallRequest represents a parsed tool invocation before callback execution.
+type ToolCallRequest struct {
+	ID             string          `json:"id" yaml:"id"`
+	Name           string          `json:"name" yaml:"name"`
+	ParametersJSON json.RawMessage `json:"parameters_json" yaml:"parameters_json"`
+	Block          Block           `json:"block" yaml:"block"`
+	Index          int             `json:"index" yaml:"index"`
+	Total          int             `json:"total" yaml:"total"`
 }
 
 // Register adds a tool to the ToolGenerator's available tools with an optional callback.
@@ -339,19 +387,20 @@ func (t *ToolGenerator) Register(tool Tool, callback ToolCallback) error {
 	return nil
 }
 
-// GenOptsGenerator is a function that takes a dialog and returns generation options.
-// This allows customizing the options based on the current state of the dialog.
-type GenOptsGenerator func(dialog Dialog) *GenOpts
-
 // Generate executes the given dialog with the underlying ToolCapableGenerator,
 // handling any tool calls by executing their registered callbacks and feeding
 // the results back into the generator. It returns the complete dialog including
 // all intermediate tool calls, tool results, and the final response.
 //
-// The optsGen parameter is a function that generates generation options based on
-// the current state of the dialog. This allows customizing options like temperature,
-// tool choice, or modalities based on the conversation context. If optsGen is nil,
-// a default function that returns nil options will be used.
+// The opts parameter provides the initial generation options. Generate copies the
+// value before use, so lifecycle hooks can mutate options without modifying the
+// caller's struct. When opts is nil, hooks and the underlying generator receive a
+// zero-value GenOpts.
+//
+// Lifecycle hooks on [ToolGenerator.Hooks] can observe and mutate execution at
+// four points: before each generation, after each generation, before each tool
+// callback, and after each tool callback. If a hook returns an error, Generate
+// returns the partial dialog and wraps the error in [ToolHookErr].
 //
 // Error Handling:
 // If an error occurs during the looped generation process (e.g., tool callback
@@ -360,36 +409,6 @@ type GenOptsGenerator func(dialog Dialog) *GenOpts
 // all successfully processed messages, tool calls, and tool results that occurred
 // before the error, allowing callers to inspect the conversation state when the
 // error occurred.
-//
-// Example usage with dynamic options:
-//
-//	dialog, err := toolGen.Generate(ctx, dialog, func(d Dialog) *GenOpts {
-//	    // Increase temperature after each tool use
-//	    toolUses := 0
-//	    for _, msg := range d {
-//	        if msg.Role == ToolResult {
-//	            toolUses++
-//	        }
-//	    }
-//	    return &GenOpts{
-//	        Temperature: 0.2 * float64(toolUses),
-//	        ToolChoice: ToolChoiceAuto,
-//	    }
-//	})
-//
-// Example usage with static options:
-//
-//	// Always use the same options
-//	dialog, err := toolGen.Generate(ctx, dialog, func(d Dialog) *GenOpts {
-//	    return &GenOpts{
-//	        ToolChoice: ToolChoiceToolsRequired,
-//	    }
-//	})
-//
-// Example usage with no options:
-//
-//	// Use default options (nil)
-//	dialog, err := toolGen.Generate(ctx, dialog, nil)
 //
 // The returned dialog will contain:
 // 1. The original input dialog
@@ -406,130 +425,155 @@ type GenOptsGenerator func(dialog Dialog) *GenOpts
 //	[3] Assistant: Tool call to get_weather with location="New York"
 //	[4] Assistant: Tool result "72°F and sunny"
 //	[5] Assistant: "The weather in New York is 72°F and sunny"
-func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, optsGen GenOptsGenerator) (Dialog, error) {
-	// Start with a copy of the input dialog
+func (t *ToolGenerator) Generate(ctx context.Context, dialog Dialog, opts *GenOpts) (Dialog, error) {
+	// Start with a copy of the input dialog.
 	currentDialog := make(Dialog, len(dialog))
 	copy(currentDialog, dialog)
 
-	// If no options generator is provided, use a default one that returns nil
-	if optsGen == nil {
-		optsGen = func(dialog Dialog) *GenOpts {
-			return nil
-		}
+	currentOpts := GenOpts{}
+	if opts != nil {
+		currentOpts = *opts
 	}
 
-	// Get the options for the current dialog state
-	options := optsGen(currentDialog)
-
-	// Validate the tool choice if provided
-	if options != nil && options.ToolChoice != "" && options.ToolChoice != ToolChoiceAuto && options.ToolChoice != ToolChoiceToolsRequired {
-		// ToolChoice specifies a specific tool; verify it exists
-		if _, exists := t.toolCallbacks[options.ToolChoice]; !exists {
-			return nil, InvalidToolChoiceErr(fmt.Sprintf("tool '%s' not found", options.ToolChoice))
-		}
+	wrapHookErr := func(hook string, err error) error {
+		return &ToolHookErr{Hook: hook, Err: err}
 	}
 
-	// Loop to handle sequential tool calls
+	// Loop to handle sequential tool calls.
 	for {
-		// Check for context cancellation before generating a response
+		// Check for context cancellation before generating a response.
 		select {
 		case <-ctx.Done():
 			return currentDialog, ctx.Err()
 		default:
 		}
 
-		// Call the underlying generator with the current dialog
-		resp, err := t.G.Generate(ctx, currentDialog, options)
+		if t.Hooks.BeforeGenerate != nil {
+			if err := t.Hooks.BeforeGenerate(ctx, &currentDialog, &currentOpts); err != nil {
+				return currentDialog, wrapHookErr("BeforeGenerate", err)
+			}
+		}
+
+		// Validate the tool choice after hooks have had a chance to mutate options.
+		if currentOpts.ToolChoice != "" && currentOpts.ToolChoice != ToolChoiceAuto && currentOpts.ToolChoice != ToolChoiceToolsRequired {
+			if _, exists := t.toolCallbacks[currentOpts.ToolChoice]; !exists {
+				return currentDialog, InvalidToolChoiceErr(fmt.Sprintf("tool '%s' not found", currentOpts.ToolChoice))
+			}
+		}
+
+		// Call the underlying generator with the current dialog and options.
+		resp, err := t.G.Generate(ctx, currentDialog, &currentOpts)
 		if err != nil {
 			return currentDialog, err
 		}
 
-		// Verify the response has exactly one candidate
+		if t.Hooks.AfterGenerate != nil {
+			if err := t.Hooks.AfterGenerate(ctx, &currentDialog, &currentOpts, &resp); err != nil {
+				return currentDialog, wrapHookErr("AfterGenerate", err)
+			}
+		}
+
+		// Verify the response has exactly one candidate.
 		if len(resp.Candidates) != 1 {
 			return currentDialog, fmt.Errorf("expected exactly one candidate in response, got: %d", len(resp.Candidates))
 		}
 
-		// Verify the response has an Assistant role
+		// Verify the response has an Assistant role.
 		if resp.Candidates[0].Role != Assistant {
 			return currentDialog, fmt.Errorf("expected assistant role in response, got: %v", resp.Candidates[0].Role)
 		}
 
-		// Get the candidate message
+		// Get the candidate message.
 		candidate := resp.Candidates[0]
 
-		// If this isn't a tool call, append the message and return the dialog
+		// If this isn't a tool call, append the message and return the dialog.
 		if resp.FinishReason != ToolUse {
 			currentDialog = append(currentDialog, candidate)
 			return currentDialog, nil
 		}
 
-		// Look for tool calls
+		// Look for tool calls.
 		var toolCallBlocks []Block
-
-		// First pass: collect all tool call blocks
 		for _, block := range candidate.Blocks {
 			if block.BlockType == ToolCall {
 				toolCallBlocks = append(toolCallBlocks, block)
 			}
 		}
 
-		// Append the tool call message to the dialog
+		// Append the tool call message to the dialog.
 		currentDialog = append(currentDialog, candidate)
 
-		// If no tool calls, return
+		// If no tool calls, return.
 		if len(toolCallBlocks) == 0 {
 			return currentDialog, nil
 		}
 
-		// Process tool calls
-		for _, block := range toolCallBlocks {
-			// Parse tool call JSON with a single unmarshaling operation
+		// Process tool calls.
+		for i, block := range toolCallBlocks {
 			var toolCallData struct {
 				Name       string          `json:"name"`
 				Parameters json.RawMessage `json:"parameters"`
 			}
 
+			if block.Content == nil {
+				return currentDialog, fmt.Errorf("tool call block %q has nil content", block.ID)
+			}
 			if err := json.Unmarshal([]byte(block.Content.String()), &toolCallData); err != nil {
 				return currentDialog, fmt.Errorf("invalid tool call JSON: %w", err)
 			}
 
-			if toolCallData.Name == "" {
-				return currentDialog, fmt.Errorf("missing tool name")
-			}
-
-			// Check if the tool exists
-			callback, exists := t.toolCallbacks[toolCallData.Name]
-			if !exists {
-				return currentDialog, fmt.Errorf("tool '%s' not found", toolCallData.Name)
-			}
-
-			// If the callback is nil, this indicates the tool is meant to terminate execution
-			// So we return the current dialog with what we have so far
-			if callback == nil {
-				return currentDialog, nil
-			}
-
-			// Set default empty JSON object if parameters is null or not provided
 			parametersJSON := toolCallData.Parameters
 			if len(parametersJSON) == 0 {
 				parametersJSON = json.RawMessage("{}")
 			}
 
-			// Execute the callback with the raw parameters JSON
-			resultMessage, callErr := callback.Call(ctx, parametersJSON, block.ID)
+			call := ToolCallRequest{
+				ID:             block.ID,
+				Name:           toolCallData.Name,
+				ParametersJSON: parametersJSON,
+				Block:          block,
+				Index:          i,
+				Total:          len(toolCallBlocks),
+			}
 
-			// Handle callback execution errors
+			if t.Hooks.BeforeToolCall != nil {
+				if err := t.Hooks.BeforeToolCall(ctx, &currentDialog, &call); err != nil {
+					return currentDialog, wrapHookErr("BeforeToolCall", err)
+				}
+			}
+
+			if call.Name == "" {
+				return currentDialog, fmt.Errorf("missing tool name")
+			}
+			if len(call.ParametersJSON) == 0 {
+				call.ParametersJSON = json.RawMessage("{}")
+			}
+
+			callback, exists := t.toolCallbacks[call.Name]
+			if !exists {
+				return currentDialog, fmt.Errorf("tool '%s' not found", call.Name)
+			}
+
+			// A nil callback marks an interrupt/terminal tool.
+			if callback == nil {
+				return currentDialog, nil
+			}
+
+			resultMessage, callErr := callback.Call(ctx, call.ParametersJSON, call.ID)
 			if callErr != nil {
-				// Callback failed to execute - propagate the error up
 				return currentDialog, callErr
 			}
 
-			// Validate and sanitize the tool result message
-			if err := validateToolResultMessage(&resultMessage, block.ID); err != nil {
+			if t.Hooks.AfterToolCall != nil {
+				if err := t.Hooks.AfterToolCall(ctx, &currentDialog, call, &resultMessage); err != nil {
+					return currentDialog, wrapHookErr("AfterToolCall", err)
+				}
+			}
+
+			if err := validateToolResultMessage(&resultMessage, call.ID); err != nil {
 				return currentDialog, fmt.Errorf("invalid tool result message: %w", err)
 			}
 
-			// Append the validated result message to the dialog
 			currentDialog = append(currentDialog, resultMessage)
 		}
 	}

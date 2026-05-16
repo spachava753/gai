@@ -242,10 +242,8 @@
 //		}
 //
 //		// Generate a response with tool usage
-//		completeDialog, err := toolGen.Generate(context.Background(), dialog, func(d gai.Dialog) *gai.GenOpts {
-//			return &gai.GenOpts{
-//				ToolChoice: gai.ToolChoiceAuto,
-//			}
+//		completeDialog, err := toolGen.Generate(context.Background(), dialog, &gai.GenOpts{
+//			ToolChoice: gai.ToolChoiceAuto,
 //		})
 //		if err != nil {
 //			fmt.Printf("Error: %v\n", err)
@@ -541,11 +539,12 @@
 // Tool Generator: The ToolGenerator provides advanced functionality for working with tools.
 // It automatically handles registering tools with the underlying generator, executing tool
 // callbacks when tools are called, managing the conversation flow during tool use, and
-// handling parallel tool calls.
+// handling parallel tool calls. Lifecycle hooks can observe and mutate the working dialog,
+// generation options, tool call parameters, and tool results while execution is in progress.
 //
 //	type ToolGenerator struct {
-//		G             ToolCapableGenerator
-//		toolCallbacks map[string]ToolCallback
+//		G     ToolCapableGenerator
+//		Hooks ToolGeneratorHooks
 //	}
 //
 // Example:
@@ -563,11 +562,9 @@
 //	toolGen.Register(stockPriceTool, &StockAPI{})
 //
 //	// Generate with tool support
-//	completeDialog, err := toolGen.Generate(ctx, dialog, func(d gai.Dialog) *gai.GenOpts {
-//		return &gai.GenOpts{
-//			ToolChoice: gai.ToolChoiceAuto,
-//			Temperature: Ptr(0.7),
-//		}
+//	completeDialog, err := toolGen.Generate(ctx, dialog, &gai.GenOpts{
+//		ToolChoice:  gai.ToolChoiceAuto,
+//		Temperature: Ptr(0.7),
 //	})
 //
 // Fallback Generator: The FallbackGenerator provides automatic fallback between different providers.

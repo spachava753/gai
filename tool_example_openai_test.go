@@ -120,7 +120,7 @@ Only output the price, like
 	}
 
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}}}
-	newDialog, err := tg.Generate(context.Background(), dialog, func(d Dialog) *GenOpts { return nil })
+	newDialog, err := tg.Generate(context.Background(), dialog, nil)
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
@@ -171,7 +171,7 @@ Only output the price, like
 	}
 
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}}}
-	newDialog, err := tg.Generate(context.Background(), dialog, func(d Dialog) *GenOpts { return nil })
+	newDialog, err := tg.Generate(context.Background(), dialog, nil)
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
