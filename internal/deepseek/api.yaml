@@ -1,0 +1,705 @@
+openapi: 3.0.1
+info:
+  title: DeepSeek API
+  description: DeepSeek API for chat completions. OpenAI-compatible interface.
+  version: 1.0.0
+servers:
+  - url: https://api.deepseek.com
+    description: Production server
+security:
+  - bearerAuth: []
+paths:
+  /chat/completions:
+    post:
+      description: >-
+        Creates a model response for the given chat conversation. Supports
+        thinking mode, tool calls, JSON output, and streaming.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+            examples:
+              Basic:
+                value:
+                  model: deepseek-v4-pro
+                  messages:
+                    - role: system
+                      content: You are a helpful assistant.
+                    - role: user
+                      content: Hello!
+                  temperature: 0.7
+                  stream: false
+              ThinkingMode:
+                value:
+                  model: deepseek-v4-pro
+                  messages:
+                    - role: user
+                      content: Solve this complex math problem step by step.
+                  thinking:
+                    type: enabled
+                    reasoning_effort: high
+                  stream: false
+              ToolCall:
+                value:
+                  model: deepseek-v4-flash
+                  messages:
+                    - role: user
+                      content: What is the weather in Hangzhou?
+                  tools:
+                    - type: function
+                      function:
+                        name: get_weather
+                        description: Get weather for a location.
+                        parameters:
+                          type: object
+                          properties:
+                            location:
+                              type: string
+                              description: City name.
+                          required:
+                            - location
+                  tool_choice: auto
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        Authenticate with Bearer <your DeepSeek API key>. Get keys at
+        https://platform.deepseek.com/api_keys.
+  schemas:
+    ChatCompletionRequest:
+      required:
+        - model
+        - messages
+      type: object
+      properties:
+        model:
+          type: string
+          description: >-
+            ID of the model to use. deepseek-v4-flash and deepseek-v4-pro are
+            the current models. deepseek-chat and deepseek-reasoner are legacy
+            aliases mapped to deepseek-v4-flash non-thinking and thinking modes
+            respectively.
+          enum:
+            - deepseek-v4-flash
+            - deepseek-v4-pro
+            - deepseek-chat
+            - deepseek-reasoner
+          example: deepseek-v4-pro
+          default: deepseek-v4-pro
+        messages:
+          type: array
+          description: >-
+            A list of messages comprising the conversation so far. Must include
+            at least one message.
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Message"
+        temperature:
+          type: number
+          description: >-
+            Sampling temperature between 0 and 2. Higher values like 0.8 make
+            output more random; lower values like 0.2 make it more focused.
+            Has no effect in thinking mode.
+          minimum: 0
+          maximum: 2
+          default: 1
+          example: 0.7
+        top_p:
+          type: number
+          description: >-
+            Nucleus sampling parameter between 0 and 1. 0.1 means only tokens
+            comprising the top 10% probability mass are considered.
+            Has no effect in thinking mode.
+          minimum: 0
+          maximum: 1
+          default: 1
+          example: 0.9
+        max_tokens:
+          type: integer
+          description: >-
+            Maximum number of tokens to generate. The total length of input
+            tokens and generated tokens is limited by the model's context
+            length. Defaults to the maximum supported output of 384K tokens.
+          minimum: 1
+          maximum: 384000
+          default: 384000
+          example: 384000
+        stream:
+          type: boolean
+          description: >-
+            If set, partial message deltas will be sent as data-only
+            server-sent events (SSE). Stream is terminated by a
+            data: [DONE] message.
+          default: false
+        stream_options:
+          type: object
+          description: Options for streaming responses.
+          properties:
+            include_usage:
+              type: boolean
+              description: >-
+                If set, an additional chunk will be streamed before the
+                data: [DONE] message. The usage field on this chunk shows
+                the token usage statistics for the entire request, and the
+                choices field will always be an empty array. All other
+                chunks will also include a usage field, but with a null
+                value.
+              default: true
+        stop:
+          description: >-
+            Up to 16 sequences where the API will stop generating further
+            tokens.
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+              maxItems: 16
+        user_id:
+          type: string
+          nullable: true
+          description: >-
+            A custom user_id. Allowed character set is [a-zA-Z0-9\-_], with
+            a maximum length of 512. Do not include user privacy information
+            in the user_id. user_id can be used to distinguish user identities
+            for content safety review, KVCache isolation for privacy
+            management, and scheduling isolation.
+          maxLength: 512
+          pattern: "^[a-zA-Z0-9\\-_]*$"
+        frequency_penalty:
+          type: number
+          deprecated: true
+          description: >-
+            This parameter is no longer supported. It will not take effect
+            if you pass it to the API.
+          minimum: -2
+          maximum: 2
+          default: 0
+          example: 0
+        presence_penalty:
+          type: number
+          deprecated: true
+          description: >-
+            This parameter is no longer supported. It will not take effect
+            if you pass it to the API.
+          minimum: -2
+          maximum: 2
+          default: 0
+          example: 0
+        response_format:
+          type: object
+          description: >-
+            Specifies the format that the model must output. Setting to
+            { "type": "json_object" } enables JSON Output. When using JSON
+            mode, you must also instruct the model to produce JSON via a
+            system or user message.
+          properties:
+            type:
+              type: string
+              description: Response format type.
+              enum:
+                - text
+                - json_object
+              default: text
+          required:
+            - type
+        tools:
+          type: array
+          description: >-
+            A list of tools the model may call. Currently, only functions are
+            supported as a tool. Use this to provide a list of functions the
+            model may generate JSON inputs for. A max of 128 functions are
+            supported.
+          maxItems: 128
+          items:
+            $ref: "#/components/schemas/FunctionTool"
+        tool_choice:
+          description: >-
+            Controls which tool is called by the model. none means the model
+            will not call any tool. auto means the model can pick between
+            generating a message or calling a tool. required means the model
+            must call one or more tools.
+          oneOf:
+            - type: string
+              enum:
+                - none
+                - auto
+                - required
+              description: Tool choice mode.
+            - $ref: "#/components/schemas/ToolChoiceObject"
+        logprobs:
+          type: boolean
+          description: >-
+            Whether to return log probabilities of output tokens.
+          default: false
+        top_logprobs:
+          type: integer
+          description: >-
+            Number of most likely tokens to return at each token position
+            (0-20). Requires logprobs to be true.
+          minimum: 0
+          maximum: 20
+        thinking:
+          type: object
+          description: Controls the switch between thinking and non-thinking mode.
+          properties:
+            type:
+              type: string
+              description: >-
+                If set to enabled, then use thinking mode. If set to disabled,
+                then use non-thinking model.
+              enum:
+                - enabled
+                - disabled
+              default: enabled
+        reasoning_effort:
+          type: string
+          description: >-
+            Controls the reasoning effort of the model. The default effort is
+            high for regular requests; for some complex agent requests (such as
+            Claude Code, OpenCode), effort is automatically set to max. For
+            compatibility, low and medium are mapped to high, and xhigh is
+            mapped to max.
+          enum:
+            - high
+            - max
+            - low
+            - medium
+            - xhigh
+          default: high
+    Message:
+      oneOf:
+        - $ref: "#/components/schemas/SystemMessage"
+        - $ref: "#/components/schemas/UserMessage"
+        - $ref: "#/components/schemas/AssistantMessage"
+        - $ref: "#/components/schemas/ToolMessage"
+    SystemMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - system
+          description: Role of the message author.
+        content:
+          type: string
+          description: The contents of the system message.
+        name:
+          type: string
+          description: >-
+            Optional name for the participant. Helps the model
+            differentiate between participants of the same role.
+      required:
+        - role
+        - content
+    UserMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - user
+          description: Role of the message author.
+        content:
+          type: string
+          description: The contents of the user message.
+        name:
+          type: string
+          description: >-
+            Optional name for the participant. Helps the model
+            differentiate between participants of the same role.
+      required:
+        - role
+        - content
+    AssistantMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - assistant
+          description: Role of the message author.
+        content:
+          type: string
+          nullable: true
+          description: >-
+            The contents of the assistant message. May be null when
+            tool_calls is present.
+        name:
+          type: string
+          description: >-
+            Optional name for the participant. Helps the model
+            differentiate between participants of the same role.
+        tool_calls:
+          type: array
+          description: Tool calls generated by the model.
+          items:
+            $ref: "#/components/schemas/ToolCall"
+        reasoning_content:
+          type: string
+          description: >-
+            Chain-of-thought reasoning content from thinking mode.
+            Must be passed back to the API in subsequent turns when
+            tool calls were made.
+        prefix:
+          type: boolean
+          description: >-
+            (Beta) Set to true to force the model to start its answer
+            by the content of this message. Requires beta base URL.
+          default: false
+      required:
+        - role
+    ToolMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - tool
+          description: Role of the message author.
+        content:
+          type: string
+          description: The contents of the tool message.
+        tool_call_id:
+          type: string
+          description: Tool call that this message is responding to.
+      required:
+        - role
+        - content
+        - tool_call_id
+    FunctionTool:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+            - function
+          default: function
+          description: Tool type.
+        function:
+          $ref: "#/components/schemas/FunctionObject"
+      required:
+        - type
+        - function
+    FunctionObject:
+      type: object
+      properties:
+        name:
+          type: string
+          description: >-
+            The name of the function to be called. Must be a-z, A-Z, 0-9,
+            underscores, or dashes.
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-zA-Z0-9_-]+$"
+        description:
+          type: string
+          description: >-
+            A description of what the function does. Used by the model to
+            choose when and how to call the function.
+        parameters:
+          type: object
+          description: >-
+            JSON Schema object describing the function parameters. Use
+            {"type": "object", "properties": {...}, "required": [...]}
+            format. Set additionalProperties to true for standard mode;
+            set to false for strict mode (Beta).
+          additionalProperties: true
+        strict:
+          type: boolean
+          description: >-
+            (Beta) Enable strict mode for function calling. Requires
+            beta base URL. When true, the model strictly adheres to
+            the JSON Schema definition.
+          default: false
+      required:
+        - name
+        - description
+        - parameters
+    ToolChoiceObject:
+      type: object
+      description: Specifies a specific function for the model to call.
+      properties:
+        type:
+          type: string
+          enum:
+            - function
+          description: Must be function.
+        function:
+          type: object
+          properties:
+            name:
+              type: string
+              description: The name of the function to call.
+          required:
+            - name
+      required:
+        - type
+        - function
+    ToolCall:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the tool call.
+        type:
+          type: string
+          enum:
+            - function
+          description: Tool type.
+        function:
+          type: object
+          properties:
+            name:
+              type: string
+              description: Function name to call.
+            arguments:
+              type: string
+              description: JSON-encoded function arguments.
+          required:
+            - name
+            - arguments
+      required:
+        - id
+        - type
+        - function
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the chat completion.
+        object:
+          type: string
+          enum:
+            - chat.completion
+          description: Object type, always chat.completion.
+        created:
+          type: integer
+          description: Unix timestamp (seconds) of when the completion was created.
+        model:
+          type: string
+          description: The model used for the completion.
+        system_fingerprint:
+          type: string
+          description: System fingerprint for the model configuration.
+        choices:
+          type: array
+          description: List of completion choices.
+          items:
+            $ref: "#/components/schemas/ChatChoice"
+        usage:
+          $ref: "#/components/schemas/Usage"
+      required:
+        - id
+        - object
+        - created
+        - model
+        - choices
+    ChatChoice:
+      type: object
+      properties:
+        index:
+          type: integer
+          description: The index of the choice in the list of choices.
+        message:
+          $ref: "#/components/schemas/ResponseMessage"
+        finish_reason:
+          type: string
+          description: >-
+            The reason the model stopped generating tokens. stop if the
+            model hit a natural stop point or a provided stop sequence,
+            length if the maximum number of tokens specified in the request
+            was reached, content_filter if content was omitted due to content
+            filters, tool_calls if the model called a tool, or
+            insufficient_system_resource if the request was interrupted due
+            to insufficient resource of the inference system.
+          enum:
+            - stop
+            - length
+            - tool_calls
+            - content_filter
+            - insufficient_system_resource
+        logprobs:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/LogProbs"
+          description: Log probability information for the choice.
+      required:
+        - index
+        - message
+        - finish_reason
+        - logprobs
+    ResponseMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - assistant
+          description: Role of the message author.
+        content:
+          type: string
+          nullable: true
+          description: >-
+            The generated response content. May be null when only
+            tool_calls are returned.
+        reasoning_content:
+          type: string
+          nullable: true
+          description: >-
+            Chain-of-thought reasoning content from thinking mode.
+            Present when thinking is enabled.
+        tool_calls:
+          type: array
+          nullable: true
+          description: Tool calls generated by the model.
+          items:
+            $ref: "#/components/schemas/ToolCall"
+      required:
+        - role
+    Usage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+          description: >-
+            Number of tokens in the prompt. Equals prompt_cache_hit_tokens
+            + prompt_cache_miss_tokens.
+        completion_tokens:
+          type: integer
+          description: Number of tokens in the generated completion.
+        total_tokens:
+          type: integer
+          description: Total number of tokens used in the request (prompt + completion).
+        prompt_cache_hit_tokens:
+          type: integer
+          description: Number of tokens in the prompt that hit the context cache.
+        prompt_cache_miss_tokens:
+          type: integer
+          description: Number of tokens in the prompt that miss the context cache.
+        completion_tokens_details:
+          type: object
+          properties:
+            reasoning_tokens:
+              type: integer
+              description: Tokens generated by the model for reasoning.
+      required:
+        - prompt_tokens
+        - completion_tokens
+        - total_tokens
+        - prompt_cache_hit_tokens
+        - prompt_cache_miss_tokens
+    LogProbs:
+      type: object
+      description: Log probability information for the choice.
+      properties:
+        content:
+          type: array
+          nullable: true
+          description: A list of message content tokens with log probability information.
+          items:
+            $ref: "#/components/schemas/LogProbToken"
+        reasoning_content:
+          type: array
+          nullable: true
+          description: A list of reasoning content tokens with log probability information.
+          items:
+            $ref: "#/components/schemas/LogProbToken"
+      required:
+        - content
+    LogProbToken:
+      type: object
+      properties:
+        token:
+          type: string
+          description: The token.
+        logprob:
+          type: number
+          description: >-
+            The log probability of this token, if it is within the top 20
+            most likely tokens. Otherwise, the value -9999.0 is used to
+            signify that the token is very unlikely.
+        bytes:
+          type: array
+          nullable: true
+          description: >-
+            A list of integers representing the UTF-8 bytes representation
+            of the token. Can be null if there is no bytes representation
+            for the token.
+          items:
+            type: integer
+        top_logprobs:
+          type: array
+          description: >-
+            List of the most likely tokens and their log probability, at this
+            token position. In rare cases, there may be fewer than the number
+            of requested top_logprobs returned.
+          items:
+            $ref: "#/components/schemas/TopLogProb"
+      required:
+        - token
+        - logprob
+        - bytes
+        - top_logprobs
+    TopLogProb:
+      type: object
+      properties:
+        token:
+          type: string
+          description: The token.
+        logprob:
+          type: number
+          description: >-
+            The log probability of this token, if it is within the top 20
+            most likely tokens. Otherwise, the value -9999.0 is used to
+            signify that the token is very unlikely.
+        bytes:
+          type: array
+          nullable: true
+          description: >-
+            A list of integers representing the UTF-8 bytes representation
+            of the token. Can be null if there is no bytes representation
+            for the token.
+          items:
+            type: integer
+      required:
+        - token
+        - logprob
+        - bytes
+    ErrorResponse:
+      type: object
+      description: Error response body.
+      properties:
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+              description: Human-readable error message.
+            type:
+              type: string
+              description: Error type (e.g. invalid_request_error).
+            code:
+              type: string
+              description: Machine-readable error code.
+          required:
+            - message
+            - type

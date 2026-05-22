@@ -13,6 +13,7 @@
 
 !*.go
 !go.*
+!*.yaml
 
 !README.md
 !AGENTS.md

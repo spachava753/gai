@@ -1,0 +1,14 @@
+# sets generator options.
+generator:
+  # sets generator features.
+  features:
+    enable:
+      # Enables paths client generation
+      - "paths/client"
+      # Enables validation of client requests
+      - "client/request/validation"
+      # Enables OpenTelemetry integration
+      - "ogen/otel"
+      # Generate client request editor option functions.
+      - "client/editors"
+    disable_all: true
