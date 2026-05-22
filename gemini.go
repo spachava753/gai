@@ -121,7 +121,7 @@ type GeminiGenerator struct {
 }
 
 // NewGeminiGenerator creates a new Gemini generator with the specified API key, model name, and system instructions.
-// Returns a ToolCapableGenerator that preprocesses dialog for parallel tool use compatibility.
+// Returns a ToolCallingGenerator that preprocesses dialog for parallel tool use compatibility.
 // The returned generator also implements the TokenCounter interface for token counting.
 //
 // Parameters:
@@ -146,9 +146,9 @@ type GeminiGenerator struct {
 //   - For maximum compatibility across all generators, restrict usage of anyOf to the nullable pattern:
 //     e.g., "anyOf": [{"type": "string"}, {"type": "null"}]
 //
-// Returns a ToolCapableGenerator that also implements TokenCounter, or an error if initialization fails.
+// Returns a ToolCallingGenerator that also implements TokenCounter, or an error if initialization fails.
 func NewGeminiGenerator(client *genai.Client, modelName, systemInstructions string) (interface {
-	ToolCapableGenerator
+	ToolCallingGenerator
 	StreamingGenerator
 	TokenCounter
 }, error) {

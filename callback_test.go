@@ -143,15 +143,15 @@ func TestToolCallBackFunc_Call(t *testing.T) {
 	}
 }
 
-// TestToolCallBackFunc_ToolGenerator_Integration tests that ToolCallBackFunc works correctly
-// when registered with a ToolGenerator.
-func TestToolCallBackFunc_ToolGenerator_Integration(t *testing.T) {
+// TestToolCallBackFunc_DirectExecution tests that ToolCallBackFunc creates tool-result
+// messages when called with raw tool parameters.
+func TestToolCallBackFunc_DirectExecution(t *testing.T) {
 	// Create a tool and its parameter type
 	type GreetParams struct {
 		Name string `json:"name"`
 	}
 
-	// Use a manually created Message for the result to avoid hitting the complex ToolGenerator logic
+	// Call the callback directly, as an application-owned tool loop would do.
 	toolCall := ToolCallBackFunc[GreetParams](func(ctx context.Context, params GreetParams) (string, error) {
 		return fmt.Sprintf("Hello, %s!", params.Name), nil
 	})

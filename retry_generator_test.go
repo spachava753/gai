@@ -14,7 +14,7 @@ import (
 )
 
 // mockGenerator is a mock implementation of the gai.Generator, gai.TokenCounter,
-// gai.ToolCapableGenerator, and gai.StreamingGenerator interfaces for testing.
+// gai.ToolCallingGenerator, and gai.StreamingGenerator interfaces for testing.
 type mockGenerator struct {
 	GenerateFunc func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error)
 	StreamFunc   func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) iter.Seq2[gai.StreamChunk, error]
@@ -486,10 +486,10 @@ func TestRetryGenerator_Generate_PermanentError_ContextCanceledByGenerator(t *te
 }
 
 // Ensure mockGenerator can satisfy the optional generator interfaces when its methods are implemented.
-var _ gai.ToolCapableGenerator = (*mockGenerator)(nil)
+var _ gai.ToolCallingGenerator = (*mockGenerator)(nil)
 var _ gai.StreamingGenerator = (*mockGenerator)(nil)
 
-func TestRetryGenerator_Register_UnderlyingImplementsToolCapableGenerator(t *testing.T) {
+func TestRetryGenerator_Register_UnderlyingImplementsToolCallingGenerator(t *testing.T) {
 	registeredTool := gai.Tool{Name: "test_tool"}
 	var receivedTool gai.Tool
 	var registerCalled bool
@@ -532,7 +532,7 @@ func TestRetryGenerator_Register_UnderlyingImplementsToolCapableGenerator(t *tes
 	}
 }
 
-func TestRetryGenerator_Register_UnderlyingDoesNotImplementToolCapableGenerator(t *testing.T) {
+func TestRetryGenerator_Register_UnderlyingDoesNotImplementToolCallingGenerator(t *testing.T) {
 	type simpleGenerator struct{ gai.Generator }
 	underlyingGen := &simpleGenerator{
 		Generator: &mockGenerator{
@@ -547,10 +547,10 @@ func TestRetryGenerator_Register_UnderlyingDoesNotImplementToolCapableGenerator(
 
 	err := rg.Register(toolToRegister)
 	if err == nil {
-		t.Fatal("Register() error = nil, want an error for non-ToolCapableGenerator")
+		t.Fatal("Register() error = nil, want an error for non-ToolCallingGenerator")
 	}
 
-	wantErrStr := fmt.Sprintf("inner generator of type %T does not implement ToolCapableGenerator", underlyingGen)
+	wantErrStr := fmt.Sprintf("inner generator of type %T does not implement ToolCallingGenerator", underlyingGen)
 	if err.Error() != wantErrStr {
 		t.Errorf("Register() error = %q, want %q", err.Error(), wantErrStr)
 	}

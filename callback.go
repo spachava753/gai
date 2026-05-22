@@ -100,7 +100,7 @@ type ToolCallBackFunc[T any] func(ctx context.Context, t T) (string, error)
 // the result.
 //
 // Error handling:
-//   - If the callback returns a non-nil error of type CallbackExecErr (or wrapping one), this signals a real callback execution failure (e.g., panic, context cancellation), and the underlying error is returned. This will typically terminate execution in ToolGenerator.Generate.
+//   - If the callback returns a non-nil error of type CallbackExecErr (or wrapping one), this signals a real callback execution failure (e.g., panic, context cancellation), and the underlying error is returned so the caller can terminate the tool loop.
 //   - If the callback returns any other non-nil error, it is treated as an erroneous tool result, and a text ToolResult message containing the error message is returned instead of terminating execution.
 func (f ToolCallBackFunc[T]) Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
 	var t T

@@ -3,7 +3,6 @@ package gai
 import (
 	"context"
 	"errors"
-	"fmt"
 	"iter"
 	"strings"
 	"testing"
@@ -271,67 +270,5 @@ func (c *customStreamingGenerator) Stream(ctx context.Context, dialog Dialog, op
 				return // User stopped iteration
 			}
 		}
-	}
-}
-
-// ExampleStreamingAdapter_withToolGenerator demonstrates using StreamingAdapter
-// together with ToolGenerator to create a complete tool-using assistant that
-// internally uses streaming but presents a non-streaming interface.
-func TestStreamingAdapter_withToolGenerator(t *testing.T) {
-	skipOnMissingEnv(t, "OPENAI_API_KEY")
-
-	client := openai.NewClient()
-	baseGen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		openai.ChatModelGPT4oMini,
-		"You are a helpful assistant that can check weather and time.",
-	)
-	toolGen := &ToolGenerator{G: &baseGen}
-
-	weatherTool := Tool{
-		Name:        "get_weather",
-		Description: "Get the current weather in a location",
-		InputSchema: func() *jsonschema.Schema {
-			schema, err := GenerateSchema[struct {
-				Location string `json:"location" jsonschema:"required" jsonschema_description:"The city and state, e.g. San Francisco, CA"`
-			}]()
-			if err != nil {
-				t.Fatalf("generate weather schema: %v", err)
-			}
-			return schema
-		}(),
-	}
-	weatherCallback := ToolCallBackFunc[struct {
-		Location string `json:"location"`
-	}](func(ctx context.Context, params struct{ Location string }) (string, error) {
-		return fmt.Sprintf("The weather in %s is sunny and 72°F", params.Location), nil
-	})
-	if err := toolGen.Register(weatherTool, weatherCallback); err != nil {
-		t.Fatalf("register weather tool: %v", err)
-	}
-
-	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What's the weather in San Francisco?")}}}
-	completeDialog, err := toolGen.Generate(context.Background(), dialog, nil)
-	if err != nil {
-		t.Fatalf("Generate returned error: %v", err)
-	}
-
-	var foundWeatherResponse bool
-	for _, msg := range completeDialog {
-		if msg.Role != Assistant {
-			continue
-		}
-		for _, block := range msg.Blocks {
-			if block.BlockType != Content {
-				continue
-			}
-			content := block.Content.String()
-			if strings.Contains(content, "San Francisco") && strings.Contains(content, "sunny") && strings.Contains(content, "72°F") {
-				foundWeatherResponse = true
-			}
-		}
-	}
-	if !foundWeatherResponse {
-		t.Fatalf("final dialog did not contain weather result for San Francisco: %#v", completeDialog)
 	}
 }

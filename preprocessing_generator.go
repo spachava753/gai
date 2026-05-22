@@ -101,7 +101,7 @@ func preprocessToolResults(dialog Dialog) Dialog {
 	return result
 }
 
-// PreprocessingGenerator is a transparent wrapper for any ToolCapableGenerator that
+// PreprocessingGenerator is a transparent wrapper for any ToolCallingGenerator that
 // automatically preprocesses the dialog before every Generate call.
 //
 // Specifically, it consolidates parallel tool result messages into the format required by
@@ -116,7 +116,7 @@ type PreprocessingGenerator struct {
 	GeneratorWrapper
 }
 
-var _ ToolCapableGenerator = (*PreprocessingGenerator)(nil)
+var _ ToolCallingGenerator = (*PreprocessingGenerator)(nil)
 var _ TokenCounter = (*PreprocessingGenerator)(nil)
 
 func (p *PreprocessingGenerator) Generate(ctx context.Context, dialog Dialog, opts *GenOpts) (Response, error) {
@@ -132,13 +132,13 @@ func (p *PreprocessingGenerator) Stream(ctx context.Context, dialog Dialog, opti
 	panic("inner generator does not implement StreamingGenerator")
 }
 
-// WithPreprocessing returns a WrapperFunc that wraps a ToolCapableGenerator
-// with preprocessing logic. Panics if the inner generator is not a ToolCapableGenerator.
+// WithPreprocessing returns a WrapperFunc that wraps a ToolCallingGenerator
+// with preprocessing logic. Panics if the inner generator is not a ToolCallingGenerator.
 func WithPreprocessing() WrapperFunc {
 	return func(g Generator) Generator {
-		tcg, ok := g.(ToolCapableGenerator)
+		tcg, ok := g.(ToolCallingGenerator)
 		if !ok {
-			panic(fmt.Sprintf("WithPreprocessing requires ToolCapableGenerator, got %T", g))
+			panic(fmt.Sprintf("WithPreprocessing requires ToolCallingGenerator, got %T", g))
 		}
 		return &PreprocessingGenerator{
 			GeneratorWrapper: GeneratorWrapper{Inner: tcg},

@@ -866,7 +866,7 @@ type AnthropicSvc interface {
 }
 
 // NewAnthropicGenerator creates a new Anthropic generator with the specified model.
-// It returns a ToolCapableGenerator that preprocesses dialog for parallel tool use compatibility.
+// It returns a ToolCallingGenerator that preprocesses dialog for parallel tool use compatibility.
 // This generator fully supports the anyOf JSON Schema feature.
 //
 // Parameters:
@@ -884,7 +884,7 @@ type AnthropicSvc interface {
 //
 // The returned generator also implements the TokenCounter interface for token counting.
 func NewAnthropicGenerator(client AnthropicSvc, model, systemInstructions string) interface {
-	ToolCapableGenerator
+	ToolCallingGenerator
 	StreamingGenerator
 	TokenCounter
 } {

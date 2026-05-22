@@ -42,7 +42,7 @@ func (m *wrapperMockGenerator) Stream(ctx context.Context, d Dialog, o *GenOpts)
 	return func(yield func(StreamChunk, error) bool) {}
 }
 
-// wrapperBasicGenerator only implements Generator (not TokenCounter, ToolCapableGenerator, etc.)
+// wrapperBasicGenerator only implements Generator (not TokenCounter, ToolCallingGenerator, etc.)
 type wrapperBasicGenerator struct{}
 
 func (b *wrapperBasicGenerator) Generate(ctx context.Context, d Dialog, o *GenOpts) (Response, error) {
@@ -124,7 +124,7 @@ func TestGeneratorWrapper_Register_NotSupported(t *testing.T) {
 	err := wrapper.Register(Tool{Name: "test"})
 
 	if err == nil {
-		t.Error("expected error for unsupported ToolCapableGenerator")
+		t.Error("expected error for unsupported ToolCallingGenerator")
 	}
 }
 
@@ -239,7 +239,7 @@ func TestWithPreprocessing(t *testing.T) {
 func TestWithPreprocessing_Panics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
-			t.Error("expected panic for non-ToolCapableGenerator")
+			t.Error("expected panic for non-ToolCallingGenerator")
 		}
 	}()
 

@@ -180,81 +180,37 @@
 //
 // # Tool Usage Example
 //
-// Using tools with a language model:
+// Register tools directly on generators that implement [ToolCallingGenerator]. The
+// generator exposes tool calls in its response; applications own the execution loop so
+// they can apply authorization, validation, retries, tracing, and persistence policies
+// before appending tool results and asking the model to continue.
 //
-//	package main
-//
-//	import (
-//		"context"
-//		"encoding/json"
-//		"fmt"
-//		"time"
-//		"github.com/openai/openai-go/v3"
-//		"github.com/spachava753/gai"
+//	client := openai.NewClient()
+//	gen := gai.NewOpenAiGenerator(
+//		client.Chat.Completions,
+//		openai.ChatModelGPT4,
+//		"You are a helpful assistant.",
 //	)
 //
-//	// Define a tool callback for getting the current time
-//	type TimeToolCallback struct{}
-//
-//	func (t TimeToolCallback) Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (gai.Message, error) {
-//		return gai.ToolResultMessage(toolCallID, gai.TextBlock(time.Now().Format(time.RFC1123))), nil
+//	err := gen.Register(gai.Tool{
+//		Name:        "get_current_time",
+//		Description: "Get the current server time",
+//	})
+//	if err != nil {
+//		fmt.Printf("Error registering tool: %v\n", err)
+//		return
 //	}
 //
-//	func main() {
-//		client := openai.NewClient()
+//	dialog := gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("What time is it now?")}}}
+//	resp, err := gen.Generate(context.Background(), dialog, &gai.GenOpts{ToolChoice: gai.ToolChoiceAuto})
+//	if err != nil {
+//		fmt.Printf("Error: %v\n", err)
+//		return
+//	}
 //
-//		// Create an OpenAI generator
-//		baseGen := gai.NewOpenAiGenerator(
-//			client.Chat.Completions,
-//			openai.ChatModelGPT4,
-//			"You are a helpful assistant.",
-//		)
-//
-//		// Create a tool generator that wraps the base generator
-//		toolGen := &gai.ToolGenerator{
-//			G: &baseGen,
-//		}
-//
-//		// Define a time tool
-//		timeTool := gai.Tool{
-//			Name:        "get_current_time",
-//			Description: "Get the current server time",
-//		}
-//
-//		// Register the tool with its callback
-//		if err := toolGen.Register(timeTool, &TimeToolCallback{}); err != nil {
-//			fmt.Printf("Error registering tool: %v\n", err)
-//			return
-//		}
-//
-//		// Create a dialog
-//		dialog := gai.Dialog{
-//			{
-//				Role: gai.User,
-//				Blocks: []gai.Block{
-//					{
-//						BlockType:    gai.Content,
-//						ModalityType: gai.Text,
-//						Content:      gai.Str("What time is it now?"),
-//					},
-//				},
-//			},
-//		}
-//
-//		// Generate a response with tool usage
-//		completeDialog, err := toolGen.Generate(context.Background(), dialog, &gai.GenOpts{
-//			ToolChoice: gai.ToolChoiceAuto,
-//		})
-//		if err != nil {
-//			fmt.Printf("Error: %v\n", err)
-//			return
-//		}
-//
-//		// Print the final result
-//		finalMsg := completeDialog[len(completeDialog)-1]
-//		if len(finalMsg.Blocks) > 0 {
-//			fmt.Println(finalMsg.Blocks[0].Content)
-//		}
+//	if resp.FinishReason == gai.ToolUse {
+//		// Inspect ToolCall blocks, execute approved tools, append ToolResultMessage
+//		// entries to the dialog, and call Generate again to produce the final answer.
 //	}
 //
 // # Fallback Strategy Example
@@ -536,77 +492,35 @@
 //
 // # Advanced Usage
 //
-// Tool Generator: The ToolGenerator provides advanced functionality for working with tools.
-// It automatically handles registering tools with the underlying generator, executing tool
-// callbacks when tools are called, managing the conversation flow during tool use, and
-// handling parallel tool calls. Lifecycle hooks can observe and mutate the working dialog,
-// generation options, tool call parameters, and tool results while execution is in progress.
-// Use these hooks to customize agent behavior inside the tool-use loop, such as context
-// compaction, guardrails, observability, and tool-result normalization.
+// Tool Calling: Generators that implement [ToolCallingGenerator] can register tool
+// schemas and ask the provider to call those tools during generation. The library
+// keeps provider adapters focused on translating tool definitions and tool-call
+// blocks; applications remain responsible for executing tools and deciding how
+// results re-enter the dialog.
 //
-// Resiliency patterns such as retries, fallbacks, hedging, and provider failover should be
-// implemented as Generator wrappers around the underlying generator. Keep ToolGenerator hooks
-// focused on agent-state and tool-execution policy rather than transport or provider resilience.
-//
-//	type ToolGenerator struct {
-//		G     ToolCapableGenerator
-//		Hooks ToolGeneratorHooks
+//	type ToolCallingGenerator interface {
+//		Generator
+//		ToolRegister
 //	}
 //
 // Example:
 //
-//	// Create a base generator (OpenAI or Anthropic)
-//	baseGen := gai.NewOpenAiGenerator(...)
+//	// Create a base generator (OpenAI, Anthropic, or Gemini).
+//	gen := gai.NewOpenAiGenerator(...)
 //
-//	// Create a tool generator
-//	toolGen := &gai.ToolGenerator{
-//		G: &baseGen,
-//	}
+//	// Register tools with the provider adapter.
+//	gen.Register(weatherTool)
+//	gen.Register(stockPriceTool)
 //
-//	// Register tools with callbacks
-//	toolGen.Register(weatherTool, &WeatherAPI{})
-//	toolGen.Register(stockPriceTool, &StockAPI{})
-//
-//	// Generate with tool support
-//	completeDialog, err := toolGen.Generate(ctx, dialog, &gai.GenOpts{
+//	// Generate with tool support enabled.
+//	resp, err := gen.Generate(ctx, dialog, &gai.GenOpts{
 //		ToolChoice:  gai.ToolChoiceAuto,
 //		Temperature: Ptr(0.7),
 //	})
 //
-// Hook examples:
-//
-//	// Compact or truncate context before each model call.
-//	toolGen.Hooks.BeforeGenerate = func(ctx context.Context, dialog *gai.Dialog, opts *gai.GenOpts) error {
-//		if len(*dialog) > 40 {
-//			prefix := append(gai.Dialog{}, (*dialog)[:4]...)
-//			suffix := append(gai.Dialog{}, (*dialog)[len(*dialog)-12:]...)
-//			*dialog = append(prefix, suffix...)
-//		}
-//		opts.ToolChoice = gai.ToolChoiceAuto
-//		return nil
-//	}
-//
-//	// Enforce tool permissions and normalize parameters before callback execution.
-//	toolGen.Hooks.BeforeToolCall = func(ctx context.Context, dialog *gai.Dialog, call *gai.ToolCallRequest) error {
-//		if call.Name == "write_file" && !permissions.CanWrite(call.ParametersJSON) {
-//			return fmt.Errorf("write_file denied")
-//		}
-//		return nil
-//	}
-//
-//	// Log tool-result errors and redact output before it enters the next model call.
-//	toolGen.Hooks.AfterToolCall = func(ctx context.Context, dialog *gai.Dialog, call gai.ToolCallRequest, result *gai.Message) error {
-//		if result.ToolResultError {
-//			logger.Printf("tool %s returned an error", call.Name)
-//		}
-//		*result = redactSensitiveToolResult(*result)
-//		return nil
-//	}
-//
-//	// Persist every provider response before ToolGenerator interprets it.
-//	toolGen.Hooks.AfterGenerate = func(ctx context.Context, dialog *gai.Dialog, opts *gai.GenOpts, resp *gai.Response) error {
-//		return store.SaveGeneration(ctx, *dialog, *opts, *resp)
-//	}
+//	// When resp.FinishReason is ToolUse, inspect ToolCall blocks, execute the
+//	// corresponding application callbacks, append ToolResultMessage values, and
+//	// invoke Generate again to continue the conversation.
 //
 // Fallback Generator: The FallbackGenerator provides automatic fallback between different providers.
 // It automatically tries each generator in sequence, falls back based on configurable conditions,

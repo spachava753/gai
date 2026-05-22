@@ -185,7 +185,7 @@ func (rg *RetryGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 var (
 	_ Generator            = (*RetryGenerator)(nil)
 	_ TokenCounter         = (*RetryGenerator)(nil)
-	_ ToolCapableGenerator = (*RetryGenerator)(nil)
+	_ ToolCallingGenerator = (*RetryGenerator)(nil)
 	_ StreamingGenerator   = (*RetryGenerator)(nil)
 )
 

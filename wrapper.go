@@ -47,10 +47,10 @@ import (
 // GeneratorWrapper implements all standard generator interfaces:
 //   - [Generator]: Generate() delegates to Inner.Generate()
 //   - [TokenCounter]: Count() delegates to Inner if it implements TokenCounter
-//   - [ToolCapableGenerator]: Register() delegates to Inner if it implements ToolCapableGenerator
+//   - [ToolCallingGenerator]: Register() delegates to Inner if it implements ToolCallingGenerator
 //   - [StreamingGenerator]: Stream() delegates to Inner if it implements StreamingGenerator
 //
-// If Inner doesn't implement an optional interface (TokenCounter, ToolCapableGenerator,
+// If Inner doesn't implement an optional interface (TokenCounter, ToolCallingGenerator,
 // StreamingGenerator), the corresponding method returns an appropriate error.
 //
 // # Example: Creating a Wrapper
@@ -119,14 +119,14 @@ func (w *GeneratorWrapper) Count(ctx context.Context, dialog Dialog) (uint, erro
 	return 0, fmt.Errorf("inner generator of type %T does not implement TokenCounter", w.Inner)
 }
 
-// Register delegates to Inner.Register if Inner implements [ToolCapableGenerator].
+// Register delegates to Inner.Register if Inner implements [ToolCallingGenerator].
 // Override this method in your wrapper to intercept Register calls.
-// Returns an error if Inner does not implement ToolCapableGenerator.
+// Returns an error if Inner does not implement ToolCallingGenerator.
 func (w *GeneratorWrapper) Register(tool Tool) error {
-	if tcg, ok := w.Inner.(ToolCapableGenerator); ok {
+	if tcg, ok := w.Inner.(ToolCallingGenerator); ok {
 		return tcg.Register(tool)
 	}
-	return fmt.Errorf("inner generator of type %T does not implement ToolCapableGenerator", w.Inner)
+	return fmt.Errorf("inner generator of type %T does not implement ToolCallingGenerator", w.Inner)
 }
 
 // Stream delegates to Inner.Stream if Inner implements [StreamingGenerator].
@@ -145,7 +145,7 @@ func (w *GeneratorWrapper) Stream(ctx context.Context, dialog Dialog, opts *GenO
 var (
 	_ Generator            = (*GeneratorWrapper)(nil)
 	_ TokenCounter         = (*GeneratorWrapper)(nil)
-	_ ToolCapableGenerator = (*GeneratorWrapper)(nil)
+	_ ToolCallingGenerator = (*GeneratorWrapper)(nil)
 	_ StreamingGenerator   = (*GeneratorWrapper)(nil)
 )
 
