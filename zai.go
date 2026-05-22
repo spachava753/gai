@@ -1,16 +1,21 @@
 package gai
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"iter"
+	"net/http"
 	"os"
 	"strings"
 
-	oai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
-	oaissestream "github.com/openai/openai-go/v3/packages/ssestream"
+	"github.com/go-faster/jx"
+
+	"github.com/spachava753/gai/internal/zai"
 )
 
 // ZaiGenerator implements the Generator and StreamingGenerator interfaces for Z.AI API.
@@ -25,9 +30,10 @@ import (
 // Supported models include glm-5.1, glm-5, glm-4.7, glm-4.6, glm-4.5, and variants.
 type ZaiGenerator struct {
 	client             ZaiCompletionService
+	streamClient       ZaiStreamingCompletionService
 	model              string
 	systemInstructions string
-	tools              map[string]oai.ChatCompletionToolUnionParam
+	tools              map[string]zai.FunctionToolSchema
 
 	// thinkingEnabled controls whether thinking/reasoning is enabled
 	thinkingEnabled bool
@@ -35,10 +41,14 @@ type ZaiGenerator struct {
 	clearThinking bool
 }
 
-// ZaiCompletionService defines the interface for Z.AI chat completions
+// ZaiCompletionService defines the generated Z.AI chat completions client surface.
 type ZaiCompletionService interface {
-	New(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (*oai.ChatCompletion, error)
-	NewStreaming(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) *oaissestream.Stream[oai.ChatCompletionChunk]
+	PaasV4ChatCompletionsPost(ctx context.Context, request zai.PaasV4ChatCompletionsPostReq, params zai.PaasV4ChatCompletionsPostParams) (*zai.ChatCompletionResponse, error)
+}
+
+// ZaiStreamingCompletionService streams Z.AI chat completions using generated request types.
+type ZaiStreamingCompletionService interface {
+	NewStreaming(ctx context.Context, request zai.PaasV4ChatCompletionsPostReq, params zai.PaasV4ChatCompletionsPostParams) (*zaiStream, error)
 }
 
 // ZaiGeneratorOption is a functional option for configuring the ZaiGenerator.
@@ -60,8 +70,16 @@ func WithZaiClearThinking(clear bool) ZaiGeneratorOption {
 	}
 }
 
-// NewZaiGenerator creates a new Z.AI generator using the OpenAI SDK.
-// If client is nil, a new client is created with the Z.AI base URL.
+const (
+	zaiBaseURL = "https://api.z.ai/api"
+
+	// ZaiExtraFieldURL can be set on Image or Video content blocks to pass a remote URL.
+	// For PDFs, set this to a PDF URL on a PDFBlock; Z.AI file inputs require URLs.
+	ZaiExtraFieldURL = "zai_url"
+)
+
+// NewZaiGenerator creates a new Z.AI generator using the generated Z.AI client.
+// If client is nil, a generated client is created with the Z.AI base URL.
 // apiKey is read from Z_API_KEY environment variable if empty.
 //
 // By default, thinking is enabled and clearThinking is true.
@@ -69,19 +87,27 @@ func NewZaiGenerator(client ZaiCompletionService, model, systemInstructions, api
 	if apiKey == "" {
 		apiKey = os.Getenv("Z_API_KEY")
 	}
+
+	var streamClient ZaiStreamingCompletionService
 	if client == nil {
-		oaiClient := oai.NewClient(
-			option.WithAPIKey(apiKey),
-			option.WithBaseURL("https://api.z.ai/api/paas/v4/"),
-		)
-		client = &oaiClient.Chat.Completions
+		defaultClient, err := newDefaultZaiClient(apiKey)
+		if err == nil {
+			client = defaultClient
+			streamClient = defaultClient
+		}
+	} else if c, ok := client.(ZaiStreamingCompletionService); ok {
+		streamClient = c
+	}
+	if streamClient == nil {
+		streamClient, _ = newDefaultZaiClient(apiKey)
 	}
 
 	g := &ZaiGenerator{
 		client:             client,
+		streamClient:       streamClient,
 		model:              model,
 		systemInstructions: systemInstructions,
-		tools:              make(map[string]oai.ChatCompletionToolUnionParam),
+		tools:              make(map[string]zai.FunctionToolSchema),
 		thinkingEnabled:    true,
 		clearThinking:      true,
 	}
@@ -89,6 +115,42 @@ func NewZaiGenerator(client ZaiCompletionService, model, systemInstructions, api
 		opt(g)
 	}
 	return g
+}
+
+type zaiSecuritySource struct {
+	apiKey string
+}
+
+func (s zaiSecuritySource) BearerAuth(ctx context.Context, operationName zai.OperationName) (zai.BearerAuth, error) {
+	return zai.BearerAuth{Token: s.apiKey}, nil
+}
+
+type defaultZaiClient struct {
+	client     *zai.Client
+	httpClient *http.Client
+	apiKey     string
+	baseURL    string
+}
+
+func newDefaultZaiClient(apiKey string) (*defaultZaiClient, error) {
+	client, err := zai.NewClient(
+		zaiBaseURL,
+		zaiSecuritySource{apiKey: apiKey},
+		zai.WithClient(http.DefaultClient),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &defaultZaiClient{
+		client:     client,
+		httpClient: http.DefaultClient,
+		apiKey:     apiKey,
+		baseURL:    zaiBaseURL,
+	}, nil
+}
+
+func (c *defaultZaiClient) PaasV4ChatCompletionsPost(ctx context.Context, request zai.PaasV4ChatCompletionsPostReq, params zai.PaasV4ChatCompletionsPostParams) (*zai.ChatCompletionResponse, error) {
+	return c.client.PaasV4ChatCompletionsPost(ctx, request, params)
 }
 
 // Register implements ToolRegister
@@ -103,48 +165,57 @@ func (g *ZaiGenerator) Register(tool Tool) error {
 		return &ToolRegistrationErr{Tool: tool.Name, Cause: fmt.Errorf("tool already registered")}
 	}
 
-	oaiTool, err := convertToolToOpenAI(tool)
+	zaiTool, err := convertToolToZai(tool)
 	if err != nil {
 		return &ToolRegistrationErr{Tool: tool.Name, Cause: err}
 	}
-	g.tools[tool.Name] = oaiTool
+	g.tools[tool.Name] = zaiTool
 	return nil
 }
 
-// zaiAssistantMessage extends the message with reasoning_content for Z.AI
-type zaiAssistantMessage struct {
-	Role             string                 `json:"role"`
-	Content          string                 `json:"content,omitempty"`
-	ReasoningContent string                 `json:"reasoning_content,omitempty"`
-	ToolCalls        []zaiToolCallForParams `json:"tool_calls,omitempty"`
+func convertToolToZai(tool Tool) (zai.FunctionToolSchema, error) {
+	parameters := zai.FunctionParameters{}
+	if tool.InputSchema != nil {
+		schemaJSON, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			return zai.FunctionToolSchema{}, err
+		}
+		var rawParams map[string]json.RawMessage
+		if err := json.Unmarshal(schemaJSON, &rawParams); err != nil {
+			return zai.FunctionToolSchema{}, err
+		}
+		if typ, ok := rawParams["type"]; len(rawParams) == 1 && ok && string(typ) == `"object"` {
+			rawParams = nil
+		}
+		for name, raw := range rawParams {
+			parameters[name] = jx.Raw(raw)
+		}
+	}
+
+	return zai.FunctionToolSchema{
+		Type: zai.FunctionToolSchemaTypeFunction,
+		Function: zai.FunctionObject{
+			Name:        tool.Name,
+			Description: tool.Description,
+			Parameters:  parameters,
+		},
+	}, nil
 }
 
-type zaiToolCallForParams struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
-}
-
-func (g *ZaiGenerator) buildMessages(dialog Dialog) ([]any, error) {
-	var messages []any
+func (g *ZaiGenerator) buildTextMessages(dialog Dialog) ([]zai.ChatCompletionTextRequestMessagesItem, error) {
+	var messages []zai.ChatCompletionTextRequestMessagesItem
 
 	// Add system instructions if present
 	if g.systemInstructions != "" {
-		messages = append(messages, oai.SystemMessage(g.systemInstructions))
+		messages = append(messages, zai.NewChatCompletionTextRequestMessagesItem1ChatCompletionTextRequestMessagesItem(zai.ChatCompletionTextRequestMessagesItem1{
+			Role:    zai.ChatCompletionTextRequestMessagesItem1RoleSystem,
+			Content: g.systemInstructions,
+		}))
 	}
 
 	for i, msg := range dialog {
 		switch msg.Role {
 		case User:
-			// Handle user messages - only text supported for now
-			if len(msg.Blocks) == 1 && msg.Blocks[0].ModalityType == Text {
-				messages = append(messages, oai.UserMessage(msg.Blocks[0].Content.String()))
-				continue
-			}
-
 			var textContent strings.Builder
 			for _, blk := range msg.Blocks {
 				if blk.BlockType != Content {
@@ -155,12 +226,14 @@ func (g *ZaiGenerator) buildMessages(dialog Dialog) ([]any, error) {
 				}
 				textContent.WriteString(blk.Content.String())
 			}
-			messages = append(messages, oai.UserMessage(textContent.String()))
+			messages = append(messages, zai.NewChatCompletionTextRequestMessagesItem0ChatCompletionTextRequestMessagesItem(zai.ChatCompletionTextRequestMessagesItem0{
+				Role:    zai.ChatCompletionTextRequestMessagesItem0RoleUser,
+				Content: textContent.String(),
+			}))
 
 		case Assistant:
 			var content string
-			var reasoningContent string
-			var toolCalls []zaiToolCallForParams
+			var toolCalls []zai.ChatCompletionTextRequestMessagesItem2ToolCallsItem
 
 			for _, blk := range msg.Blocks {
 				switch blk.BlockType {
@@ -173,7 +246,7 @@ func (g *ZaiGenerator) buildMessages(dialog Dialog) ([]any, error) {
 					if blk.ModalityType != Text {
 						return nil, UnsupportedInputModalityErr(blk.ModalityType.String())
 					}
-					reasoningContent = blk.Content.String()
+					// The generated text-message schema does not expose reasoning_content on request messages.
 				case ToolCall:
 					var toolUse ToolCallInput
 					if err := json.Unmarshal([]byte(blk.Content.String()), &toolUse); err != nil {
@@ -183,28 +256,27 @@ func (g *ZaiGenerator) buildMessages(dialog Dialog) ([]any, error) {
 					if err != nil {
 						return nil, fmt.Errorf("failed to marshal tool parameters: %w", err)
 					}
-					tc := zaiToolCallForParams{
+					toolCalls = append(toolCalls, zai.ChatCompletionTextRequestMessagesItem2ToolCallsItem{
 						ID:   blk.ID,
-						Type: "function",
-					}
-					tc.Function.Name = toolUse.Name
-					tc.Function.Arguments = string(argsJSON)
-					toolCalls = append(toolCalls, tc)
+						Type: zai.ChatCompletionTextRequestMessagesItem2ToolCallsItemTypeFunction,
+						Function: zai.NewOptChatCompletionTextRequestMessagesItem2ToolCallsItemFunction(zai.ChatCompletionTextRequestMessagesItem2ToolCallsItemFunction{
+							Name:      toolUse.Name,
+							Arguments: string(argsJSON),
+						}),
+					})
 				default:
 					return nil, fmt.Errorf("unsupported block type for assistant: %v", blk.BlockType)
 				}
 			}
 
-			// Use custom struct to include reasoning_content for preserved thinking
-			assistantMsg := zaiAssistantMessage{
-				Role:             "assistant",
-				Content:          content,
-				ReasoningContent: reasoningContent,
+			assistantMsg := zai.ChatCompletionTextRequestMessagesItem2{
+				Role:      zai.ChatCompletionTextRequestMessagesItem2RoleAssistant,
+				ToolCalls: toolCalls,
 			}
-			if len(toolCalls) > 0 {
-				assistantMsg.ToolCalls = toolCalls
+			if content != "" {
+				assistantMsg.Content = zai.NewOptString(content)
 			}
-			messages = append(messages, assistantMsg)
+			messages = append(messages, zai.NewChatCompletionTextRequestMessagesItem2ChatCompletionTextRequestMessagesItem(assistantMsg))
 
 		case ToolResult:
 			if len(msg.Blocks) == 0 {
@@ -217,7 +289,11 @@ func (g *ZaiGenerator) buildMessages(dialog Dialog) ([]any, error) {
 				if blk.ID == "" {
 					return nil, fmt.Errorf("tool result message block must have the tool_call_id as ID")
 				}
-				messages = append(messages, oai.ToolMessage(blk.Content.String(), blk.ID))
+				messages = append(messages, zai.NewChatCompletionTextRequestMessagesItem3ChatCompletionTextRequestMessagesItem(zai.ChatCompletionTextRequestMessagesItem3{
+					Role:       zai.ChatCompletionTextRequestMessagesItem3RoleTool,
+					Content:    blk.Content.String(),
+					ToolCallID: blk.ID,
+				}))
 			}
 
 		default:
@@ -227,52 +303,349 @@ func (g *ZaiGenerator) buildMessages(dialog Dialog) ([]any, error) {
 	return messages, nil
 }
 
-func (g *ZaiGenerator) getRequestOptions() []option.RequestOption {
-	var opts []option.RequestOption
+func (g *ZaiGenerator) dialogNeedsVision(dialog Dialog) bool {
+	for _, msg := range dialog {
+		for _, block := range msg.Blocks {
+			if block.BlockType == Content && block.ModalityType != Text {
+				return true
+			}
+		}
+	}
+	return false
+}
 
-	// Add thinking configuration
-	thinkingType := "enabled"
+func (g *ZaiGenerator) buildVisionMessages(dialog Dialog) ([]zai.ChatCompletionVisionRequestMessagesItem, error) {
+	var messages []zai.ChatCompletionVisionRequestMessagesItem
+	if g.systemInstructions != "" {
+		messages = append(messages, zai.NewChatCompletionVisionRequestMessagesItem1ChatCompletionVisionRequestMessagesItem(zai.ChatCompletionVisionRequestMessagesItem1{
+			Role:    zai.ChatCompletionVisionRequestMessagesItem1RoleSystem,
+			Content: g.systemInstructions,
+		}))
+	}
+
+	for i, msg := range dialog {
+		switch msg.Role {
+		case User:
+			content, err := zaiVisionUserContent(msg.Blocks)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, zai.NewChatCompletionVisionRequestMessagesItem0ChatCompletionVisionRequestMessagesItem(zai.ChatCompletionVisionRequestMessagesItem0{
+				Role:    zai.ChatCompletionVisionRequestMessagesItem0RoleUser,
+				Content: content,
+			}))
+		case Assistant:
+			content, err := zaiAssistantTextContent(msg.Blocks)
+			if err != nil {
+				return nil, err
+			}
+			assistantMsg := zai.ChatCompletionVisionRequestMessagesItem2{
+				Role: zai.ChatCompletionVisionRequestMessagesItem2RoleAssistant,
+			}
+			if content != "" {
+				assistantMsg.Content = zai.NewOptString(content)
+			}
+			messages = append(messages, zai.NewChatCompletionVisionRequestMessagesItem2ChatCompletionVisionRequestMessagesItem(assistantMsg))
+		case ToolResult:
+			return nil, fmt.Errorf("zai: vision requests do not support tool result messages")
+		default:
+			return nil, fmt.Errorf("unsupported role at index %d: %v", i, msg.Role)
+		}
+	}
+	return messages, nil
+}
+
+func zaiAssistantTextContent(blocks []Block) (string, error) {
+	var text strings.Builder
+	for _, block := range blocks {
+		switch block.BlockType {
+		case Content:
+			if block.ModalityType != Text {
+				return "", UnsupportedInputModalityErr(block.ModalityType.String())
+			}
+			text.WriteString(block.Content.String())
+		case Thinking:
+			if block.ModalityType != Text {
+				return "", UnsupportedInputModalityErr(block.ModalityType.String())
+			}
+		case ToolCall:
+			return "", fmt.Errorf("zai: vision requests do not support assistant tool call messages")
+		default:
+			return "", fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
+		}
+	}
+	return text.String(), nil
+}
+
+func zaiVisionUserContent(blocks []Block) (zai.ChatCompletionVisionRequestMessagesItem0Content, error) {
+	allText := true
+	for _, block := range blocks {
+		if block.BlockType != Content {
+			return zai.ChatCompletionVisionRequestMessagesItem0Content{}, fmt.Errorf("unsupported block type for user: %v", block.BlockType)
+		}
+		if block.ModalityType != Text {
+			allText = false
+		}
+	}
+	if allText {
+		var text strings.Builder
+		for _, block := range blocks {
+			text.WriteString(block.Content.String())
+		}
+		return zai.NewStringChatCompletionVisionRequestMessagesItem0Content(text.String()), nil
+	}
+
+	parts := make([]zai.VisionMultimodalContentItem, 0, len(blocks))
+	for _, block := range blocks {
+		part, err := zaiVisionContentPart(block)
+		if err != nil {
+			return zai.ChatCompletionVisionRequestMessagesItem0Content{}, err
+		}
+		parts = append(parts, part)
+	}
+	return zai.NewVisionMultimodalContentItemArrayChatCompletionVisionRequestMessagesItem0Content(parts), nil
+}
+
+func zaiVisionContentPart(block Block) (zai.VisionMultimodalContentItem, error) {
+	switch block.ModalityType {
+	case Text:
+		return zai.NewVisionMultimodalContentItem0VisionMultimodalContentItem(zai.VisionMultimodalContentItem0{
+			Type: zai.VisionMultimodalContentItem0TypeText,
+			Text: block.Content.String(),
+		}), nil
+	case Image:
+		if block.MimeType == "application/pdf" {
+			url, err := zaiRemoteURL(block)
+			if err != nil {
+				return zai.VisionMultimodalContentItem{}, fmt.Errorf("zai: PDF inputs require a remote URL in Content or %s: %w", ZaiExtraFieldURL, err)
+			}
+			return zai.NewVisionMultimodalContentItem3VisionMultimodalContentItem(zai.VisionMultimodalContentItem3{
+				Type: zai.VisionMultimodalContentItem3TypeFileURL,
+				FileURL: zai.VisionMultimodalContentItem3FileURL{
+					URL: url,
+				},
+			}), nil
+		}
+		url := zaiImageURL(block)
+		return zai.NewVisionMultimodalContentItem1VisionMultimodalContentItem(zai.VisionMultimodalContentItem1{
+			Type: zai.VisionMultimodalContentItem1TypeImageURL,
+			ImageURL: zai.VisionMultimodalContentItem1ImageURL{
+				URL: url,
+			},
+		}), nil
+	case Video:
+		url, err := zaiRemoteURL(block)
+		if err != nil {
+			return zai.VisionMultimodalContentItem{}, fmt.Errorf("zai: video inputs require a remote URL in Content or %s: %w", ZaiExtraFieldURL, err)
+		}
+		return zai.NewVisionMultimodalContentItem2VisionMultimodalContentItem(zai.VisionMultimodalContentItem2{
+			Type: zai.VisionMultimodalContentItem2TypeVideoURL,
+			VideoURL: zai.VisionMultimodalContentItem2VideoURL{
+				URL: url,
+			},
+		}), nil
+	case Audio:
+		return zai.VisionMultimodalContentItem{}, UnsupportedInputModalityErr(block.ModalityType.String())
+	default:
+		return zai.VisionMultimodalContentItem{}, UnsupportedInputModalityErr(block.ModalityType.String())
+	}
+}
+
+func zaiImageURL(block Block) string {
+	if url := zaiURLField(block); url != "" {
+		return url
+	}
+	content := strings.TrimSpace(block.Content.String())
+	if isZaiURL(content) {
+		return content
+	}
+	return "data:" + block.MimeType + ";base64," + content
+}
+
+func zaiRemoteURL(block Block) (string, error) {
+	if url := zaiURLField(block); url != "" {
+		if isZaiRemoteURL(url) {
+			return url, nil
+		}
+		return "", fmt.Errorf("not a remote URL: %q", url)
+	}
+	content := strings.TrimSpace(block.Content.String())
+	if isZaiRemoteURL(content) {
+		return content, nil
+	}
+	return "", fmt.Errorf("not a remote URL")
+}
+
+func zaiURLField(block Block) string {
+	if block.ExtraFields == nil {
+		return ""
+	}
+	for _, key := range []string{ZaiExtraFieldURL, "url"} {
+		if v, ok := block.ExtraFields[key].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func isZaiURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "data:")
+}
+
+func isZaiRemoteURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+func (g *ZaiGenerator) buildRequest(dialog Dialog, options *GenOpts, stream bool) (zai.PaasV4ChatCompletionsPostReq, zai.PaasV4ChatCompletionsPostParams, error) {
+	if err := validateZaiOutputModalities(options); err != nil {
+		return zai.PaasV4ChatCompletionsPostReq{}, zai.PaasV4ChatCompletionsPostParams{}, err
+	}
+
+	params := zai.PaasV4ChatCompletionsPostParams{
+		AcceptLanguage: zai.NewOptAcceptLanguage(zai.AcceptLanguageEnUSEn),
+	}
+	if g.dialogNeedsVision(dialog) {
+		request, err := g.buildVisionRequest(dialog, options, stream)
+		if err != nil {
+			return zai.PaasV4ChatCompletionsPostReq{}, zai.PaasV4ChatCompletionsPostParams{}, err
+		}
+		return zai.NewChatCompletionVisionRequestPaasV4ChatCompletionsPostReq(request), params, nil
+	}
+
+	request, err := g.buildTextRequest(dialog, options, stream)
+	if err != nil {
+		return zai.PaasV4ChatCompletionsPostReq{}, zai.PaasV4ChatCompletionsPostParams{}, err
+	}
+	return zai.NewChatCompletionTextRequestPaasV4ChatCompletionsPostReq(request), params, nil
+}
+
+func validateZaiOutputModalities(options *GenOpts) error {
+	if options == nil {
+		return nil
+	}
+	for _, m := range options.OutputModalities {
+		if m != Text {
+			return UnsupportedOutputModalityErr(m.String())
+		}
+	}
+	return nil
+}
+
+func (g *ZaiGenerator) buildTextRequest(dialog Dialog, options *GenOpts, stream bool) (zai.ChatCompletionTextRequest, error) {
+	messages, err := g.buildTextMessages(dialog)
+	if err != nil {
+		return zai.ChatCompletionTextRequest{}, err
+	}
+
+	request := zai.ChatCompletionTextRequest{
+		Model:    zai.ChatCompletionTextRequestModel(g.model),
+		Messages: messages,
+		Stream:   zai.NewOptBool(stream),
+		Thinking: g.zaiThinking(),
+	}
+	includeTools := applyZaiTextOptions(&request, options)
+	if includeTools && len(g.tools) > 0 {
+		for _, tool := range g.tools {
+			request.Tools = append(request.Tools, zai.NewFunctionToolSchemaChatCompletionTextRequestToolsItem(tool))
+		}
+		if stream {
+			request.ToolStream = zai.NewOptBool(true)
+		}
+	}
+	return request, nil
+}
+
+func (g *ZaiGenerator) buildVisionRequest(dialog Dialog, options *GenOpts, stream bool) (zai.ChatCompletionVisionRequest, error) {
+	messages, err := g.buildVisionMessages(dialog)
+	if err != nil {
+		return zai.ChatCompletionVisionRequest{}, err
+	}
+
+	request := zai.ChatCompletionVisionRequest{
+		Model:    zai.ChatCompletionVisionRequestModel(g.model),
+		Messages: messages,
+		Stream:   zai.NewOptBool(stream),
+		Thinking: g.zaiThinking(),
+	}
+	includeTools := applyZaiVisionOptions(&request, options)
+	if includeTools && len(g.tools) > 0 {
+		for _, tool := range g.tools {
+			request.Tools = append(request.Tools, zai.NewFunctionToolSchemaChatCompletionVisionRequestToolsItem(tool))
+		}
+	}
+	return request, nil
+}
+
+func (g *ZaiGenerator) zaiThinking() zai.OptChatThinking {
+	thinkingType := zai.ChatThinkingTypeEnabled
 	if !g.thinkingEnabled {
-		thinkingType = "disabled"
+		thinkingType = zai.ChatThinkingTypeDisabled
 	}
-	opts = append(opts, option.WithJSONSet("thinking", map[string]any{
-		"type":           thinkingType,
-		"clear_thinking": g.clearThinking,
-	}))
-
-	// Add Accept-Language header for Z.AI
-	opts = append(opts, option.WithHeader("Accept-Language", "en-US,en"))
-
-	return opts
+	return zai.NewOptChatThinking(zai.ChatThinking{
+		Type:          zai.NewOptChatThinkingType(thinkingType),
+		ClearThinking: zai.NewOptBool(g.clearThinking),
+	})
 }
 
-// extractReasoningContent extracts reasoning_content from the response's extra fields
-func extractReasoningContent(msg oai.ChatCompletionMessage) string {
-	if msg.JSON.ExtraFields == nil {
-		return ""
+func applyZaiTextOptions(request *zai.ChatCompletionTextRequest, options *GenOpts) bool {
+	includeTools := true
+	if options == nil {
+		return includeTools
 	}
-	if rc, ok := msg.JSON.ExtraFields["reasoning_content"]; ok {
-		// The field's raw value should be a JSON string
-		var s string
-		if err := json.Unmarshal([]byte(rc.Raw()), &s); err == nil {
-			return s
+	if options.Temperature != nil {
+		request.Temperature = zai.NewOptFloat32(float32(*options.Temperature))
+	}
+	if options.TopP != nil {
+		request.TopP = zai.NewOptFloat32(float32(*options.TopP))
+	}
+	if options.MaxGenerationTokens != nil {
+		request.MaxTokens = zai.NewOptInt(*options.MaxGenerationTokens)
+	}
+	if len(options.StopSequences) > 0 {
+		request.Stop = options.StopSequences
+	}
+	if options.ToolChoice != "" {
+		switch options.ToolChoice {
+		case "none":
+			includeTools = false
+		case ToolChoiceAuto, ToolChoiceToolsRequired:
+			request.ToolChoice = zai.NewOptChatCompletionTextRequestToolChoice(zai.ChatCompletionTextRequestToolChoiceAuto)
+		default:
+			// The generated Z.AI schema currently only permits "auto" for tool_choice.
+			request.ToolChoice = zai.NewOptChatCompletionTextRequestToolChoice(zai.ChatCompletionTextRequestToolChoiceAuto)
 		}
 	}
-	return ""
+	return includeTools
 }
 
-// extractStreamReasoningContent extracts reasoning_content from streaming delta
-func extractStreamReasoningContent(delta oai.ChatCompletionChunkChoiceDelta) string {
-	if delta.JSON.ExtraFields == nil {
-		return ""
+func applyZaiVisionOptions(request *zai.ChatCompletionVisionRequest, options *GenOpts) bool {
+	includeTools := true
+	if options == nil {
+		return includeTools
 	}
-	if rc, ok := delta.JSON.ExtraFields["reasoning_content"]; ok {
-		var s string
-		if err := json.Unmarshal([]byte(rc.Raw()), &s); err == nil {
-			return s
+	if options.Temperature != nil {
+		request.Temperature = zai.NewOptFloat32(float32(*options.Temperature))
+	}
+	if options.TopP != nil {
+		request.TopP = zai.NewOptFloat32(float32(*options.TopP))
+	}
+	if options.MaxGenerationTokens != nil {
+		request.MaxTokens = zai.NewOptInt(*options.MaxGenerationTokens)
+	}
+	if len(options.StopSequences) > 0 {
+		request.Stop = options.StopSequences
+	}
+	if options.ToolChoice != "" {
+		switch options.ToolChoice {
+		case "none":
+			includeTools = false
+		case ToolChoiceAuto, ToolChoiceToolsRequired:
+			request.ToolChoice = zai.NewOptChatCompletionVisionRequestToolChoice(zai.ChatCompletionVisionRequestToolChoiceAuto)
+		default:
+			request.ToolChoice = zai.NewOptChatCompletionVisionRequestToolChoice(zai.ChatCompletionVisionRequestToolChoiceAuto)
 		}
 	}
-	return ""
+	return includeTools
 }
 
 // Generate implements Generator
@@ -284,146 +657,60 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 		return Response{}, ErrEmptyDialog
 	}
 
-	messages, err := g.buildMessages(dialog)
+	request, params, err := g.buildRequest(dialog, options, false)
 	if err != nil {
 		return Response{}, err
 	}
 
-	// Build params - we'll use WithJSONSet to override messages since we need custom fields
-	params := oai.ChatCompletionNewParams{
-		Model: g.model,
-	}
-
-	// Map GenOpts
-	if options != nil {
-		if options.Temperature != nil {
-			params.Temperature = oai.Float(*options.Temperature)
-		}
-		if options.TopP != nil {
-			params.TopP = oai.Float(*options.TopP)
-		}
-		if options.MaxGenerationTokens != nil {
-			params.MaxCompletionTokens = oai.Int(int64(*options.MaxGenerationTokens))
-		}
-		if len(options.StopSequences) > 0 {
-			if len(options.StopSequences) == 1 {
-				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfString: oai.String(options.StopSequences[0])}
-			} else {
-				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfStringArray: options.StopSequences}
-			}
-		}
-		if options.ToolChoice != "" {
-			switch options.ToolChoice {
-			case ToolChoiceAuto:
-				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String("auto")}
-			case ToolChoiceToolsRequired:
-				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String("required")}
-			case "none":
-				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String("none")}
-			default:
-				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{
-					OfFunctionToolChoice: &oai.ChatCompletionNamedToolChoiceParam{
-						Function: oai.ChatCompletionNamedToolChoiceFunctionParam{
-							Name: options.ToolChoice,
-						},
-					},
-				}
-			}
-		}
-		if len(options.OutputModalities) > 0 {
-			for _, m := range options.OutputModalities {
-				if m != Text {
-					return Response{}, UnsupportedOutputModalityErr(m.String())
-				}
-			}
-		}
-	}
-
-	// Add tools if registered
-	if len(g.tools) > 0 {
-		var tools []oai.ChatCompletionToolUnionParam
-		for _, tool := range g.tools {
-			tools = append(tools, tool)
-		}
-		params.Tools = tools
-	}
-
-	// Get Z.AI-specific options
-	reqOpts := g.getRequestOptions()
-	// Override messages with our custom structure that includes reasoning_content
-	reqOpts = append(reqOpts, option.WithJSONSet("messages", messages))
-
-	resp, err := g.client.New(ctx, params, reqOpts...)
+	resp, err := g.client.PaasV4ChatCompletionsPost(ctx, request, params)
 	if err != nil {
 		return Response{}, g.mapError(err)
 	}
 
 	result := Response{UsageMetadata: make(Metadata)}
-	if resp.Usage.PromptTokens > 0 {
-		result.UsageMetadata[UsageMetricInputTokens] = int(resp.Usage.PromptTokens)
-	}
-	if resp.Usage.CompletionTokens > 0 {
-		result.UsageMetadata[UsageMetricGenerationTokens] = int(resp.Usage.CompletionTokens)
-	}
-	// Z.AI uses OpenAI-compatible API, check for cached tokens
-	if resp.Usage.PromptTokensDetails.CachedTokens > 0 {
-		result.UsageMetadata[UsageMetricCacheReadTokens] = int(resp.Usage.PromptTokensDetails.CachedTokens)
+	if usage, ok := resp.Usage.Get(); ok {
+		addZaiUsageMetadata(result.UsageMetadata, zaiUsage{
+			PromptTokens:     optFloat64(usage.PromptTokens),
+			CompletionTokens: optFloat64(usage.CompletionTokens),
+			CachedTokens:     optCachedTokens(usage.PromptTokensDetails),
+		})
 	}
 
 	var hasToolCalls bool
 	for _, choice := range resp.Choices {
 		var blocks []Block
-
-		// Extract reasoning_content from extra fields
-		if rc := extractReasoningContent(choice.Message); rc != "" {
-			blocks = append(blocks, Block{
-				BlockType:    Thinking,
-				ModalityType: Text,
-				MimeType:     "text/plain",
-				Content:      Str(rc),
-				ExtraFields: map[string]interface{}{
-					ThinkingExtraFieldGeneratorKey: ThinkingGeneratorZai,
-				},
-			})
-		}
-
-		if choice.Message.Content != "" {
-			blocks = append(blocks, Block{
-				BlockType:    Content,
-				ModalityType: Text,
-				MimeType:     "text/plain",
-				Content:      Str(choice.Message.Content),
-			})
-		}
-
-		if len(choice.Message.ToolCalls) > 0 {
-			hasToolCalls = true
-			for _, tc := range choice.Message.ToolCalls {
-				var params map[string]any
-				if tc.Function.Arguments != "" {
-					_ = json.Unmarshal([]byte(tc.Function.Arguments), &params)
-				}
-				tj, _ := json.Marshal(ToolCallInput{
-					Name:       tc.Function.Name,
-					Parameters: params,
-				})
+		if msg, ok := choice.Message.Get(); ok {
+			if rc, ok := msg.ReasoningContent.Get(); ok && rc != "" {
+				blocks = append(blocks, zaiThinkingBlock(rc))
+			}
+			if content, ok := msg.Content.Get(); ok && content != "" {
 				blocks = append(blocks, Block{
-					ID:           tc.ID,
-					BlockType:    ToolCall,
+					BlockType:    Content,
 					ModalityType: Text,
-					MimeType:     "application/json",
-					Content:      Str(tj),
+					MimeType:     "text/plain",
+					Content:      Str(content),
 				})
+			}
+			if len(msg.ToolCalls) > 0 {
+				hasToolCalls = true
+				for _, tc := range msg.ToolCalls {
+					block, err := zaiToolCallBlockFromResponse(tc)
+					if err != nil {
+						return result, err
+					}
+					blocks = append(blocks, block)
+				}
 			}
 		}
 		result.Candidates = append(result.Candidates, Message{Role: Assistant, Blocks: blocks})
 	}
 
 	if len(resp.Choices) > 0 {
-		switch resp.Choices[0].FinishReason {
+		reason := resp.Choices[0].FinishReason.Or("")
+		switch reason {
 		case "stop":
 			result.FinishReason = EndTurn
-		case "length":
+		case "length", "model_context_window_exceeded":
 			result.FinishReason = MaxGenerationLimit
 			return result, ErrMaxGenerationLimit
 		case "tool_calls":
@@ -431,17 +718,10 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 		case "content_filter":
 			result.FinishReason = Unknown
 			return result, ContentPolicyErr("content filtered")
+		case "sensitive":
+			result.FinishReason = Unknown
+			return result, ContentPolicyErr("content flagged as sensitive")
 		default:
-			// Check for Z.AI-specific finish reasons in extra fields
-			if resp.Choices[0].JSON.ExtraFields != nil {
-				if fr, ok := resp.Choices[0].JSON.ExtraFields["finish_reason"]; ok {
-					var reason string
-					if json.Unmarshal([]byte(fr.Raw()), &reason) == nil && reason == "sensitive" {
-						result.FinishReason = Unknown
-						return result, ContentPolicyErr("content flagged as sensitive")
-					}
-				}
-			}
 			result.FinishReason = Unknown
 		}
 	}
@@ -454,8 +734,8 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 // Stream implements StreamingGenerator
 func (g *ZaiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
 	return func(yield func(StreamChunk, error) bool) {
-		if g.client == nil {
-			yield(StreamChunk{}, fmt.Errorf("zai: client not initialized"))
+		if g.streamClient == nil {
+			yield(StreamChunk{}, fmt.Errorf("zai: streaming client not initialized"))
 			return
 		}
 		if len(dialog) == 0 {
@@ -463,171 +743,86 @@ func (g *ZaiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOp
 			return
 		}
 
-		messages, err := g.buildMessages(dialog)
+		request, params, err := g.buildRequest(dialog, options, true)
 		if err != nil {
 			yield(StreamChunk{}, err)
 			return
 		}
 
-		params := oai.ChatCompletionNewParams{
-			Model: g.model,
-			StreamOptions: oai.ChatCompletionStreamOptionsParam{
-				IncludeUsage: oai.Bool(true),
-			},
+		stream, err := g.streamClient.NewStreaming(ctx, request, params)
+		if err != nil {
+			yield(StreamChunk{}, g.mapError(err))
+			return
 		}
-
-		// Map GenOpts
-		if options != nil {
-			if options.Temperature != nil {
-				params.Temperature = oai.Float(*options.Temperature)
-			}
-			if options.TopP != nil {
-				params.TopP = oai.Float(*options.TopP)
-			}
-			if options.MaxGenerationTokens != nil {
-				params.MaxCompletionTokens = oai.Int(int64(*options.MaxGenerationTokens))
-			}
-			if len(options.StopSequences) > 0 {
-				if len(options.StopSequences) == 1 {
-					params.Stop = oai.ChatCompletionNewParamsStopUnion{OfString: oai.String(options.StopSequences[0])}
-				} else {
-					params.Stop = oai.ChatCompletionNewParamsStopUnion{OfStringArray: options.StopSequences}
-				}
-			}
-			if options.ToolChoice != "" {
-				switch options.ToolChoice {
-				case ToolChoiceAuto:
-					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String("auto")}
-				case ToolChoiceToolsRequired:
-					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String("required")}
-				case "none":
-					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String("none")}
-				default:
-					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{
-						OfFunctionToolChoice: &oai.ChatCompletionNamedToolChoiceParam{
-							Function: oai.ChatCompletionNamedToolChoiceFunctionParam{
-								Name: options.ToolChoice,
-							},
-						},
-					}
-				}
-			}
-			if len(options.OutputModalities) > 0 {
-				for _, m := range options.OutputModalities {
-					if m != Text {
-						yield(StreamChunk{}, UnsupportedOutputModalityErr(m.String()))
-						return
-					}
-				}
-			}
-		}
-
-		// Add tools if registered
-		if len(g.tools) > 0 {
-			var tools []oai.ChatCompletionToolUnionParam
-			for _, tool := range g.tools {
-				tools = append(tools, tool)
-			}
-			params.Tools = tools
-		}
-
-		// Get Z.AI-specific options
-		reqOpts := g.getRequestOptions()
-		reqOpts = append(reqOpts, option.WithJSONSet("messages", messages))
-
-		stream := g.client.NewStreaming(ctx, params, reqOpts...)
 		defer stream.Close()
 
-		var finalUsage *oai.CompletionUsage
-
+		var finalUsage *zaiStreamUsage
 		for stream.Next() {
 			chunk := stream.Current()
-
-			// Capture usage if present
-			if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
-				finalUsage = &chunk.Usage
+			if chunk.Usage != nil {
+				finalUsage = chunk.Usage
 			}
-
-			if len(chunk.Choices) == 0 {
-				continue
-			}
-
-			choice := chunk.Choices[0]
-
-			switch choice.FinishReason {
-			case "length":
-				yield(StreamChunk{}, ErrMaxGenerationLimit)
-				return
-			case "content_filter", "sensitive":
-				yield(StreamChunk{}, ContentPolicyErr("content filtered"))
-				return
-			}
-
-			if choice.Delta.Refusal != "" {
-				yield(StreamChunk{}, ContentPolicyErr("content refused"))
-				return
-			}
-
-			// Yield reasoning content
-			if rc := extractStreamReasoningContent(choice.Delta); rc != "" {
-				if !yield(StreamChunk{
-					Block: Block{
-						BlockType:    Thinking,
-						ModalityType: Text,
-						MimeType:     "text/plain",
-						Content:      Str(rc),
-						ExtraFields: map[string]interface{}{
-							ThinkingExtraFieldGeneratorKey: ThinkingGeneratorZai,
-						},
-					},
-					CandidatesIndex: int(choice.Index),
-				}, nil) {
+			for _, choice := range chunk.Choices {
+				switch choice.FinishReason {
+				case "length", "model_context_window_exceeded":
+					yield(StreamChunk{}, ErrMaxGenerationLimit)
+					return
+				case "content_filter", "sensitive":
+					yield(StreamChunk{}, ContentPolicyErr("content filtered"))
 					return
 				}
-			}
 
-			// Yield content
-			if choice.Delta.Content != "" {
-				if !yield(StreamChunk{
-					Block: Block{
-						BlockType:    Content,
-						ModalityType: Text,
-						MimeType:     "text/plain",
-						Content:      Str(choice.Delta.Content),
-					},
-					CandidatesIndex: int(choice.Index),
-				}, nil) {
+				if choice.Delta.Refusal != "" {
+					yield(StreamChunk{}, ContentPolicyErr("content refused"))
 					return
 				}
-			}
 
-			// Yield tool calls
-			for _, tc := range choice.Delta.ToolCalls {
-				if tc.Function.Name != "" {
+				if choice.Delta.ReasoningContent != "" {
+					if !yield(StreamChunk{Block: zaiThinkingBlock(choice.Delta.ReasoningContent), CandidatesIndex: choice.Index}, nil) {
+						return
+					}
+				}
+				if choice.Delta.Content != "" {
 					if !yield(StreamChunk{
 						Block: Block{
-							ID:           tc.ID,
-							BlockType:    ToolCall,
+							BlockType:    Content,
 							ModalityType: Text,
 							MimeType:     "text/plain",
-							Content:      Str(tc.Function.Name),
+							Content:      Str(choice.Delta.Content),
 						},
-						CandidatesIndex: int(choice.Index),
+						CandidatesIndex: choice.Index,
 					}, nil) {
 						return
 					}
 				}
-				if tc.Function.Arguments != "" {
-					if !yield(StreamChunk{
-						Block: Block{
-							BlockType:    ToolCall,
-							ModalityType: Text,
-							MimeType:     "text/plain",
-							Content:      Str(tc.Function.Arguments),
-						},
-						CandidatesIndex: int(choice.Index),
-					}, nil) {
-						return
+				for _, tc := range choice.Delta.ToolCalls {
+					if tc.Function.Name != "" {
+						if !yield(StreamChunk{
+							Block: Block{
+								ID:           tc.ID,
+								BlockType:    ToolCall,
+								ModalityType: Text,
+								MimeType:     "text/plain",
+								Content:      Str(tc.Function.Name),
+							},
+							CandidatesIndex: choice.Index,
+						}, nil) {
+							return
+						}
+					}
+					if tc.Function.Arguments != "" {
+						if !yield(StreamChunk{
+							Block: Block{
+								ID:           tc.ID,
+								BlockType:    ToolCall,
+								ModalityType: Text,
+								MimeType:     "text/plain",
+								Content:      Str(tc.Function.Arguments),
+							},
+							CandidatesIndex: choice.Index,
+						}, nil) {
+							return
+						}
 					}
 				}
 			}
@@ -638,35 +833,232 @@ func (g *ZaiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOp
 			return
 		}
 
-		// Emit metadata block as final block
 		if finalUsage != nil {
 			metadata := make(Metadata)
-			if finalUsage.PromptTokens > 0 {
-				metadata[UsageMetricInputTokens] = int(finalUsage.PromptTokens)
-			}
-			if finalUsage.CompletionTokens > 0 {
-				metadata[UsageMetricGenerationTokens] = int(finalUsage.CompletionTokens)
-			}
-			// Z.AI uses OpenAI-compatible API, check for cached tokens
-			if finalUsage.PromptTokensDetails.CachedTokens > 0 {
-				metadata[UsageMetricCacheReadTokens] = int(finalUsage.PromptTokensDetails.CachedTokens)
-			}
+			addZaiUsageMetadata(metadata, zaiUsage{
+				PromptTokens:     finalUsage.PromptTokens,
+				CompletionTokens: finalUsage.CompletionTokens,
+				CachedTokens:     finalUsage.PromptTokensDetails.CachedTokens,
+			})
 			if len(metadata) > 0 {
-				yield(StreamChunk{
-					Block:           MetadataBlock(metadata),
-					CandidatesIndex: 0,
-				}, nil)
+				yield(StreamChunk{Block: MetadataBlock(metadata), CandidatesIndex: 0}, nil)
 			}
 		}
 	}
+}
+
+type zaiUsage struct {
+	PromptTokens     float64
+	CompletionTokens float64
+	CachedTokens     float64
+}
+
+func addZaiUsageMetadata(metadata Metadata, usage zaiUsage) {
+	if usage.PromptTokens > 0 {
+		metadata[UsageMetricInputTokens] = int(usage.PromptTokens)
+	}
+	if usage.CompletionTokens > 0 {
+		metadata[UsageMetricGenerationTokens] = int(usage.CompletionTokens)
+	}
+	if usage.CachedTokens > 0 {
+		metadata[UsageMetricCacheReadTokens] = int(usage.CachedTokens)
+	}
+}
+
+func optFloat64(v zai.OptFloat64) float64 {
+	if f, ok := v.Get(); ok {
+		return f
+	}
+	return 0
+}
+
+func optCachedTokens(v zai.OptChatCompletionResponseUsagePromptTokensDetails) float64 {
+	if details, ok := v.Get(); ok {
+		return optFloat64(details.CachedTokens)
+	}
+	return 0
+}
+
+func zaiThinkingBlock(content string) Block {
+	return Block{
+		BlockType:    Thinking,
+		ModalityType: Text,
+		MimeType:     "text/plain",
+		Content:      Str(content),
+		ExtraFields: map[string]interface{}{
+			ThinkingExtraFieldGeneratorKey: ThinkingGeneratorZai,
+		},
+	}
+}
+
+func zaiToolCallBlockFromResponse(tc zai.ChatCompletionResponseMessageToolCall) (Block, error) {
+	id := tc.ID.Or("")
+	var name string
+	var arguments string
+	if fn, ok := tc.Function.Get(); ok {
+		name = fn.Name
+		arguments = fn.Arguments
+	}
+	params := map[string]any{}
+	if strings.TrimSpace(arguments) != "" {
+		if err := json.Unmarshal([]byte(arguments), &params); err != nil {
+			return Block{}, err
+		}
+	}
+	content, err := json.Marshal(ToolCallInput{Name: name, Parameters: params})
+	if err != nil {
+		return Block{}, err
+	}
+	return Block{
+		ID:           id,
+		BlockType:    ToolCall,
+		ModalityType: Text,
+		MimeType:     "application/json",
+		Content:      Str(content),
+	}, nil
+}
+
+func decodeZaiToolCallArguments(raw json.RawMessage, params *map[string]any) error {
+	if bytes.Equal(raw, []byte("null")) || len(raw) == 0 {
+		return nil
+	}
+	if raw[0] == '"' {
+		var args string
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return err
+		}
+		if strings.TrimSpace(args) == "" {
+			return nil
+		}
+		return json.Unmarshal([]byte(args), params)
+	}
+	return json.Unmarshal(raw, params)
+}
+
+type zaiStream struct {
+	body    io.Closer
+	scanner *bufio.Scanner
+	current zaiStreamChunk
+	err     error
+}
+
+type zaiStreamChunk struct {
+	Choices []struct {
+		Index int `json:"index"`
+		Delta struct {
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
+			Refusal          string `json:"refusal"`
+			ToolCalls        []struct {
+				Index    int    `json:"index"`
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *zaiStreamUsage `json:"usage"`
+}
+
+type zaiStreamUsage struct {
+	PromptTokens        float64 `json:"prompt_tokens"`
+	CompletionTokens    float64 `json:"completion_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens float64 `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
+func (s *zaiStream) Next() bool {
+	for s.scanner.Scan() {
+		line := strings.TrimSpace(s.scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		data, ok := strings.CutPrefix(line, "data:")
+		if !ok {
+			continue
+		}
+		data = strings.TrimSpace(data)
+		if data == "[DONE]" {
+			return false
+		}
+		var chunk zaiStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			s.err = err
+			return false
+		}
+		s.current = chunk
+		return true
+	}
+	if err := s.scanner.Err(); err != nil {
+		s.err = err
+	}
+	return false
+}
+
+func (s *zaiStream) Current() zaiStreamChunk {
+	return s.current
+}
+
+func (s *zaiStream) Err() error {
+	return s.err
+}
+
+func (s *zaiStream) Close() error {
+	return s.body.Close()
+}
+
+func (c *defaultZaiClient) NewStreaming(ctx context.Context, request zai.PaasV4ChatCompletionsPostReq, params zai.PaasV4ChatCompletionsPostParams) (*zaiStream, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	payload, err := request.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.baseURL, "/")+"/paas/v4/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if language, ok := params.AcceptLanguage.Get(); ok {
+		httpReq.Header.Set("Accept-Language", string(language))
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return nil, newHTTPAPIError(ProviderZAI, resp.StatusCode, string(body))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	return &zaiStream{body: resp.Body, scanner: scanner}, nil
 }
 
 func (g *ZaiGenerator) mapError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if mapped := mapOpenAICompatibleError(ProviderZAI, err); mapped != nil {
-		return mapped
+	var apiErr *ApiErr
+	if errors.As(err, &apiErr) {
+		return err
+	}
+	var statusErr *zai.ErrorStatusCode
+	if errors.As(err, &statusErr) {
+		rawBody, _ := json.Marshal(statusErr.Response)
+		return newHTTPAPIError(ProviderZAI, statusErr.StatusCode, string(rawBody))
 	}
 	if mapped := newZAIHeuristicAPIError(err); mapped != nil {
 		return mapped

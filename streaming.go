@@ -460,5 +460,3 @@ func (s *StreamingAdapter) Count(ctx context.Context, dialog Dialog) (uint, erro
 	}
 	return i.Count(ctx, dialog)
 }
-
-var _ ToolCallingGenerator = (*StreamingAdapter)(nil)
