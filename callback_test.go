@@ -2,7 +2,6 @@ package gai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -43,60 +42,54 @@ func errorCallback(ctx context.Context, params SimpleParams) (string, error) {
 
 func TestToolCallBackFunc_Call(t *testing.T) {
 	tests := []struct {
-		name           string
-		callback       ToolCallback
-		parametersJSON string
-		toolCallID     string
-		want           string
-		wantErr        bool
-		errContains    string
+		name        string
+		callback    ToolCallback
+		parameters  map[string]any
+		want        string
+		wantErr     bool
+		errContains string
 	}{
 		{
-			name:           "simple successful callback",
-			callback:       ToolCallBackFunc[SimpleParams](simpleCallback),
-			parametersJSON: `{"message": "Hello, world!"}`,
-			toolCallID:     "tool123",
-			want:           "Received: Hello, world!",
-			wantErr:        false,
+			name:       "simple successful callback",
+			callback:   ToolCallBackFunc[SimpleParams](simpleCallback),
+			parameters: map[string]any{"message": "Hello, world!"},
+			want:       "Received: Hello, world!",
+			wantErr:    false,
 		},
 		{
-			name:           "validated parameters success",
-			callback:       ToolCallBackFunc[ValidatedParams](validatedCallback),
-			parametersJSON: `{"name": "John Doe", "email": "john@example.com"}`,
-			toolCallID:     "tool456",
-			want:           "User: John Doe (john@example.com)",
-			wantErr:        false,
+			name:       "validated parameters success",
+			callback:   ToolCallBackFunc[ValidatedParams](validatedCallback),
+			parameters: map[string]any{"name": "John Doe", "email": "john@example.com"},
+			want:       "User: John Doe (john@example.com)",
+			wantErr:    false,
 		},
 		{
-			name:           "validation failure",
-			callback:       ToolCallBackFunc[ValidatedParams](validatedCallback),
-			parametersJSON: `{"name": ""}`,
-			toolCallID:     "tool789",
-			want:           "parameter validation failed: name is required",
-			wantErr:        false,
+			name:       "validation failure",
+			callback:   ToolCallBackFunc[ValidatedParams](validatedCallback),
+			parameters: map[string]any{"name": ""},
+			want:       "parameter validation failed: name is required",
+			wantErr:    false,
 		},
 		{
-			name:           "unmarshal error",
-			callback:       ToolCallBackFunc[SimpleParams](simpleCallback),
-			parametersJSON: `{"message": 123}`, // Type mismatch should cause unmarshal error
-			toolCallID:     "tool101",
-			want:           "",
-			wantErr:        true,
-			errContains:    "failed to unmarshal",
+			name:        "unmarshal error",
+			callback:    ToolCallBackFunc[SimpleParams](simpleCallback),
+			parameters:  map[string]any{"message": 123}, // Type mismatch should cause unmarshal error
+			want:        "",
+			wantErr:     true,
+			errContains: "failed to unmarshal",
 		},
 		{
-			name:           "callback error",
-			callback:       ToolCallBackFunc[SimpleParams](errorCallback),
-			parametersJSON: `{"message": "Hello"}`,
-			toolCallID:     "tool102",
-			want:           "deliberate error",
-			wantErr:        false,
+			name:       "callback error",
+			callback:   ToolCallBackFunc[SimpleParams](errorCallback),
+			parameters: map[string]any{"message": "Hello"},
+			want:       "deliberate error",
+			wantErr:    false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			message, err := tt.callback.Call(context.Background(), json.RawMessage(tt.parametersJSON), tt.toolCallID)
+			message, err := tt.callback.Call(context.Background(), tt.parameters)
 
 			// Check error
 			if (err != nil) != tt.wantErr {
@@ -124,10 +117,6 @@ func TestToolCallBackFunc_Call(t *testing.T) {
 
 			block := message.Blocks[0]
 
-			if block.ID != tt.toolCallID {
-				t.Errorf("Expected ID %q, got %q", tt.toolCallID, block.ID)
-			}
-
 			if block.BlockType != Content {
 				t.Errorf("Expected BlockType Content, got %q", block.BlockType)
 			}
@@ -143,8 +132,8 @@ func TestToolCallBackFunc_Call(t *testing.T) {
 	}
 }
 
-// TestToolCallBackFunc_DirectExecution tests that ToolCallBackFunc creates tool-result
-// messages when called with raw tool parameters.
+// TestToolCallBackFunc_DirectExecution tests that ToolCallBackFunc creates
+// tool-result messages when called with decoded tool parameters.
 func TestToolCallBackFunc_DirectExecution(t *testing.T) {
 	// Create a tool and its parameter type
 	type GreetParams struct {
@@ -156,11 +145,10 @@ func TestToolCallBackFunc_DirectExecution(t *testing.T) {
 		return fmt.Sprintf("Hello, %s!", params.Name), nil
 	})
 
-	// Call the function directly with JSON parameters
+	// Call the function directly with decoded parameters
 	result, err := toolCall.Call(
 		context.Background(),
-		json.RawMessage(`{"name":"World"}`),
-		"test-id",
+		map[string]any{"name": "World"},
 	)
 
 	if err != nil {
@@ -174,10 +162,6 @@ func TestToolCallBackFunc_DirectExecution(t *testing.T) {
 
 	if len(result.Blocks) != 1 {
 		t.Fatalf("Expected 1 block, got %d", len(result.Blocks))
-	}
-
-	if result.Blocks[0].ID != "test-id" {
-		t.Errorf("Expected ID 'test-id', got %q", result.Blocks[0].ID)
 	}
 
 	if result.Blocks[0].Content.String() != "Hello, World!" {

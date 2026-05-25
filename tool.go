@@ -2,7 +2,6 @@ package gai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -114,7 +113,6 @@ type Tool struct {
 // The callback should return a message with role ToolResult containing
 // the result of the tool execution. The message will be validated to ensure
 // it has the correct role, at least one block, and that all blocks have:
-// - The correct ID matching the tool call ID
 // - Non-nil content
 // - A valid block type
 // - A valid modality type
@@ -124,43 +122,39 @@ type Tool struct {
 //
 //	type StockAPI struct{}
 //
-//	func (s *StockAPI) Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
+//	func (s *StockAPI) Call(ctx context.Context, parameters map[string]any) (Message, error) {
 //	    // Context can be used for timeouts and cancellation
 //	    if ctx.Err() != nil {
 //	        return Message{}, fmt.Errorf("context cancelled: %w", ctx.Err())
 //	    }
 //
-//	    // Parse parameters from JSON
-//	    var params struct {
-//	        Ticker string `json:"ticker"`
-//	    }
-//	    if err := json.Unmarshal(parametersJSON, &params); err != nil {
+//	    // Read parameters from the decoded tool input
+//	    ticker, ok := parameters["ticker"].(string)
+//	    if !ok || ticker == "" {
 //	        return Message{
 //	            Role: ToolResult,
 //	            Blocks: []Block{
 //	                {
-//	                    ID:           toolCallID,
 //	                    BlockType:    Content,
 //	                    ModalityType: Text,
 //	                    MimeType:     "text/plain",
-//	                    Content:      Str(fmt.Sprintf("Error parsing parameters: %v", err)),
+//	                    Content:      Str("Error: ticker is required"),
 //	                },
 //	            },
 //	        }, nil
 //	    }
 //
-//	    price, err := s.fetchPrice(ctx, params.Ticker)
+//	    price, err := s.fetchPrice(ctx, ticker)
 //	    if err != nil {
 //	        // Example of expected error - fed back to Generator as a message
 //	        return Message{
 //	            Role: ToolResult,
 //	            Blocks: []Block{
 //	                {
-//	                    ID:           toolCallID,  // Must match the tool call ID
-//	                    BlockType:    Content,     // Must specify a block type
+//	                    BlockType:    Content,      // Must specify a block type
 //	                    ModalityType: Text,
 //	                    MimeType:     "text/plain", // Required for all blocks
-//	                    Content:      Str(fmt.Sprintf("Error: failed to get price for %s: %v", params.Ticker, err)),
+//	                    Content:      Str(fmt.Sprintf("Error: failed to get price for %s: %v", ticker, err)),
 //	                },
 //	            },
 //	        }, nil
@@ -171,7 +165,6 @@ type Tool struct {
 //	        Role: ToolResult,
 //	        Blocks: []Block{
 //	            {
-//	                ID:           toolCallID,
 //	                BlockType:    Content,
 //	                ModalityType: Text,
 //	                MimeType:     "text/plain",
@@ -184,16 +177,13 @@ type Tool struct {
 //	// Example of a tool returning an image
 //	type ImageGeneratorTool struct{}
 //
-//	func (t *ImageGeneratorTool) Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
-//	    // Parse parameters
-//	    var params struct {
-//	        Prompt string `json:"prompt"`
-//	    }
-//	    if err := json.Unmarshal(parametersJSON, &params); err != nil {
-//	        return Message{}, fmt.Errorf("failed to parse parameters: %w", err)
+//	func (t *ImageGeneratorTool) Call(ctx context.Context, parameters map[string]any) (Message, error) {
+//	    prompt, ok := parameters["prompt"].(string)
+//	    if !ok || prompt == "" {
+//	        return Message{}, fmt.Errorf("prompt is required")
 //	    }
 //
-//	    imageData, err := t.generateImage(ctx, params.Prompt)
+//	    imageData, err := t.generateImage(ctx, prompt)
 //	    if err != nil {
 //	        return Message{}, err
 //	    }
@@ -205,7 +195,6 @@ type Tool struct {
 //	        Role: ToolResult,
 //	        Blocks: []Block{
 //	            {
-//	                ID:           toolCallID,
 //	                BlockType:    Content,
 //	                ModalityType: Image,           // Image modality
 //	                MimeType:     "image/jpeg",    // MimeType is required for all modalities
@@ -217,12 +206,10 @@ type Tool struct {
 type ToolCallback interface {
 	// Call executes the tool with the given parameters and returns a tool result message.
 	// The context should be used for cancellation and timeouts.
-	// The parametersJSON contains the tool's parameters as raw JSON as defined by its InputSchema.
-	// The toolCallID is the ID of the tool call block that initiated this tool execution.
+	// The parameters map contains the decoded tool parameters as defined by its InputSchema.
 	//
 	// The returned message must have the ToolResult role and at least one block.
 	// Each block must have:
-	// - ID matching the provided toolCallID
 	// - Non-nil Content
 	// - A valid BlockType (usually "content")
 	// - A valid ModalityType (Text, Image, Audio, or Video)
@@ -230,7 +217,7 @@ type ToolCallback interface {
 	//
 	// The second return value should only be non-nil if the callback itself fails to execute
 	// (e.g., network errors, panics, context cancellation).
-	Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error)
+	Call(ctx context.Context, parameters map[string]any) (Message, error)
 }
 
 type ToolRegister interface {

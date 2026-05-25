@@ -58,9 +58,9 @@ func (c CallbackExecErr) Error() string {
 // ToolCallBackFunc is a generic function type that wraps a callback function
 // with a strongly-typed parameter struct, implementing the ToolCallback interface.
 //
-// The type parameter T represents the struct type that will be unmarshaled from
-// the tool's JSON parameters. This allows for type-safe tool callbacks without
-// the need to manually handle JSON unmarshaling or message creation.
+// The type parameter T represents the struct type that decoded tool parameters
+// will be converted into. This allows for type-safe tool callbacks without
+// manually handling parameter decoding or message creation.
 //
 // Callback error handling:
 //   - If the callback returns an error value of type CallbackExecErr (or wraps one),
@@ -92,18 +92,22 @@ func (c CallbackExecErr) Error() string {
 //	toolGen.Register(weatherTool, ToolCallBackFunc(getWeather))
 type ToolCallBackFunc[T any] func(ctx context.Context, t T) (string, error)
 
-// Call implements the ToolCallback interface, handling JSON unmarshaling
-// and message creation automatically.
+// Call implements the ToolCallback interface, handling parameter conversion and
+// message creation automatically.
 //
-// It unmarshals the JSON parameters into the type T, optionally validates them if T implements the Validator interface,
+// It converts the decoded parameters map into the type T, optionally validates it if T implements the Validator interface,
 // calls the wrapped function with the parsed parameters, and constructs a properly formatted ToolResult message from
 // the result.
 //
 // Error handling:
 //   - If the callback returns a non-nil error of type CallbackExecErr (or wrapping one), this signals a real callback execution failure (e.g., panic, context cancellation), and the underlying error is returned so the caller can terminate the tool loop.
 //   - If the callback returns any other non-nil error, it is treated as an erroneous tool result, and a text ToolResult message containing the error message is returned instead of terminating execution.
-func (f ToolCallBackFunc[T]) Call(ctx context.Context, parametersJSON json.RawMessage, toolCallID string) (Message, error) {
+func (f ToolCallBackFunc[T]) Call(ctx context.Context, parameters map[string]any) (Message, error) {
 	var t T
+	parametersJSON, err := json.Marshal(parameters)
+	if err != nil {
+		return Message{}, fmt.Errorf("failed to marshal parameters: %w", err)
+	}
 	if err := json.Unmarshal(parametersJSON, &t); err != nil {
 		return Message{}, fmt.Errorf("failed to unmarshal parameters: %w", err)
 	}
@@ -112,10 +116,10 @@ func (f ToolCallBackFunc[T]) Call(ctx context.Context, parametersJSON json.RawMe
 	if validator, ok := any(&t).(Validator); ok {
 		if err := validator.Validate(); err != nil {
 			// Otherwise: Treat as tool error, return as tool result message so execution can continue.
-			msg := ToolResultMessage(
-				toolCallID,
-				TextBlock(fmt.Errorf("parameter validation failed: %s", err).Error()),
-			)
+			msg := Message{
+				Role:   ToolResult,
+				Blocks: []Block{TextBlock(fmt.Errorf("parameter validation failed: %s", err).Error())},
+			}
 			msg.ToolResultError = true
 			return msg, nil
 		}
@@ -130,11 +134,17 @@ func (f ToolCallBackFunc[T]) Call(ctx context.Context, parametersJSON json.RawMe
 			return Message{}, execErr.Unwrap()
 		}
 		// Otherwise: Treat as tool error, return as tool result message so execution can continue.
-		msg := ToolResultMessage(toolCallID, TextBlock(err.Error()))
+		msg := Message{
+			Role:   ToolResult,
+			Blocks: []Block{TextBlock(err.Error())},
+		}
 		msg.ToolResultError = true
 		return msg, nil
 	}
 
 	// Create and return a text tool result message
-	return ToolResultMessage(toolCallID, TextBlock(content)), nil
+	return Message{
+		Role:   ToolResult,
+		Blocks: []Block{TextBlock(content)},
+	}, nil
 }
