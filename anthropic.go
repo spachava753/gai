@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"strconv"
+	"strings"
 
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -42,6 +43,46 @@ const (
 	// This signature is required when sending thinking blocks back to the API.
 	AnthropicExtraFieldThinkingSignature = "anthropic_thinking_signature"
 )
+
+func applyAnthropicThinkingConfig(params *a.MessageNewParams, budget string) error {
+	budget = strings.ToLower(strings.TrimSpace(budget))
+	if budget == "" {
+		return nil
+	}
+
+	switch budget {
+	case "adaptive":
+		params.Thinking = a.ThinkingConfigParamUnion{
+			OfAdaptive: &a.ThinkingConfigAdaptiveParam{},
+		}
+		return nil
+	case "disabled":
+		params.Thinking = a.ThinkingConfigParamUnion{
+			OfDisabled: &a.ThinkingConfigDisabledParam{},
+		}
+		return nil
+	case "low", "medium", "high", "xhigh", "max":
+		params.Thinking = a.ThinkingConfigParamUnion{
+			OfAdaptive: &a.ThinkingConfigAdaptiveParam{},
+		}
+		params.OutputConfig.Effort = a.OutputConfigEffort(budget)
+		return nil
+	}
+
+	parsedBudget, err := strconv.ParseUint(budget, 10, 64)
+	if err != nil {
+		return &InvalidParameterErr{
+			Parameter: "thinking budget",
+			Reason:    fmt.Sprintf("value must be 'adaptive', 'disabled', one of 'low', 'medium', 'high', 'xhigh', 'max', or a valid unsigned int: %s", err),
+		}
+	}
+	params.Thinking = a.ThinkingConfigParamUnion{
+		OfEnabled: &a.ThinkingConfigEnabledParam{
+			BudgetTokens: int64(parsedBudget),
+		},
+	}
+	return nil
+}
 
 // toAnthropicMessage converts a gai.Message to an Anthropic message.
 // It returns an error if the message contains unsupported modalities or block types.
@@ -386,31 +427,8 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 			}
 		}
 
-		if options.ThinkingBudget != "" {
-			switch options.ThinkingBudget {
-			case "adaptive":
-				params.Thinking = a.ThinkingConfigParamUnion{
-					OfAdaptive: &a.ThinkingConfigAdaptiveParam{},
-				}
-			case "disabled":
-				params.Thinking = a.ThinkingConfigParamUnion{
-					OfDisabled: &a.ThinkingConfigDisabledParam{},
-				}
-			default:
-				// Try to parse as token budget for backward compatibility
-				budget, err := strconv.ParseUint(options.ThinkingBudget, 10, 64)
-				if err != nil {
-					return Response{}, &InvalidParameterErr{
-						Parameter: "thinking budget",
-						Reason:    fmt.Sprintf("value must be 'adaptive', 'disabled', or a valid unsigned int: %s", err),
-					}
-				}
-				params.Thinking = a.ThinkingConfigParamUnion{
-					OfEnabled: &a.ThinkingConfigEnabledParam{
-						BudgetTokens: int64(budget),
-					},
-				}
-			}
+		if err := applyAnthropicThinkingConfig(&params, options.ThinkingBudget); err != nil {
+			return Response{}, err
 		}
 	}
 
@@ -649,32 +667,9 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				}
 			}
 
-			if options.ThinkingBudget != "" {
-				switch options.ThinkingBudget {
-				case "adaptive":
-					params.Thinking = a.ThinkingConfigParamUnion{
-						OfAdaptive: &a.ThinkingConfigAdaptiveParam{},
-					}
-				case "disabled":
-					params.Thinking = a.ThinkingConfigParamUnion{
-						OfDisabled: &a.ThinkingConfigDisabledParam{},
-					}
-				default:
-					// Try to parse as token budget for backward compatibility
-					budget, err := strconv.ParseUint(options.ThinkingBudget, 10, 64)
-					if err != nil {
-						yield(StreamChunk{}, InvalidParameterErr{
-							Parameter: "thinking budget",
-							Reason:    fmt.Sprintf("value must be 'adaptive', 'disabled', or a valid unsigned int: %s", err),
-						})
-						return
-					}
-					params.Thinking = a.ThinkingConfigParamUnion{
-						OfEnabled: &a.ThinkingConfigEnabledParam{
-							BudgetTokens: int64(budget),
-						},
-					}
-				}
+			if err := applyAnthropicThinkingConfig(&params, options.ThinkingBudget); err != nil {
+				yield(StreamChunk{}, err)
+				return
 			}
 		}
 
