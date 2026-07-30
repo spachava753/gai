@@ -366,6 +366,21 @@ func (g *AnthropicGenerator) Register(tool Tool) error {
 }
 
 // Generate implements gai.Generator
+func anthropicStopError(reason a.StopReason, details a.RefusalStopDetails) error {
+	switch reason {
+	case a.StopReasonMaxTokens, a.StopReasonModelContextWindowExceeded:
+		return ErrMaxGenerationLimit
+	case a.StopReasonRefusal:
+		message := details.Explanation
+		if message == "" {
+			message = "request refused by content policy"
+		}
+		return ContentPolicyErr(message)
+	default:
+		return nil
+	}
+}
+
 func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("anthropic: client not initialized")
@@ -586,17 +601,17 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	switch resp.StopReason {
 	case a.StopReasonEndTurn:
 		result.FinishReason = EndTurn
-	case a.StopReasonMaxTokens:
+	case a.StopReasonMaxTokens, a.StopReasonModelContextWindowExceeded:
 		result.FinishReason = MaxGenerationLimit
-		// Return ErrMaxGenerationLimit when the model reaches its token limit,
-		// regardless of whether MaxGenerationTokens was explicitly set
-		return result, ErrMaxGenerationLimit
 	case a.StopReasonStopSequence:
 		result.FinishReason = StopSequence
 	case a.StopReasonToolUse:
 		result.FinishReason = ToolUse
 	default:
 		result.FinishReason = Unknown
+	}
+	if err := anthropicStopError(resp.StopReason, resp.StopDetails); err != nil {
+		return result, err
 	}
 
 	return result, nil
@@ -743,8 +758,12 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 
 			switch event := chunk.AsAny().(type) {
 			case a.MessageDeltaEvent:
-				// Capture usage from message delta event
+				// Capture usage and terminal status from the final message delta.
 				finalUsage = &event.Usage
+				if err := anthropicStopError(event.Delta.StopReason, event.Delta.StopDetails); err != nil {
+					yield(StreamChunk{}, err)
+					return
+				}
 				continue
 
 			case a.ContentBlockStartEvent:

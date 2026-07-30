@@ -584,6 +584,10 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 
 	// Set finish reason
 	if len(resp.Choices) > 0 {
+		if refusal := resp.Choices[0].Message.Refusal; refusal != "" {
+			result.FinishReason = Unknown
+			return result, ContentPolicyErr(refusal)
+		}
 		switch resp.Choices[0].FinishReason {
 		case "stop":
 			result.FinishReason = EndTurn

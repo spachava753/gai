@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"  // Register GIF format
@@ -640,6 +639,10 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 	// Set finish reason
 	if len(resp.Choices) > 0 {
+		if refusal := resp.Choices[0].Message.Refusal; refusal != "" {
+			result.FinishReason = Unknown
+			return result, ContentPolicyErr(refusal)
+		}
 		switch resp.Choices[0].FinishReason {
 		case "stop":
 			result.FinishReason = EndTurn
@@ -867,7 +870,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			}
 
 			if chunk.Choices[0].Delta.Refusal != "" {
-				yield(StreamChunk{}, errors.New("content refused"))
+				yield(StreamChunk{}, ContentPolicyErr(chunk.Choices[0].Delta.Refusal))
 				return
 			}
 

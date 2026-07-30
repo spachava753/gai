@@ -2,11 +2,54 @@ package gai
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
+
+func TestCerebrasGeneratorReturnsContentPolicyError(t *testing.T) {
+	tests := []struct {
+		name       string
+		choiceJSON string
+		want       string
+	}{
+		{
+			name:       "content filter finish reason",
+			choiceJSON: `{"index":0,"finish_reason":"content_filter","message":{"role":"assistant","content":""}}`,
+			want:       "content policy violation detected",
+		},
+		{
+			name:       "message refusal",
+			choiceJSON: `{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","refusal":"I cannot help with that."}}`,
+			want:       "I cannot help with that.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"chatcmpl_123","object":"chat.completion","created":0,"model":"test","choices":[` + tt.choiceJSON + `]}`))
+			}))
+			defer server.Close()
+
+			generator := NewCerebrasGenerator(server.Client(), server.URL, "test", "", "test-key")
+			_, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+
+			var policyErr ContentPolicyErr
+			if !errors.As(err, &policyErr) {
+				t.Fatalf("Generate error = %T %v, want ContentPolicyErr", err, err)
+			}
+			if !strings.Contains(policyErr.Error(), tt.want) {
+				t.Fatalf("Generate error = %q, want message containing %q", policyErr, tt.want)
+			}
+		})
+	}
+}
 
 func TestCerebrasGenerator_Generate(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")

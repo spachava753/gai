@@ -12,6 +12,25 @@ import (
 	"testing"
 )
 
+func TestOpenRouterGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
+	client := &mockChatCompletionService{response: &openai.ChatCompletion{
+		Choices: []openai.ChatCompletionChoice{{
+			FinishReason: "stop",
+			Message:      openai.ChatCompletionMessage{Refusal: "I cannot help with that."},
+		}},
+	}}
+	generator := NewOpenRouterGenerator(client, "test-model", "")
+
+	_, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	var policyErr ContentPolicyErr
+	if !errors.As(err, &policyErr) {
+		t.Fatalf("Generate error = %T %v, want ContentPolicyErr", err, err)
+	}
+	if !strings.Contains(policyErr.Error(), "I cannot help with that.") {
+		t.Fatalf("Generate error = %q, want refusal message", policyErr)
+	}
+}
+
 func TestOpenRouterGenerator_Generate(t *testing.T) {
 	// Create an OpenAI client configured for OpenRouter
 	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")

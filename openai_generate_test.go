@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	oaissestream "github.com/openai/openai-go/v3/packages/ssestream"
@@ -13,8 +14,9 @@ import (
 
 // mockChatCompletionService is a mock implementation of OpenAICompletionService
 type mockChatCompletionService struct {
-	response *oai.ChatCompletion
-	err      error
+	response     *oai.ChatCompletion
+	err          error
+	streamEvents []oaissestream.Event
 }
 
 func (m *mockChatCompletionService) New(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (*oai.ChatCompletion, error) {
@@ -22,7 +24,68 @@ func (m *mockChatCompletionService) New(ctx context.Context, body oai.ChatComple
 }
 
 func (m *mockChatCompletionService) NewStreaming(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (stream *oaissestream.Stream[oai.ChatCompletionChunk]) {
-	panic("unimplemented")
+	return oaissestream.NewStream[oai.ChatCompletionChunk](&openAIStreamDecoder{events: m.streamEvents}, nil)
+}
+
+type openAIStreamDecoder struct {
+	events []oaissestream.Event
+	index  int
+	cur    oaissestream.Event
+}
+
+func (d *openAIStreamDecoder) Next() bool {
+	if d.index >= len(d.events) {
+		return false
+	}
+	d.cur = d.events[d.index]
+	d.index++
+	return true
+}
+
+func (d *openAIStreamDecoder) Event() oaissestream.Event { return d.cur }
+func (d *openAIStreamDecoder) Close() error              { return nil }
+func (d *openAIStreamDecoder) Err() error                { return nil }
+
+func TestOpenAIGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
+	client := &mockChatCompletionService{response: &oai.ChatCompletion{
+		Choices: []oai.ChatCompletionChoice{{
+			FinishReason: "stop",
+			Message:      oai.ChatCompletionMessage{Refusal: "I cannot help with that."},
+		}},
+	}}
+	generator := NewOpenAiGenerator(client, "gpt-5", "")
+
+	_, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	var policyErr ContentPolicyErr
+	if !errors.As(err, &policyErr) {
+		t.Fatalf("Generate error = %T %v, want ContentPolicyErr", err, err)
+	}
+	if !strings.Contains(policyErr.Error(), "I cannot help with that.") {
+		t.Fatalf("Generate error = %q, want refusal message", policyErr)
+	}
+}
+
+func TestOpenAIStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
+	client := &mockChatCompletionService{streamEvents: []oaissestream.Event{{
+		Data: []byte(`{"id":"chatcmpl_123","object":"chat.completion.chunk","created":0,"model":"gpt-5","choices":[{"index":0,"delta":{"refusal":"I cannot help with that."},"finish_reason":""}]}`),
+	}}}
+	generator := NewOpenAiGenerator(client, "gpt-5", "")
+
+	var gotErr error
+	for _, err := range generator.Stream(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil) {
+		if err != nil {
+			gotErr = err
+			break
+		}
+	}
+
+	var policyErr ContentPolicyErr
+	if !errors.As(gotErr, &policyErr) {
+		t.Fatalf("Stream error = %T %v, want ContentPolicyErr", gotErr, gotErr)
+	}
+	if !strings.Contains(policyErr.Error(), "I cannot help with that.") {
+		t.Fatalf("Stream error = %q, want refusal message", policyErr)
+	}
 }
 
 func TestGenerate(t *testing.T) {
@@ -76,7 +139,7 @@ func TestGenerate(t *testing.T) {
 
 	// Test with single stop sequence
 	singleStopOptions := &GenOpts{
-		Temperature: Ptr(0.7),
+		Temperature:   Ptr(0.7),
 		StopSequences: []string{"stop"},
 	}
 
@@ -122,13 +185,13 @@ func TestGenerate(t *testing.T) {
 
 	// Advanced options for testing more parameters
 	advancedOptions := &GenOpts{
-		Temperature: Ptr(0.5),
-		TopP: Ptr(0.9),
-		TopK: Ptr[uint](10),
-		FrequencyPenalty: Ptr(0.2),
-		PresencePenalty: Ptr(0.1),
+		Temperature:         Ptr(0.5),
+		TopP:                Ptr(0.9),
+		TopK:                Ptr[uint](10),
+		FrequencyPenalty:    Ptr(0.2),
+		PresencePenalty:     Ptr(0.1),
 		MaxGenerationTokens: Ptr(100),
-		N: Ptr[uint](2),
+		N:                   Ptr[uint](2),
 		StopSequences:       []string{"stop"},
 		ToolChoice:          ToolChoiceToolsRequired,
 	}
