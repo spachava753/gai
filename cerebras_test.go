@@ -9,7 +9,7 @@ import (
 )
 
 func TestCerebrasGenerator_Generate(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "CEREBRAS_API_KEY")
+	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	gen := NewCerebrasGenerator(nil, "", "gpt-oss-120b", "You are a helpful assistant.", apiKey)
 	dialog := Dialog{
 		{
@@ -25,7 +25,7 @@ func TestCerebrasGenerator_Generate(t *testing.T) {
 	}
 }
 func TestCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "CEREBRAS_API_KEY")
+	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	// Use gpt-oss-120b model which supports reasoning with reasoning_effort parameter
 	gen := NewCerebrasGenerator(
 		nil,
@@ -113,7 +113,7 @@ func TestCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
 	}
 }
 func TestCerebrasGenerator_Generate_reasoning_zai(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "CEREBRAS_API_KEY")
+	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	// Use zai-glm-4.6 model which supports reasoning with disable_reasoning parameter
 	gen := NewCerebrasGenerator(
 		nil,
@@ -197,7 +197,7 @@ func TestCerebrasGenerator_Generate_reasoning_zai(t *testing.T) {
 	}
 }
 func TestCerebrasGenerator_Register(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "CEREBRAS_API_KEY")
+	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	cgen := NewCerebrasGenerator(nil, "", "qwen-3-235b-a22b-instruct-2507", `You are a helpful assistant that returns the price of a stock and nothing else.
 Only output the price, like
 <example>

@@ -13,7 +13,7 @@ import (
 )
 
 func TestResponsesGenerator_Generate_pdf(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	pdfBytes, err := os.ReadFile("sample.pdf")
 	if err != nil {
 		t.Skip("could not open sample.pdf")
@@ -45,7 +45,7 @@ func TestResponsesGenerator_Generate_pdf(t *testing.T) {
 	}
 }
 func TestResponsesGenerator_Generate_image(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
 		t.Skip("could not open sample.jpg")
@@ -93,7 +93,7 @@ func TestResponsesGenerator_Generate_image(t *testing.T) {
 	}
 }
 func TestResponsesGenerator_Generate(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, "You are a helpful assistant")
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Hi!")}}}
@@ -106,7 +106,7 @@ func TestResponsesGenerator_Generate(t *testing.T) {
 	}
 }
 func TestResponsesGenerator_Generate_thinking(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5, "You are a helpful assistant")
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Are LLMs conscious? Think it through and give a comprehensive answer")}}}
@@ -133,7 +133,7 @@ func TestResponsesGenerator_Generate_thinking(t *testing.T) {
 	}
 }
 func TestResponsesGenerator_Register(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that returns the price of a stock and nothing else.
 Only output the price, like
@@ -195,7 +195,7 @@ Only output the price, like
 	}
 }
 func TestResponsesGenerator_Register_parallelToolUse(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater.
 Only mentioned the ticker and nothing else.
@@ -264,7 +264,7 @@ Assistant: Nvidia
 // compresses streaming chunks into complete Response objects, making it easy
 // to append the assistant's response to the dialog for subsequent turns.
 func TestStreamingAdapter_responses(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	// Create the generator and wrap it with StreamingAdapter.
 	// StreamingAdapter.Generate streams internally, then compresses chunks into
@@ -294,7 +294,7 @@ func TestStreamingAdapter_responses(t *testing.T) {
 // so the dialog can be passed back for subsequent turns without any manual chunk
 // reconstruction.
 func TestStreamingAdapter_responses_toolUse(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that returns the price of a stock and nothing else.
 Only output the price, like
@@ -372,7 +372,7 @@ Only output the price, like
 // dialog-ready assistant message from the streamed blocks using
 // compressStreamingBlocks (via StreamingAdapter) for a follow-up turn.
 func TestResponsesGenerator_Stream_thinking(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the capital of France? Reply with just the city name.")}}}

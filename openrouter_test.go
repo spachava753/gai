@@ -14,7 +14,7 @@ import (
 
 func TestOpenRouterGenerator_Generate(t *testing.T) {
 	// Create an OpenAI client configured for OpenRouter
-	apiKey := skipOnMissingEnv(t, "OPENROUTER_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 		option.WithAPIKey(apiKey),
@@ -52,7 +52,7 @@ func TestOpenRouterGenerator_Generate(t *testing.T) {
 	}
 }
 func TestOpenRouterGenerator_Generate_image(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENROUTER_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
 		t.Skip("could not open sample.jpg")
@@ -102,7 +102,7 @@ func TestOpenRouterGenerator_Generate_image(t *testing.T) {
 	}
 }
 func TestOpenRouterGenerator_Register(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENROUTER_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 		option.WithAPIKey(apiKey),
@@ -170,7 +170,7 @@ func TestOpenRouterGenerator_Register(t *testing.T) {
 	}
 }
 func TestOpenRouterGenerator_Generate_reasoningModel(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENROUTER_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 		option.WithAPIKey(apiKey),
@@ -268,7 +268,7 @@ func TestOpenRouterGenerator_Generate_invalidModel(t *testing.T) {
 	// This example demonstrates handling of invalid model IDs with OpenRouter.
 	// OpenRouter returns a 400 status code with error details in the response body
 	// for invalid requests like nonsense model IDs.
-	apiKey := skipOnMissingEnv(t, "OPENROUTER_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 		option.WithAPIKey(apiKey),

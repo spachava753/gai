@@ -13,6 +13,7 @@ import (
 )
 
 func TestAnthropicGenerator_Generate(t *testing.T) {
+	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
 	// Demonstration of how to enable system prompt caching
@@ -52,6 +53,7 @@ func TestAnthropicGenerator_Generate(t *testing.T) {
 	}
 }
 func TestAnthropicGenerator_Stream(t *testing.T) {
+	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
 	// Demonstration of how to enable system prompt caching
@@ -82,6 +84,7 @@ func TestAnthropicGenerator_Stream(t *testing.T) {
 	}
 }
 func TestAnthropicGenerator_Generate_thinking(t *testing.T) {
+	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
 	// Instantiate an Anthropic Generator
@@ -130,7 +133,7 @@ func TestAnthropicGenerator_Generate_thinking(t *testing.T) {
 	}
 }
 func TestAnthropicGenerator_Generate_image(t *testing.T) {
-	skipOnMissingEnv(t, "ANTHROPIC_API_KEY")
+	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// This example assumes that sample.jpg is present in the current directory.
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
@@ -177,6 +180,7 @@ func TestAnthropicGenerator_Generate_image(t *testing.T) {
 	}
 }
 func TestAnthropicGenerator_Register(t *testing.T) {
+	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
 	// Demonstration of how to enable system and multi turn message prompt caching
@@ -256,6 +260,7 @@ Only output the price, like
 	}
 }
 func TestAnthropicGenerator_Register_parallelToolUse(t *testing.T) {
+	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
 	// Register tools
@@ -355,6 +360,7 @@ Assistant: MSFT
 	}
 }
 func TestAnthropicGenerator_Stream_parallelToolUse(t *testing.T) {
+	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
 	// Register tools
@@ -581,7 +587,7 @@ func TestAnthropicGenerator_Count(t *testing.T) {
 	}
 }
 func TestAnthropicGenerator_Generate_pdf(t *testing.T) {
-	skipOnMissingEnv(t, "ANTHROPIC_API_KEY")
+	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// This example assumes that sample.pdf is present in the current directory.
 	pdfBytes, err := os.ReadFile("sample.pdf")
 	if err != nil {

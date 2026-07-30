@@ -367,7 +367,7 @@ func TestToOpenAIMessage(t *testing.T) {
 }
 
 func TestOpenAiGenerator_Generate_image(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
 		t.Skip("could not open sample.jpg")
@@ -415,7 +415,7 @@ func TestOpenAiGenerator_Generate_image(t *testing.T) {
 	}
 }
 func TestOpenAiGenerator_Generate_audio(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	audioBytes, err := os.ReadFile("sample.wav")
 	if err != nil {
 		t.Skip("could not open sample.wav")
@@ -464,7 +464,7 @@ func TestOpenAiGenerator_Generate_audio(t *testing.T) {
 }
 func TestOpenAiGenerator_Generate(t *testing.T) {
 	// Create an OpenAI client
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := oai.NewClient(
 		option.WithAPIKey(apiKey),
 	)
@@ -504,7 +504,7 @@ func TestOpenAiGenerator_Generate(t *testing.T) {
 }
 func TestOpenAiGenerator_Stream(t *testing.T) {
 	// Create an OpenAI client
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := oai.NewClient(
 		option.WithAPIKey(apiKey),
 	)
@@ -537,7 +537,7 @@ func TestOpenAiGenerator_Generate_openRouter(t *testing.T) {
 	// Create an OpenAI client for open router
 	client := oai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1/"),
-		option.WithAPIKey(skipOnMissingEnv(t, "OPENROUTER_API_KEY")),
+		option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
 	)
 	// Instantiate a OpenAI Generator
 	gen := NewOpenAiGenerator(
@@ -696,7 +696,7 @@ Only output the price, like
 }
 func TestOpenAiGenerator_Stream_parallelToolUse(t *testing.T) {
 	// Create an OpenAI client
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := oai.NewClient(
 		option.WithAPIKey(apiKey),
 	)
@@ -934,7 +934,7 @@ func TestOpenAiGenerator_Register_openRouter(t *testing.T) {
 	// Create an OpenAI client for open router
 	client := oai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1/"),
-		option.WithAPIKey(skipOnMissingEnv(t, "OPENROUTER_API_KEY")),
+		option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
 	)
 	// Instantiate a OpenAI Generator
 	gen := NewOpenAiGenerator(
@@ -999,7 +999,7 @@ func TestOpenAiGenerator_Register_openRouterParallelToolUse(t *testing.T) {
 	// Create an OpenAI client
 	client := oai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1/"),
-		option.WithAPIKey(skipOnMissingEnv(t, "OPENROUTER_API_KEY")),
+		option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
 	)
 	// Register tools
 	tickerTool := Tool{
@@ -1135,7 +1135,7 @@ func TestOpenAiGenerator_Count_Example(t *testing.T) {
 	}
 }
 func TestOpenAiGenerator_Generate_pdf(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "OPENAI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	pdfBytes, err := os.ReadFile("sample.pdf")
 	if err != nil {
 		t.Skip("could not open sample.wav")

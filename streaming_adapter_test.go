@@ -16,7 +16,7 @@ import (
 // a StreamingGenerator to a regular Generator. This is useful when you want to
 // use streaming internally but present a non-streaming interface to users.
 func TestStreamingAdapter(t *testing.T) {
-	skipOnMissingEnv(t, "OPENAI_API_KEY")
+	requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient()
 	gen := NewOpenAiGenerator(
@@ -39,7 +39,7 @@ func TestStreamingAdapter(t *testing.T) {
 // ExampleStreamingAdapter_withTools demonstrates using StreamingAdapter with tool calls.
 // The adapter handles the compression of streaming tool call chunks into complete tool calls.
 func TestStreamingAdapter_withTools(t *testing.T) {
-	skipOnMissingEnv(t, "OPENAI_API_KEY")
+	requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient()
 	gen := NewOpenAiGenerator(
@@ -178,7 +178,7 @@ func TestStreamingAdapter_separatorBlocksAreInternal(t *testing.T) {
 // ExampleStreamingAdapter_parallelToolCalls demonstrates how StreamingAdapter handles
 // parallel tool calls, showing the compression of multiple tool call chunks.
 func TestStreamingAdapter_parallelToolCalls(t *testing.T) {
-	skipOnMissingEnv(t, "OPENAI_API_KEY")
+	requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient()
 	gen := NewOpenAiGenerator(

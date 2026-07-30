@@ -29,7 +29,8 @@ Requirements: Go 1.22+.
 Common commands
 - Install deps: `go mod download`
 - Lint (if golangci-lint installed): `golangci-lint run` (optional)
-- Run tests (all): `go test ./...`
+- Run tests (all, live API tests skipped): `go test ./...`
+- Run live API tests only when explicitly requested by the user: `LIVE_TESTS=1 go test ./...` (also requires the relevant provider API keys)
 - Run tests with race: `go test -race ./...`
 - Run a single test file: `go test -run TestName ./...`
 - Examples as docs: `go test ./...` executes `*_example_test.go`
@@ -87,6 +88,8 @@ Provider-specific metadata placement
 - Use `go test ./...` locally and in CI
 - Structure tests as table-driven where relevant
 - Prefer live tests, that is, actually making network calls with SDKs and our packages, mocks cannot provide the same testing gaurantees
+- Gate every test that makes a live API call with `requireLiveAPIKey`; live tests run only when `LIVE_TESTS` and the relevant provider API key are both set
+- Never run live tests unless the user explicitly asks for them, even when `LIVE_TESTS` and provider credentials are already set in the environment
 - Example tests (`*_example_test.go`) should compile and run as documentation
 - For streaming, assert on ordered chunk assembly and termination conditions
 - Include negative tests: timeouts, API errors, invalid tool payloads
@@ -125,6 +128,7 @@ Dependencies
 
 Environment variables
 - Provider keys as above
+- `LIVE_TESTS=1` explicitly enables network-backed tests; the relevant provider API key must also be set
 - Tuning flags when present should be wired through options structs; document defaults in README
 
 Configuration management

@@ -12,7 +12,7 @@ import (
 )
 
 func TestGeminiGenerator_Generate(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -36,7 +36,7 @@ func TestGeminiGenerator_Generate(t *testing.T) {
 	}
 }
 func TestGeminiGenerator_Stream(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -65,7 +65,7 @@ func TestGeminiGenerator_Stream(t *testing.T) {
 	requireTextContains(t, content.String(), "Paris")
 }
 func TestGeminiGenerator_Register(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -206,7 +206,7 @@ When a user asks for the server time, always call the server time tool, don't us
 	requireTextContains(t, requireContentBlock(t, requireBlock(t, requireCandidate(t, response), 0)), "MSFT", "300", "UTC")
 }
 func TestGeminiGenerator_Generate_image(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	// ---
 	// This example assumes that sample.jpg is present in the current directory.
 	// Place a JPEG image named sample.jpg in the same directory as this file (or adjust the path).
@@ -268,7 +268,7 @@ func TestGeminiGenerator_Generate_image(t *testing.T) {
 	}
 }
 func TestGeminiGenerator_Generate_audio(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	audioBytes, err := os.ReadFile("sample.wav")
 	if err != nil {
 		t.Skip("could not open sample.wav")
@@ -318,7 +318,7 @@ func TestGeminiGenerator_Generate_audio(t *testing.T) {
 	}
 }
 func TestGeminiGenerator_Register_parallelToolUse(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -365,7 +365,7 @@ func TestGeminiGenerator_Register_parallelToolUse(t *testing.T) {
 	requireToolCallWithParam(t, calls, "get_stock_price", "ticker", "TSLA")
 }
 func TestGeminiGenerator_Stream_parallelToolUse(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -416,7 +416,7 @@ func TestGeminiGenerator_Stream_parallelToolUse(t *testing.T) {
 	}
 }
 func TestGeminiGenerator_Count(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -487,7 +487,7 @@ func TestGeminiGenerator_Count(t *testing.T) {
 	}
 }
 func TestGeminiGenerator_Generate_pdf(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,
@@ -529,7 +529,7 @@ func TestGeminiGenerator_Generate_pdf(t *testing.T) {
 	}
 }
 func TestGeminiGenerator_Register_parallelToolUse_multimedia(t *testing.T) {
-	apiKey := skipOnMissingEnv(t, "GEMINI_API_KEY")
+	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
 		ctx,

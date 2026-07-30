@@ -38,7 +38,7 @@ func requireBlockType(t *testing.T, resp Response, blockType string) Block {
 
 func TestZaiGenerator(t *testing.T) {
 	t.Run("Generate", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(nil, "glm-5.1", "You are a helpful assistant.", apiKey)
 		dialog := Dialog{
 			{
@@ -61,7 +61,7 @@ func TestZaiGenerator(t *testing.T) {
 	})
 
 	t.Run("GenerateThinking", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(
 			nil, "glm-5.1",
 			"You are a helpful assistant that explains your reasoning step by step.",
@@ -106,7 +106,7 @@ func TestZaiGenerator(t *testing.T) {
 	})
 
 	t.Run("GenerateInterleavedThinking", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		// Create generator with preserved thinking (clearThinking=false)
 		gen := NewZaiGenerator(
 			nil, "glm-5.1",
@@ -179,7 +179,7 @@ func TestZaiGenerator(t *testing.T) {
 	})
 
 	t.Run("GenerateMultiTurn", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(nil, "glm-5.1", "You are a helpful math tutor.", apiKey)
 		// First turn
 		dialog := Dialog{
@@ -246,7 +246,7 @@ func TestZaiGenerator(t *testing.T) {
 	})
 
 	t.Run("Register", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(nil, "glm-5.1", `You are a helpful assistant that returns the price of a stock and nothing else.
 Only output the price, like:
 <example>
@@ -325,7 +325,7 @@ Only output the price, like:
 	})
 
 	t.Run("GenerateParallelToolCalls", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(nil, "glm-5.1", `You are a tool-calling assistant.
 When the user asks for weather and stock information together, call both tools in the same assistant response before answering.`, apiKey)
 		weatherTool := Tool{
@@ -384,7 +384,7 @@ When the user asks for weather and stock information together, call both tools i
 	})
 
 	t.Run("Stream", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(nil, "glm-5.1", "You are a helpful assistant.", apiKey)
 		dialog := Dialog{
 			{
@@ -418,7 +418,7 @@ When the user asks for weather and stock information together, call both tools i
 	})
 
 	t.Run("StreamDisableThinking", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(nil, "glm-5.1", "You are concise.", apiKey, WithZaiThinking(false))
 		dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Count from 1 to 3")}}}
 		var contentChunks int
@@ -439,7 +439,7 @@ When the user asks for weather and stock information together, call both tools i
 	})
 
 	t.Run("StreamToolCalling", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(nil, "glm-5.1", "You are a helpful assistant.", apiKey)
 		// Register a calculator tool
 		calcTool := Tool{
@@ -484,7 +484,7 @@ When the user asks for weather and stock information together, call both tools i
 	})
 
 	t.Run("GenerateVisionImageURL", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(nil, "glm-5v-turbo", "Answer briefly.", apiKey, WithZaiThinking(false))
 		dialog := Dialog{{Role: User, Blocks: []Block{
 			{BlockType: Content, ModalityType: Image, MimeType: "image/png", Content: Str("https://cdn.bigmodel.cn/static/logo/register.png")},
@@ -499,7 +499,7 @@ When the user asks for weather and stock information together, call both tools i
 	})
 
 	t.Run("GenerateVisionVideoURL", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(nil, "glm-5v-turbo", "Answer briefly.", apiKey, WithZaiThinking(false))
 		dialog := Dialog{{Role: User, Blocks: []Block{
 			{BlockType: Content, ModalityType: Video, MimeType: "video/quicktime", Content: Str("https://cdn.bigmodel.cn/agent-demos/lark/113123.mov")},
@@ -514,7 +514,7 @@ When the user asks for weather and stock information together, call both tools i
 	})
 
 	t.Run("GenerateVisionPDFURL", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := NewZaiGenerator(nil, "glm-5v-turbo", "Answer briefly.", apiKey, WithZaiThinking(false))
 		pdf := PDFBlock([]byte("placeholder"), "demo1.pdf")
 		pdf.ExtraFields[ZaiExtraFieldURL] = "https://cdn.bigmodel.cn/static/demo/demo1.pdf"
@@ -531,7 +531,7 @@ When the user asks for weather and stock information together, call both tools i
 	})
 
 	t.Run("DisableThinking", func(t *testing.T) {
-		apiKey := skipOnMissingEnv(t, "Z_API_KEY")
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		// Create generator with thinking disabled
 		gen := NewZaiGenerator(
 			nil, "glm-5.1",

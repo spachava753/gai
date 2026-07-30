@@ -73,8 +73,12 @@ func requireToolCallWithParam(t *testing.T, calls []ToolCallInput, name, param s
 	t.Fatalf("missing tool call %s with %s=%v in %#v", name, param, value, calls)
 }
 
-func skipOnMissingEnv(t testing.TB, env string) string {
+func requireLiveAPIKey(t testing.TB, env string) string {
 	t.Helper()
+
+	if os.Getenv("LIVE_TESTS") == "" {
+		t.Skip("LIVE_TESTS not set")
+	}
 
 	value := os.Getenv(env)
 	if value == "" {

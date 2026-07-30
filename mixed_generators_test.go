@@ -11,8 +11,8 @@ import (
 // ExampleMixGenerators demonstrates how to mix different AI model providers
 // in a single conversation, switching between Anthropic and OpenAI models.
 func Test_mixGenerators(t *testing.T) {
-	skipOnMissingEnv(t, "ANTHROPIC_API_KEY")
-	skipOnMissingEnv(t, "OPENAI_API_KEY")
+	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
+	requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	// Initialize clients for both providers
 	anthropicClient := a.NewClient()
