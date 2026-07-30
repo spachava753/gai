@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	oai "github.com/openai/openai-go/v3"
@@ -61,9 +62,29 @@ type OpenRouterGenerator struct {
 	systemInstructions string
 }
 
-// openRouterRawResponse wraps the raw JSON response from OpenRouter
+type openRouterErrorMetadata struct {
+	ErrorType string `json:"error_type"`
+}
+
+type openRouterErrorPayload struct {
+	Code      json.RawMessage         `json:"code"`
+	Message   string                  `json:"message"`
+	ErrorType string                  `json:"error_type"`
+	Metadata  openRouterErrorMetadata `json:"metadata"`
+}
+
+func (p openRouterErrorPayload) canonicalErrorType() string {
+	if p.Metadata.ErrorType != "" {
+		return p.Metadata.ErrorType
+	}
+	return p.ErrorType
+}
+
+// openRouterRawResponse wraps the raw JSON response from OpenRouter.
 type openRouterRawResponse struct {
+	Error   *openRouterErrorPayload `json:"error"`
 	Choices []struct {
+		Error   *openRouterErrorPayload `json:"error"`
 		Message struct {
 			ReasoningDetails []struct {
 				Type      string `json:"type"`
@@ -77,6 +98,70 @@ type openRouterRawResponse struct {
 			} `json:"reasoning_details,omitempty"`
 		} `json:"message"`
 	} `json:"choices"`
+}
+
+func classifyOpenRouterError(statusCode int, errorType string) APIErrorKind {
+	switch errorType {
+	case "authentication":
+		return APIErrorKindAuthentication
+	case "permission_denied":
+		return APIErrorKindPermission
+	case "rate_limit_exceeded":
+		return APIErrorKindRateLimit
+	case "provider_overloaded":
+		return APIErrorKindOverloaded
+	case "provider_unavailable":
+		return APIErrorKindServiceUnavailable
+	case "timeout":
+		return APIErrorKindTimeout
+	case "server", "unmapped":
+		return APIErrorKindServer
+	case "not_found", "image_not_found":
+		return APIErrorKindNotFound
+	case "payload_too_large":
+		return APIErrorKindRequestTooLarge
+	case "content_policy_violation", "refusal":
+		return APIErrorKindContentPolicy
+	case "payment_required", "invalid_request", "precondition_failed", "unprocessable",
+		"context_length_exceeded", "max_tokens_exceeded", "token_limit_exceeded", "string_too_long",
+		"invalid_image", "image_too_small", "unsupported_image_format", "image_download_failed":
+		return APIErrorKindInvalidRequest
+	default:
+		return classifyHTTPStatus(statusCode)
+	}
+}
+
+func mapOpenRouterError(err error) *ApiErr {
+	var apiErr *oai.Error
+	if !errors.As(err, &apiErr) {
+		return nil
+	}
+
+	var payload openRouterErrorPayload
+	_ = json.Unmarshal([]byte(apiErr.RawJSON()), &payload)
+	return &ApiErr{
+		Provider:   ProviderOpenRouter,
+		Kind:       classifyOpenRouterError(apiErr.StatusCode, payload.canonicalErrorType()),
+		StatusCode: apiErr.StatusCode,
+		Message:    apiErr.Message,
+		RawBody:    apiErr.RawJSON(),
+		Cause:      err,
+	}
+}
+
+func mapOpenRouterResponseError(rawBody string, payload openRouterErrorPayload) *ApiErr {
+	statusCode := 500
+	var code int
+	if err := json.Unmarshal(payload.Code, &code); err == nil && code > 0 {
+		statusCode = code
+	}
+	return &ApiErr{
+		Provider:   ProviderOpenRouter,
+		Kind:       classifyOpenRouterError(statusCode, payload.canonicalErrorType()),
+		StatusCode: statusCode,
+		Message:    payload.Message,
+		RawBody:    rawBody,
+	}
 }
 
 // openRouterReasoningDetail represents a single reasoning detail in the request
@@ -356,26 +441,26 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 	// Make the API call with request options
 	resp, err := g.client.New(ctx, params, reqOpts...)
 	if err != nil {
-		if mapped := mapOpenAIError(ProviderOpenRouter, err); mapped != nil {
+		if mapped := mapOpenRouterError(err); mapped != nil {
 			return Response{}, mapped
 		}
 		return Response{}, fmt.Errorf("failed to create new message: %w", err)
 	}
 
-	// Check for OpenRouter upstream errors in response body.
-	// OpenRouter can return a 200 response with an error payload when the upstream provider fails.
-	if rawJSON := resp.RawJSON(); rawJSON != "" {
-		var errorCheck struct {
-			Error *struct {
-				Code json.Number `json:"code"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal([]byte(rawJSON), &errorCheck); err == nil && errorCheck.Error != nil {
-			statusCode := 500
-			if code, err := errorCheck.Error.Code.Int64(); err == nil {
-				statusCode = int(code)
+	// OpenRouter may return provider errors in an HTTP 200 response, either at
+	// the top level or in a choice after partial output was generated.
+	var rawResp openRouterRawResponse
+	rawJSON := resp.RawJSON()
+	if rawJSON != "" {
+		if err := json.Unmarshal([]byte(rawJSON), &rawResp); err == nil {
+			if rawResp.Error != nil {
+				return Response{}, mapOpenRouterResponseError(rawJSON, *rawResp.Error)
 			}
-			return Response{}, newHTTPAPIError(ProviderOpenRouter, statusCode, rawJSON)
+			for _, choice := range rawResp.Choices {
+				if choice.Error != nil {
+					return Response{}, mapOpenRouterResponseError(rawJSON, *choice.Error)
+				}
+			}
 		}
 	}
 
@@ -398,16 +483,9 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 		}
 	}
 
-	// Try to extract reasoning details from raw JSON response
-	// OpenRouter may include reasoning_details that aren't in the OpenAI SDK structs
-	var rawResp openRouterRawResponse
-	if rawJSON := resp.RawJSON(); rawJSON != "" {
-		if err := json.Unmarshal([]byte(rawJSON), &rawResp); err == nil {
-			// Successfully parsed raw response, check for reasoning details
-			if len(rawResp.Choices) > 0 && len(rawResp.Choices[0].Message.ReasoningDetails) > 0 {
-				result.UsageMetadata[OpenRouterUsageMetricReasoningDetailsAvailable] = true
-			}
-		}
+	// Record whether the already-parsed response includes reasoning details.
+	if len(rawResp.Choices) > 0 && len(rawResp.Choices[0].Message.ReasoningDetails) > 0 {
+		result.UsageMetadata[OpenRouterUsageMetricReasoningDetailsAvailable] = true
 	}
 
 	var hasToolCalls bool

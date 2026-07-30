@@ -158,8 +158,7 @@ type ApiErr struct {
 	Message string `json:"message,omitempty" yaml:"message,omitempty"`
 	// RawBody is the provider response body when available.
 	RawBody string `json:"raw_body,omitempty" yaml:"raw_body,omitempty"`
-	// Cause is the original SDK error when available. For errors created directly
-	// from a provider response, it is a synthesized error containing Message or RawBody.
+	// Cause is the underlying SDK or transport error when one is available.
 	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
 }
 
@@ -179,7 +178,7 @@ func (a *ApiErr) Error() string {
 	return fmt.Sprintf("%s %s", a.Provider, a.Kind)
 }
 
-// Unwrap returns Cause, which may be the original SDK error or a synthesized response error.
+// Unwrap returns the underlying SDK or transport error when one is available.
 func (a *ApiErr) Unwrap() error {
 	if a == nil {
 		return nil

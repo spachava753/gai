@@ -14,8 +14,74 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
-func newResponsesStreamAPIError(code, message, rawBody string) *ApiErr {
-	return newAPIError(ProviderResponses, 0, message, rawBody, nil, code)
+func classifyResponseFailureCode(code responses.ResponseErrorCode) APIErrorKind {
+	switch code {
+	case responses.ResponseErrorCodeServerError:
+		return APIErrorKindServer
+	case responses.ResponseErrorCodeRateLimitExceeded:
+		return APIErrorKindRateLimit
+	case responses.ResponseErrorCodeVectorStoreTimeout:
+		return APIErrorKindTimeout
+	case responses.ResponseErrorCodeBioPolicy, responses.ResponseErrorCodeImageContentPolicyViolation:
+		return APIErrorKindContentPolicy
+	case responses.ResponseErrorCodeImageFileNotFound:
+		return APIErrorKindNotFound
+	case responses.ResponseErrorCodeImageFileTooLarge:
+		return APIErrorKindRequestTooLarge
+	case responses.ResponseErrorCodeInvalidPrompt,
+		responses.ResponseErrorCodeDataResidencyMismatch,
+		responses.ResponseErrorCodeInvalidImage,
+		responses.ResponseErrorCodeInvalidImageFormat,
+		responses.ResponseErrorCodeInvalidBase64Image,
+		responses.ResponseErrorCodeInvalidImageURL,
+		responses.ResponseErrorCodeImageTooLarge,
+		responses.ResponseErrorCodeImageTooSmall,
+		responses.ResponseErrorCodeImageParseError,
+		responses.ResponseErrorCodeInvalidImageMode,
+		responses.ResponseErrorCodeUnsupportedImageMediaType,
+		responses.ResponseErrorCodeEmptyImageFile,
+		responses.ResponseErrorCodeFailedToDownloadImage:
+		return APIErrorKindInvalidRequest
+	default:
+		return APIErrorKindUnknown
+	}
+}
+
+func classifyResponseErrorEventCode(code string) APIErrorKind {
+	switch code {
+	case "invalid_api_key":
+		return APIErrorKindAuthentication
+	case "insufficient_permissions":
+		return APIErrorKindPermission
+	case "not_found":
+		return APIErrorKindNotFound
+	case "request_too_large":
+		return APIErrorKindRequestTooLarge
+	case "timeout":
+		return APIErrorKindTimeout
+	case "content_policy", "content_policy_violation":
+		return APIErrorKindContentPolicy
+	default:
+		return classifyResponseFailureCode(responses.ResponseErrorCode(code))
+	}
+}
+
+func mapResponsesFailure(responseError responses.ResponseError, rawBody string) *ApiErr {
+	return &ApiErr{
+		Provider: ProviderResponses,
+		Kind:     classifyResponseFailureCode(responseError.Code),
+		Message:  responseError.Message,
+		RawBody:  rawBody,
+	}
+}
+
+func mapResponsesErrorEvent(code, message, rawBody string) *ApiErr {
+	return &ApiErr{
+		Provider: ProviderResponses,
+		Kind:     classifyResponseErrorEventCode(code),
+		Message:  message,
+		RawBody:  rawBody,
+	}
 }
 
 // ResponsesThoughtSummaryDetailParam is a key used for storing the thought summary detail level
@@ -618,7 +684,7 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 	res, err := r.client.New(ctx, params)
 	if err != nil {
-		if mapped := mapOpenAIError(ProviderResponses, err); mapped != nil {
+		if mapped := mapOpenAISDKError(ProviderResponses, err); mapped != nil {
 			return Response{}, mapped
 		}
 		return Response{}, fmt.Errorf("responses: generation failed: %w", err)
@@ -888,20 +954,20 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				return
 			case "response.failed":
 				failed := event.AsResponseFailed()
-				yield(StreamChunk{}, newResponsesStreamAPIError(string(failed.Response.Error.Code), failed.Response.Error.Message, failed.RawJSON()))
+				yield(StreamChunk{}, mapResponsesFailure(failed.Response.Error, failed.RawJSON()))
 				return
 			case "response.incomplete":
 				yield(StreamChunk{}, ErrMaxGenerationLimit)
 				return
 			case "error":
 				errorEvent := event.AsError()
-				yield(StreamChunk{}, newResponsesStreamAPIError(errorEvent.Code, errorEvent.Message, errorEvent.RawJSON()))
+				yield(StreamChunk{}, mapResponsesErrorEvent(errorEvent.Code, errorEvent.Message, errorEvent.RawJSON()))
 				return
 			}
 		}
 
 		if stream.Err() != nil {
-			if mapped := mapOpenAIError(ProviderResponses, stream.Err()); mapped != nil {
+			if mapped := mapOpenAISDKError(ProviderResponses, stream.Err()); mapped != nil {
 				yield(StreamChunk{}, mapped)
 			} else {
 				yield(StreamChunk{}, stream.Err())

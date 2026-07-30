@@ -391,7 +391,7 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Response{}, newHTTPAPIError(ProviderCerebras, resp.StatusCode, string(respBody))
+		return Response{}, mapHTTPAPIError(ProviderCerebras, resp.StatusCode, string(respBody))
 	}
 
 	var cr cerebrasChatResponse

@@ -12,7 +12,35 @@ import (
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
+	"github.com/anthropics/anthropic-sdk-go/shared"
 )
+
+func classifyAnthropicError(statusCode int, errorType shared.ErrorType) APIErrorKind {
+	if statusCode == 529 {
+		return APIErrorKindOverloaded
+	}
+
+	switch errorType {
+	case shared.ErrorTypeAuthenticationError:
+		return APIErrorKindAuthentication
+	case shared.ErrorTypePermissionError:
+		return APIErrorKindPermission
+	case shared.ErrorTypeNotFoundError:
+		return APIErrorKindNotFound
+	case shared.ErrorTypeRateLimitError:
+		return APIErrorKindRateLimit
+	case shared.ErrorTypeTimeoutError:
+		return APIErrorKindTimeout
+	case shared.ErrorTypeOverloadedError:
+		return APIErrorKindOverloaded
+	case shared.ErrorTypeAPIError:
+		return APIErrorKindServer
+	case shared.ErrorTypeInvalidRequestError, shared.ErrorTypeBillingError:
+		return APIErrorKindInvalidRequest
+	default:
+		return classifyHTTPStatus(statusCode)
+	}
+}
 
 func mapAnthropicError(err error) *ApiErr {
 	var apiErr *a.Error
@@ -20,8 +48,14 @@ func mapAnthropicError(err error) *ApiErr {
 		return nil
 	}
 	rawBody := apiErr.RawJSON()
-	payload := parseAPIErrorResponse(rawBody)
-	return newAPIError(ProviderAnthropic, apiErr.StatusCode, payload.Message, rawBody, err, payload.Type, string(payload.Code), payload.Status)
+	return &ApiErr{
+		Provider:   ProviderAnthropic,
+		Kind:       classifyAnthropicError(apiErr.StatusCode, apiErr.Type()),
+		StatusCode: apiErr.StatusCode,
+		Message:    parseAPIErrorMessage(rawBody),
+		RawBody:    rawBody,
+		Cause:      err,
+	}
 }
 
 // AnthropicGenerator implements the gai.Generator interface using OpenAI's API

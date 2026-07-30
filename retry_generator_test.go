@@ -119,6 +119,11 @@ func TestRetryGenerator_Generate_RetryAndSucceed(t *testing.T) {
 			expectedCalls: 2,
 		},
 		{
+			name:          "ApiErr overloaded without status",
+			retriableErr:  &gai.ApiErr{Provider: gai.ProviderAnthropic, Kind: gai.APIErrorKindOverloaded, Message: "temporarily overloaded"},
+			expectedCalls: 2,
+		},
+		{
 			name:          "ContextDeadlineExceeded",
 			retriableErr:  context.DeadlineExceeded,
 			expectedCalls: 2,

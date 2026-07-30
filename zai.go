@@ -1039,7 +1039,7 @@ func (c *defaultZaiClient) NewStreaming(ctx context.Context, request zai.PaasV4C
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		return nil, newHTTPAPIError(ProviderZAI, resp.StatusCode, string(body))
+		return nil, mapHTTPAPIError(ProviderZAI, resp.StatusCode, string(body))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -1053,14 +1053,14 @@ func mapZAIError(err error) error {
 		return err
 	}
 	rawBody, _ := json.Marshal(statusErr.Response)
-	return newAPIError(
-		ProviderZAI,
-		statusErr.StatusCode,
-		statusErr.Response.Message,
-		string(rawBody),
-		err,
-		fmt.Sprint(statusErr.Response.Code),
-	)
+	return &ApiErr{
+		Provider:   ProviderZAI,
+		Kind:       classifyHTTPStatus(statusErr.StatusCode),
+		StatusCode: statusErr.StatusCode,
+		Message:    statusErr.Response.Message,
+		RawBody:    string(rawBody),
+		Cause:      err,
+	}
 }
 
 var _ Generator = (*ZaiGenerator)(nil)

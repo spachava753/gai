@@ -16,6 +16,39 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+func classifyGeminiError(apiErr genai.APIError) APIErrorKind {
+	for _, detail := range apiErr.Details {
+		reason, _ := detail["reason"].(string)
+		switch reason {
+		case "API_KEY_INVALID":
+			return APIErrorKindAuthentication
+		case "ACCESS_TOKEN_SCOPE_INSUFFICIENT":
+			return APIErrorKindPermission
+		}
+	}
+
+	switch apiErr.Status {
+	case "UNAUTHENTICATED":
+		return APIErrorKindAuthentication
+	case "PERMISSION_DENIED":
+		return APIErrorKindPermission
+	case "NOT_FOUND":
+		return APIErrorKindNotFound
+	case "RESOURCE_EXHAUSTED":
+		return APIErrorKindRateLimit
+	case "DEADLINE_EXCEEDED":
+		return APIErrorKindTimeout
+	case "UNAVAILABLE":
+		return APIErrorKindServiceUnavailable
+	case "INTERNAL", "DATA_LOSS":
+		return APIErrorKindServer
+	case "INVALID_ARGUMENT", "FAILED_PRECONDITION", "OUT_OF_RANGE":
+		return APIErrorKindInvalidRequest
+	default:
+		return classifyHTTPStatus(apiErr.Code)
+	}
+}
+
 func mapGeminiError(err error) *ApiErr {
 	var apiErr genai.APIError
 	if !errors.As(err, &apiErr) {
@@ -26,13 +59,13 @@ func mapGeminiError(err error) *ApiErr {
 		apiErr = *apiErrPointer
 	}
 
-	clues := []string{apiErr.Status}
-	for _, detail := range apiErr.Details {
-		if reason, ok := detail["reason"].(string); ok {
-			clues = append(clues, reason)
-		}
+	return &ApiErr{
+		Provider:   ProviderGemini,
+		Kind:       classifyGeminiError(apiErr),
+		StatusCode: apiErr.Code,
+		Message:    apiErr.Message,
+		Cause:      err,
 	}
-	return newAPIError(ProviderGemini, apiErr.Code, apiErr.Message, "", err, clues...)
 }
 
 const (
