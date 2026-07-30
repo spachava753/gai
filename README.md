@@ -193,6 +193,21 @@ if cached, ok := gai.CacheReadTokens(resp.UsageMetadata); ok {
 }
 ```
 
+## Responses API Service Tiers
+
+Set [ResponsesServiceTierParam] in [GenOpts.ExtraArgs] to choose how OpenAI processes a Responses API request. Supported values are "auto", "default", "flex", "scale", and "priority". If omitted, OpenAI uses its default "auto" behavior. The option applies to both Generate and Stream calls.
+
+```go
+opts := &gai.GenOpts{ExtraArgs: map[string]any{
+	gai.ResponsesServiceTierParam: "priority",
+}}
+resp, err := gen.Generate(ctx, dialog, opts)
+if err != nil {
+	fmt.Printf("Error: %v\n", err)
+	return
+}
+```
+
 ## Tool Usage Example
 
 Register tools directly on generators that implement [ToolCallingGenerator]. The generator exposes tool calls in its response; applications own the execution loop so they can apply authorization, validation, retries, tracing, and persistence policies before appending tool results and asking the model to continue.

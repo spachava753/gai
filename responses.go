@@ -94,6 +94,11 @@ const ResponsesThoughtSummaryDetailParam = "responses_thought_summary_detail"
 // share a long static prefix to improve cache routing and hit rates.
 const ResponsesPromptCacheKeyParam = "responses_prompt_cache_key"
 
+// ResponsesServiceTierParam is a key used in GenOpts.ExtraArgs to set the OpenAI
+// Responses API service_tier request field. Its value must be one of "auto", "default",
+// "flex", "scale", or "priority".
+const ResponsesServiceTierParam = "responses_service_tier"
+
 // ResponsesExtraFieldReasoningID is the key used in Block.ExtraFields for Thinking blocks
 // to store the reasoning item's unique ID from the Responses API. This is needed to reconstruct
 // reasoning input items when passing back in multi-turn conversations.
@@ -533,6 +538,28 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 				}
 				if key != "" {
 					params.PromptCacheKey = openai.Opt(key)
+				}
+			}
+			if val, ok := options.ExtraArgs[ResponsesServiceTierParam]; ok {
+				var serviceTier responses.ResponseNewParamsServiceTier
+				switch val := val.(type) {
+				case string:
+					serviceTier = responses.ResponseNewParamsServiceTier(val)
+				case responses.ResponseNewParamsServiceTier:
+					serviceTier = val
+				default:
+					return params, fmt.Errorf("responses service tier must be a string")
+				}
+
+				switch serviceTier {
+				case responses.ResponseNewParamsServiceTierAuto,
+					responses.ResponseNewParamsServiceTierDefault,
+					responses.ResponseNewParamsServiceTierFlex,
+					responses.ResponseNewParamsServiceTierScale,
+					responses.ResponseNewParamsServiceTierPriority:
+					params.ServiceTier = serviceTier
+				default:
+					return params, fmt.Errorf("responses service tier %q must be one of auto, default, flex, scale, or priority", serviceTier)
 				}
 			}
 		}
