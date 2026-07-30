@@ -2,16 +2,21 @@ package gai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/cenkalti/backoff/v5"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/responses"
 )
 
 type responsesStreamService struct {
-	events []ssestream.Event
+	events         []ssestream.Event
+	eventsByStream [][]ssestream.Event
+	streamCalls    int
 }
 
 func (s *responsesStreamService) New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error) {
@@ -19,7 +24,12 @@ func (s *responsesStreamService) New(ctx context.Context, body responses.Respons
 }
 
 func (s *responsesStreamService) NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) *ssestream.Stream[responses.ResponseStreamEventUnion] {
-	return ssestream.NewStream[responses.ResponseStreamEventUnion](&responsesStreamDecoder{events: s.events}, nil)
+	s.streamCalls++
+	events := s.events
+	if len(s.eventsByStream) >= s.streamCalls {
+		events = s.eventsByStream[s.streamCalls-1]
+	}
+	return ssestream.NewStream[responses.ResponseStreamEventUnion](&responsesStreamDecoder{events: events}, nil)
 }
 
 type responsesStreamDecoder struct {
@@ -95,5 +105,61 @@ func TestResponsesStreamingAdapterPreservesReasoningSummaryParts(t *testing.T) {
 	}
 	if got := candidate.Blocks[1].Content.String(); got != "second summary" {
 		t.Fatalf("second summary = %q, want %q", got, "second summary")
+	}
+}
+
+func TestResponsesGeneratorStreamRetriesServerOverloadSSEError(t *testing.T) {
+	const overloadPayload = `{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null}`
+
+	svc := &responsesStreamService{eventsByStream: [][]ssestream.Event{
+		{responseSSEvent("error", `{"error":`+overloadPayload+`}`)},
+		{},
+	}}
+	generator := NewResponsesGenerator(svc, "gpt-5", "")
+
+	var notified error
+	retryingGenerator := NewRetryGenerator(
+		&generator,
+		backoff.NewConstantBackOff(time.Millisecond),
+		backoff.WithMaxTries(2),
+		backoff.WithNotify(func(err error, _ time.Duration) {
+			notified = err
+		}),
+	)
+
+	for _, err := range retryingGenerator.Stream(t.Context(), Dialog{{
+		Role:   User,
+		Blocks: []Block{TextBlock("Hello")},
+	}}, nil) {
+		if err != nil {
+			t.Fatalf("Stream() error = %v, want retry to succeed", err)
+		}
+	}
+
+	if svc.streamCalls != 2 {
+		t.Fatalf("stream calls = %d, want 2", svc.streamCalls)
+	}
+	if notified == nil {
+		t.Fatal("retry notification error = nil, want classified overload error")
+	}
+
+	var apiErr *ApiErr
+	if !errors.As(notified, &apiErr) {
+		t.Fatalf("retry notification error = %T %v, want *ApiErr", notified, notified)
+	}
+	if apiErr.Provider != ProviderResponses {
+		t.Fatalf("Provider = %q, want %q", apiErr.Provider, ProviderResponses)
+	}
+	if apiErr.Kind != APIErrorKindOverloaded {
+		t.Fatalf("Kind = %q, want %q", apiErr.Kind, APIErrorKindOverloaded)
+	}
+	if apiErr.Message != "Our servers are currently overloaded. Please try again later." {
+		t.Fatalf("Message = %q, want overload message", apiErr.Message)
+	}
+	if apiErr.RawBody != overloadPayload {
+		t.Fatalf("RawBody = %q, want %q", apiErr.RawBody, overloadPayload)
+	}
+	if !apiErr.Retryable() {
+		t.Fatal("Retryable() = false, want true")
 	}
 }

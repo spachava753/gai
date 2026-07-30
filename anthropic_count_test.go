@@ -3,21 +3,27 @@ package gai
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
+	"github.com/cenkalti/backoff/v5"
 )
 
-// mockAnthropicSvc is a mock implementation of AnthropicSvc for testing
+// mockAnthropicSvc is a mock implementation of AnthropicSvc for testing.
 type mockAnthropicSvc struct {
 	countTokensCalled bool
 	lastToolsCount    int
 	lastSystemPresent bool
 	response          *a.Message
 	streamEvents      []ssestream.Event
+	streamFactory     func() *ssestream.Stream[a.MessageStreamEventUnion]
+	streamCalls       int
 }
 
 func (m *mockAnthropicSvc) New(ctx context.Context, body a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error) {
@@ -25,6 +31,10 @@ func (m *mockAnthropicSvc) New(ctx context.Context, body a.MessageNewParams, opt
 }
 
 func (m *mockAnthropicSvc) NewStreaming(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (stream *ssestream.Stream[a.MessageStreamEventUnion]) {
+	m.streamCalls++
+	if m.streamFactory != nil {
+		return m.streamFactory()
+	}
 	return ssestream.NewStream[a.MessageStreamEventUnion](&anthropicStreamDecoder{events: m.streamEvents}, nil)
 }
 
@@ -74,6 +84,78 @@ func TestAnthropicStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
 		}
 	}
 	assertContentPolicyErrorContains(t, gotErr, "Request violates policy.")
+}
+
+func TestAnthropicGeneratorStreamRetriesOverloadedSSEError(t *testing.T) {
+	const streamPayload = `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
+
+	newStream := func(data string) *ssestream.Stream[a.MessageStreamEventUnion] {
+		response := &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(data)),
+			Request:    &http.Request{},
+		}
+		return ssestream.NewStream[a.MessageStreamEventUnion](ssestream.NewDecoder(response), nil)
+	}
+
+	service := &mockAnthropicSvc{}
+	service.streamFactory = func() *ssestream.Stream[a.MessageStreamEventUnion] {
+		if service.streamCalls == 1 {
+			return newStream("event: error\ndata: " + streamPayload + "\n\n")
+		}
+		return newStream("")
+	}
+	generator := NewAnthropicGenerator(service, "claude", "")
+
+	var notified error
+	retryingGenerator := NewRetryGenerator(
+		generator,
+		backoff.NewConstantBackOff(time.Millisecond),
+		backoff.WithMaxTries(2),
+		backoff.WithNotify(func(err error, _ time.Duration) {
+			notified = err
+		}),
+	)
+
+	for _, err := range retryingGenerator.Stream(t.Context(), Dialog{{
+		Role:   User,
+		Blocks: []Block{TextBlock("Hello")},
+	}}, nil) {
+		if err != nil {
+			t.Fatalf("Stream() error = %v, want retry to succeed", err)
+		}
+	}
+
+	if service.streamCalls != 2 {
+		t.Fatalf("stream calls = %d, want 2", service.streamCalls)
+	}
+	if notified == nil {
+		t.Fatal("retry notification error = nil, want classified overload error")
+	}
+
+	var apiErr *ApiErr
+	if !errors.As(notified, &apiErr) {
+		t.Fatalf("retry notification error = %T %v, want *ApiErr", notified, notified)
+	}
+	if apiErr.Provider != ProviderAnthropic {
+		t.Fatalf("Provider = %q, want %q", apiErr.Provider, ProviderAnthropic)
+	}
+	if apiErr.Kind != APIErrorKindOverloaded {
+		t.Fatalf("Kind = %q, want %q", apiErr.Kind, APIErrorKindOverloaded)
+	}
+	if apiErr.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want %d", apiErr.StatusCode, http.StatusOK)
+	}
+	if apiErr.Message != "Overloaded" {
+		t.Fatalf("Message = %q, want %q", apiErr.Message, "Overloaded")
+	}
+	if got := strings.TrimSpace(apiErr.RawBody); got != streamPayload {
+		t.Fatalf("RawBody = %q, want %q", got, streamPayload)
+	}
+	if !apiErr.Retryable() {
+		t.Fatal("Retryable() = false, want true")
+	}
 }
 
 func assertContentPolicyErrorContains(t *testing.T, err error, want string) {

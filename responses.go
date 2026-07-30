@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"maps"
@@ -61,6 +62,8 @@ func classifyResponseErrorEventCode(code string) APIErrorKind {
 		return APIErrorKindTimeout
 	case "content_policy", "content_policy_violation":
 		return APIErrorKindContentPolicy
+	case "server_is_overloaded":
+		return APIErrorKindOverloaded
 	default:
 		return classifyResponseFailureCode(responses.ResponseErrorCode(code))
 	}
@@ -82,6 +85,32 @@ func mapResponsesErrorEvent(code, message, rawBody string) *ApiErr {
 		Message:  message,
 		RawBody:  rawBody,
 	}
+}
+
+func mapResponsesStreamError(err error) *ApiErr {
+	var streamErr *ssestream.StreamError
+	if !errors.As(err, &streamErr) {
+		return nil
+	}
+
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(streamErr.Event.Data, &envelope) != nil || len(envelope.Error) == 0 {
+		return nil
+	}
+
+	var payload struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(envelope.Error, &payload) != nil {
+		return nil
+	}
+
+	mapped := mapResponsesErrorEvent(payload.Code, payload.Message, string(envelope.Error))
+	mapped.Cause = err
+	return mapped
 }
 
 // ResponsesThoughtSummaryDetailParam is a key used for storing the thought summary detail level
@@ -996,11 +1025,13 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			}
 		}
 
-		if stream.Err() != nil {
-			if mapped := mapOpenAISDKError(ProviderResponses, stream.Err()); mapped != nil {
+		if streamErr := stream.Err(); streamErr != nil {
+			if mapped := mapResponsesStreamError(streamErr); mapped != nil {
+				yield(StreamChunk{}, mapped)
+			} else if mapped := mapOpenAISDKError(ProviderResponses, streamErr); mapped != nil {
 				yield(StreamChunk{}, mapped)
 			} else {
-				yield(StreamChunk{}, stream.Err())
+				yield(StreamChunk{}, streamErr)
 			}
 		}
 	}
