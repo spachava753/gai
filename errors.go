@@ -204,6 +204,12 @@ func (a *ApiErr) Retryable() bool {
 	if a == nil {
 		return false
 	}
+	// 501 and 505 report unsupported server capabilities, not transient failures.
+	// https://www.rfc-editor.org/rfc/rfc9110.html#section-15.6
+	switch a.StatusCode {
+	case 501, 505:
+		return false
+	}
 	if a.StatusCode >= 500 && a.StatusCode < 600 {
 		return true
 	}

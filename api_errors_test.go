@@ -73,6 +73,35 @@ func TestAPIErrorRetryAfter(t *testing.T) {
 	}
 }
 
+func TestAPIErrorRetryable(t *testing.T) {
+	tests := []struct {
+		name      string
+		apiErr    *ApiErr
+		retryable bool
+	}{
+		{name: "nil"},
+		{name: "internal server error", apiErr: &ApiErr{StatusCode: http.StatusInternalServerError}, retryable: true},
+		{name: "not implemented", apiErr: &ApiErr{Kind: APIErrorKindServer, StatusCode: http.StatusNotImplemented}},
+		{name: "bad gateway", apiErr: &ApiErr{StatusCode: http.StatusBadGateway}, retryable: true},
+		{name: "service unavailable", apiErr: &ApiErr{StatusCode: http.StatusServiceUnavailable}, retryable: true},
+		{name: "gateway timeout", apiErr: &ApiErr{StatusCode: http.StatusGatewayTimeout}, retryable: true},
+		{name: "HTTP version not supported", apiErr: &ApiErr{Kind: APIErrorKindServer, StatusCode: http.StatusHTTPVersionNotSupported}},
+		{name: "provider overload", apiErr: &ApiErr{StatusCode: 529}, retryable: true},
+		{name: "unknown provider 5xx", apiErr: &ApiErr{StatusCode: 598}, retryable: true},
+		{name: "server kind without status", apiErr: &ApiErr{Kind: APIErrorKindServer}, retryable: true},
+		{name: "rate limit kind", apiErr: &ApiErr{Kind: APIErrorKindRateLimit}, retryable: true},
+		{name: "invalid request kind", apiErr: &ApiErr{Kind: APIErrorKindInvalidRequest}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.apiErr.Retryable(); got != tt.retryable {
+				t.Fatalf("Retryable() = %t, want %t", got, tt.retryable)
+			}
+		})
+	}
+}
+
 func TestClassifyHTTPStatus(t *testing.T) {
 	tests := []struct {
 		statusCode int
