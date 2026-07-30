@@ -30,6 +30,10 @@ const (
 // because retrying after partial output would duplicate already-observed content.
 // If the consumer stops iteration by returning false from yield, the stream ends
 // successfully without surfacing an error, following the standard iter.Seq2 contract.
+//
+// RetryGenerator does not disable retries configured in the wrapped provider SDK.
+// To avoid nested retry loops, disable provider retries when constructing OpenAI or
+// Anthropic clients with the corresponding option.WithMaxRetries(0) client option.
 type RetryGenerator struct {
 	GeneratorWrapper                       // Embed for default Count/Register delegation and unsupported Stream fallback.
 	baseBackOff      backoff.BackOff       // The core backoff strategy (e.g., *ExponentialBackOff).

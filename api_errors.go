@@ -3,6 +3,7 @@ package gai
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,18 +48,35 @@ func classifyHTTPStatus(statusCode int) APIErrorKind {
 	}
 }
 
+func parseRetryAfterNumber(value string, unit time.Duration) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+
+	amount, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return 0, false
+	}
+	if amount <= 0 {
+		return 0, true
+	}
+
+	nanoseconds := amount * float64(unit)
+	if math.IsInf(nanoseconds, 0) || nanoseconds >= float64(math.MaxInt64) {
+		return 0, false
+	}
+	return time.Duration(nanoseconds), true
+}
+
 func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return 0, false
 	}
 
-	if seconds, err := strconv.ParseUint(value, 10, 64); err == nil {
-		const maxDurationSeconds = uint64((1<<63 - 1) / int64(time.Second))
-		if seconds > maxDurationSeconds {
-			return 0, false
-		}
-		return time.Duration(seconds) * time.Second, true
+	if delay, ok := parseRetryAfterNumber(value, time.Second); ok {
+		return delay, true
 	}
 
 	retryAt, err := http.ParseTime(value)
@@ -73,15 +91,18 @@ func retryAfterFromResponse(response *http.Response) *time.Duration {
 		return nil
 	}
 
+	if delay, ok := parseRetryAfterNumber(response.Header.Get("Retry-After-Ms"), time.Millisecond); ok {
+		return &delay
+	}
+
 	now := time.Now()
 	if serverDate, err := http.ParseTime(response.Header.Get("Date")); err == nil {
 		now = serverDate
 	}
-	delay, ok := parseRetryAfter(response.Header.Get("Retry-After"), now)
-	if !ok {
-		return nil
+	if delay, ok := parseRetryAfter(response.Header.Get("Retry-After"), now); ok {
+		return &delay
 	}
-	return &delay
+	return nil
 }
 
 func parseAPIErrorMessage(rawBody string) string {

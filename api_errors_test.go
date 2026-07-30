@@ -35,10 +35,14 @@ func TestParseRetryAfter(t *testing.T) {
 		ok    bool
 	}{
 		{name: "delta seconds", value: "120", want: 2 * time.Minute, ok: true},
+		{name: "fractional seconds", value: "0.1", want: 100 * time.Millisecond, ok: true},
 		{name: "HTTP date", value: now.Add(90 * time.Second).Format(http.TimeFormat), want: 90 * time.Second, ok: true},
 		{name: "past HTTP date", value: now.Add(-time.Minute).Format(http.TimeFormat), want: 0, ok: true},
 		{name: "zero", value: "0", want: 0, ok: true},
-		{name: "negative", value: "-1"},
+		{name: "negative", value: "-1", want: 0, ok: true},
+		{name: "not a number", value: "NaN"},
+		{name: "infinite", value: "+Inf"},
+		{name: "overflow", value: "1e20"},
 		{name: "invalid", value: "later"},
 		{name: "missing"},
 	}
@@ -169,8 +173,11 @@ func TestHTTPAPIErrorRetryAfter(t *testing.T) {
 	responseBody := &trackingReadCloser{Reader: strings.NewReader(body)}
 	response := &http.Response{
 		StatusCode: http.StatusTooManyRequests,
-		Header:     http.Header{"Retry-After": []string{"7"}},
-		Body:       responseBody,
+		Header: http.Header{
+			"Retry-After":    []string{"7"},
+			"Retry-After-Ms": []string{"250"},
+		},
+		Body: responseBody,
 	}
 	got := mapHTTPAPIError(ProviderCerebras, response)
 
@@ -179,8 +186,8 @@ func TestHTTPAPIErrorRetryAfter(t *testing.T) {
 	}
 
 	delay, ok := got.RetryAfter()
-	if !ok || delay != 7*time.Second {
-		t.Fatalf("RetryAfter() = (%s, %t), want (7s, true)", delay, ok)
+	if !ok || delay != 250*time.Millisecond {
+		t.Fatalf("RetryAfter() = (%s, %t), want (250ms, true)", delay, ok)
 	}
 }
 
