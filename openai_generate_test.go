@@ -55,13 +55,35 @@ func TestOpenAIGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	}}
 	generator := NewOpenAiGenerator(client, "gpt-5", "")
 
-	_, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	if response.FinishReason != ContentPolicyViolation {
+		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
+	}
 	var policyErr ContentPolicyErr
 	if !errors.As(err, &policyErr) {
 		t.Fatalf("Generate error = %T %v, want ContentPolicyErr", err, err)
 	}
 	if !strings.Contains(policyErr.Error(), "I cannot help with that.") {
 		t.Fatalf("Generate error = %q, want refusal message", policyErr)
+	}
+}
+
+func TestOpenAIGenerateReturnsContentPolicyErrorForContentFilter(t *testing.T) {
+	client := &mockChatCompletionService{response: &oai.ChatCompletion{
+		Choices: []oai.ChatCompletionChoice{{FinishReason: "content_filter"}},
+	}}
+	generator := NewOpenAiGenerator(client, "gpt-5", "")
+
+	response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	if response.FinishReason != ContentPolicyViolation {
+		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
+	}
+	var policyErr ContentPolicyErr
+	if !errors.As(err, &policyErr) {
+		t.Fatalf("Generate error = %T %v, want ContentPolicyErr", err, err)
+	}
+	if !strings.Contains(policyErr.Error(), "content policy violation detected") {
+		t.Fatalf("Generate error = %q, want content filter fallback", policyErr)
 	}
 }
 

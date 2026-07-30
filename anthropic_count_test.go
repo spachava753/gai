@@ -52,7 +52,10 @@ func TestAnthropicGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	}}
 	generator := NewAnthropicGenerator(service, "claude", "")
 
-	_, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	if response.FinishReason != ContentPolicyViolation {
+		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
+	}
 	assertContentPolicyErrorContains(t, err, "Request violates policy.")
 }
 

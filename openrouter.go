@@ -584,11 +584,14 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 
 	// Set finish reason
 	if len(resp.Choices) > 0 {
-		if refusal := resp.Choices[0].Message.Refusal; refusal != "" {
-			result.FinishReason = Unknown
-			return result, ContentPolicyErr(refusal)
+		choice := resp.Choices[0]
+		// OpenRouter is OpenAI-compatible; refusal is an independent message field.
+		// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/
+		if choice.Message.Refusal != "" {
+			result.FinishReason = ContentPolicyViolation
+			return result, ContentPolicyErr(choice.Message.Refusal)
 		}
-		switch resp.Choices[0].FinishReason {
+		switch choice.FinishReason {
 		case "stop":
 			result.FinishReason = EndTurn
 		case "length":
@@ -597,12 +600,10 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 		case "tool_calls":
 			result.FinishReason = ToolUse
 		case "content_filter":
-			result.FinishReason = Unknown
-			refusalMessage := resp.Choices[0].Message.Refusal
-			if refusalMessage == "" {
-				refusalMessage = "content policy violation detected"
-			}
-			return result, ContentPolicyErr(refusalMessage)
+			// content_filter means output was omitted by the API's content filters.
+			// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/
+			result.FinishReason = ContentPolicyViolation
+			return result, ContentPolicyErr("content policy violation detected")
 		default:
 			result.FinishReason = Unknown
 		}

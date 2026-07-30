@@ -716,10 +716,10 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 		case "tool_calls":
 			result.FinishReason = ToolUse
 		case "content_filter":
-			result.FinishReason = Unknown
+			result.FinishReason = ContentPolicyViolation
 			return result, ContentPolicyErr("content filtered")
 		case "sensitive":
-			result.FinishReason = Unknown
+			result.FinishReason = ContentPolicyViolation
 			return result, ContentPolicyErr("content flagged as sensitive")
 		default:
 			result.FinishReason = Unknown

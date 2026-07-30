@@ -132,9 +132,13 @@ const (
 	// reaching the specified [GenOpts.MaxGenerationTokens]
 	MaxGenerationLimit
 
-	// ToolUse represents the Generator generating pausing generating output after
-	// calling a tool to wait for a tool call result.
+	// ToolUse represents the Generator pausing generated output after calling a
+	// tool to wait for a tool call result.
 	ToolUse
+
+	// ContentPolicyViolation represents generation stopping because the input or
+	// generated output violated the provider's content policy.
+	ContentPolicyViolation
 )
 
 // Response is what is returned by a Generator

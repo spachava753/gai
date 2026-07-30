@@ -38,7 +38,10 @@ func TestCerebrasGeneratorReturnsContentPolicyError(t *testing.T) {
 			defer server.Close()
 
 			generator := NewCerebrasGenerator(server.Client(), server.URL, "test", "", "test-key")
-			_, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+			response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+			if response.FinishReason != ContentPolicyViolation {
+				t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
+			}
 
 			var policyErr ContentPolicyErr
 			if !errors.As(err, &policyErr) {

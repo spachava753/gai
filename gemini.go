@@ -495,6 +495,10 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		if errors.Is(err, ErrMaxGenerationLimit) {
 			result.FinishReason = MaxGenerationLimit
 		}
+		var policyErr ContentPolicyErr
+		if errors.As(err, &policyErr) {
+			result.FinishReason = ContentPolicyViolation
+		}
 		return result, err
 	}
 	if len(resp.Candidates) > 0 && resp.Candidates[0] != nil {

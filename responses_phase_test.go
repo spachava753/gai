@@ -27,6 +27,30 @@ func (m *mockResponsesService) NewStreaming(ctx context.Context, body responses.
 	panic("unimplemented")
 }
 
+func TestResponsesGeneratorGenerateReturnsContentPolicyFinishReason(t *testing.T) {
+	const rawResponse = `{
+		"id":"resp_filtered",
+		"created_at":0,
+		"status":"incomplete",
+		"incomplete_details":{"reason":"content_filter"},
+		"output":[]
+	}`
+	var apiResp responses.Response
+	if err := json.Unmarshal([]byte(rawResponse), &apiResp); err != nil {
+		t.Fatalf("failed to decode mock response: %v", err)
+	}
+
+	gen := NewResponsesGenerator(&mockResponsesService{response: &apiResp}, "gpt-5", "")
+	response, err := gen.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	if response.FinishReason != ContentPolicyViolation {
+		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
+	}
+	var policyErr ContentPolicyErr
+	if !errors.As(err, &policyErr) {
+		t.Fatalf("Generate error = %T %v, want ContentPolicyErr", err, err)
+	}
+}
+
 func TestResponsesGeneratorGenerateReturnsFailedResponseError(t *testing.T) {
 	const rawResponse = `{
 		"id":"resp_failed",

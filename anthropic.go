@@ -611,6 +611,10 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		result.FinishReason = Unknown
 	}
 	if err := anthropicStopError(resp.StopReason, resp.StopDetails); err != nil {
+		var policyErr ContentPolicyErr
+		if errors.As(err, &policyErr) {
+			result.FinishReason = ContentPolicyViolation
+		}
 		return result, err
 	}
 

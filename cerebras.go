@@ -413,6 +413,7 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 	var hasToolCalls bool
 	for _, ch := range cr.Choices {
 		if ch.Message.Refusal != "" {
+			result.FinishReason = ContentPolicyViolation
 			return result, ContentPolicyErr(ch.Message.Refusal)
 		}
 		var blocks []Block
@@ -464,7 +465,7 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 		case "tool_calls":
 			result.FinishReason = ToolUse
 		case "content_filter":
-			result.FinishReason = Unknown
+			result.FinishReason = ContentPolicyViolation
 			return result, ContentPolicyErr("content policy violation detected")
 		default:
 			result.FinishReason = Unknown

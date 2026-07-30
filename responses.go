@@ -749,7 +749,7 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 		return result, ErrMaxGenerationLimit
 	}
 	if res.IncompleteDetails.Reason == "content_filter" || refusal != "" {
-		result.FinishReason = Unknown
+		result.FinishReason = ContentPolicyViolation
 		if refusal == "" {
 			refusal = "content policy violation detected"
 		}

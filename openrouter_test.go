@@ -21,13 +21,35 @@ func TestOpenRouterGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	}}
 	generator := NewOpenRouterGenerator(client, "test-model", "")
 
-	_, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	if response.FinishReason != ContentPolicyViolation {
+		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
+	}
 	var policyErr ContentPolicyErr
 	if !errors.As(err, &policyErr) {
 		t.Fatalf("Generate error = %T %v, want ContentPolicyErr", err, err)
 	}
 	if !strings.Contains(policyErr.Error(), "I cannot help with that.") {
 		t.Fatalf("Generate error = %q, want refusal message", policyErr)
+	}
+}
+
+func TestOpenRouterGenerateReturnsContentPolicyErrorForContentFilter(t *testing.T) {
+	client := &mockChatCompletionService{response: &openai.ChatCompletion{
+		Choices: []openai.ChatCompletionChoice{{FinishReason: "content_filter"}},
+	}}
+	generator := NewOpenRouterGenerator(client, "test-model", "")
+
+	response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	if response.FinishReason != ContentPolicyViolation {
+		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
+	}
+	var policyErr ContentPolicyErr
+	if !errors.As(err, &policyErr) {
+		t.Fatalf("Generate error = %T %v, want ContentPolicyErr", err, err)
+	}
+	if !strings.Contains(policyErr.Error(), "content policy violation detected") {
+		t.Fatalf("Generate error = %q, want content filter fallback", policyErr)
 	}
 }
 
