@@ -88,7 +88,7 @@ func TestAnthropicGenerator_Generate_thinking(t *testing.T) {
 	// Create an Anthropic client
 	client := a.NewClient()
 	// Instantiate an Anthropic Generator
-	gen := NewAnthropicGenerator(&client.Messages, string(a.ModelClaudeSonnet4_0), "You are a helpful assistant")
+	gen := NewAnthropicGenerator(&client.Messages, string(a.ModelClaudeSonnet4_6), "You are a helpful assistant")
 	dialog := Dialog{
 		{
 			Role: User,
@@ -280,7 +280,7 @@ func TestAnthropicGenerator_Register_parallelToolUse(t *testing.T) {
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
 		&client.Messages,
-		string(a.ModelClaudeSonnet4_0),
+		string(a.ModelClaudeSonnet4_6),
 		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater.
 Only mention one of the stock tickers and nothing else.
 Only output the price, like
@@ -380,7 +380,7 @@ func TestAnthropicGenerator_Stream_parallelToolUse(t *testing.T) {
 	// Instantiate an Anthropic Generator
 	gen := NewAnthropicGenerator(
 		&client.Messages,
-		string(a.ModelClaudeSonnet4_0),
+		string(a.ModelClaudeSonnet4_6),
 		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater.
 Only mention one of the stock tickers and nothing else.
 Only output the price, like
@@ -597,7 +597,7 @@ func TestAnthropicGenerator_Generate_pdf(t *testing.T) {
 	client := a.NewClient()
 	gen := NewAnthropicGenerator(
 		&client.Messages,
-		string(a.ModelClaudeSonnet4_0),
+		string(a.ModelClaudeSonnet4_6),
 		"You are a helpful assistant.",
 	)
 	// Create a dialog with PDF content
