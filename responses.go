@@ -716,6 +716,9 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 		}
 		return Response{}, fmt.Errorf("responses: generation failed: %w", err)
 	}
+	if res.Status == responses.ResponseStatusFailed {
+		return Response{}, mapResponsesFailure(res.Error, res.RawJSON())
+	}
 
 	result := Response{UsageMetadata: make(Metadata)}
 	if usage := res.Usage; usage.InputTokens > 0 || usage.OutputTokens > 0 {

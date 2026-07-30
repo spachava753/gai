@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -24,6 +25,46 @@ func (m *mockResponsesService) New(ctx context.Context, body responses.ResponseN
 
 func (m *mockResponsesService) NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) *ssestream.Stream[responses.ResponseStreamEventUnion] {
 	panic("unimplemented")
+}
+
+func TestResponsesGeneratorGenerateReturnsFailedResponseError(t *testing.T) {
+	const rawResponse = `{
+		"id":"resp_failed",
+		"created_at":0,
+		"status":"failed",
+		"error":{"code":"server_error","message":"The server had an error processing your request."},
+		"output":[]
+	}`
+	var apiResp responses.Response
+	if err := json.Unmarshal([]byte(rawResponse), &apiResp); err != nil {
+		t.Fatalf("failed to decode mock response: %v", err)
+	}
+
+	gen := NewResponsesGenerator(&mockResponsesService{response: &apiResp}, "gpt-5", "")
+	_, err := gen.Generate(context.Background(), Dialog{{
+		Role:   User,
+		Blocks: []Block{TextBlock("Hello")},
+	}}, nil)
+
+	var apiErr *ApiErr
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("Generate error = %v, want *ApiErr", err)
+	}
+	if apiErr.Provider != ProviderResponses {
+		t.Fatalf("Provider = %q, want %q", apiErr.Provider, ProviderResponses)
+	}
+	if apiErr.Kind != APIErrorKindServer {
+		t.Fatalf("Kind = %q, want %q", apiErr.Kind, APIErrorKindServer)
+	}
+	if apiErr.Message != "The server had an error processing your request." {
+		t.Fatalf("Message = %q, want server error message", apiErr.Message)
+	}
+	if apiErr.RawBody != rawResponse {
+		t.Fatalf("RawBody = %q, want original response JSON", apiErr.RawBody)
+	}
+	if !apiErr.Retryable() {
+		t.Fatal("Retryable() = false, want true")
+	}
 }
 
 func TestResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase(t *testing.T) {
