@@ -3,52 +3,37 @@ package gai
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
-
-	a "github.com/anthropics/anthropic-sdk-go"
-	oai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
-	"google.golang.org/genai"
 )
 
-type syntheticAPIErrorCause struct {
-	provider Provider
-	message  string
-	rawBody  string
+type apiErrorPayload struct {
+	Code    json.RawMessage `json:"code"`
+	Type    string          `json:"type"`
+	Status  string          `json:"status"`
+	Message string          `json:"message"`
 }
 
-func (s syntheticAPIErrorCause) Error() string {
-	switch {
-	case s.message != "":
-		return s.message
-	case s.rawBody != "":
-		return s.rawBody
-	default:
-		return fmt.Sprintf("%s api error", s.provider)
-	}
-}
-
-type genericAPIErrorPayload struct {
-	Code    any                     `json:"code"`
-	Type    string                  `json:"type"`
-	Status  string                  `json:"status"`
-	Message string                  `json:"message"`
-	Error   *genericAPIErrorPayload `json:"error"`
-}
-
-func newAPIError(provider Provider, kind APIErrorKind, statusCode int, message, rawBody string, cause error) *ApiErr {
+func newAPIError(provider Provider, statusCode int, message, rawBody string, cause error, clues ...string) *ApiErr {
 	message = strings.TrimSpace(message)
 	rawBody = strings.TrimSpace(rawBody)
+
 	if message == "" {
-		message = extractGenericErrorMessage(rawBody)
+		message = rawBody
 	}
-	if cause == nil && (message != "" || rawBody != "") {
-		cause = syntheticAPIErrorCause{provider: provider, message: message, rawBody: rawBody}
+	clues = append(clues, message)
+
+	if cause == nil {
+		switch {
+		case message != "":
+			cause = errors.New(message)
+		case rawBody != "":
+			cause = errors.New(rawBody)
+		}
 	}
+
 	return &ApiErr{
 		Provider:   provider,
-		Kind:       kind,
+		Kind:       classifyAPIError(statusCode, clues...),
 		StatusCode: statusCode,
 		Message:    message,
 		RawBody:    rawBody,
@@ -56,7 +41,36 @@ func newAPIError(provider Provider, kind APIErrorKind, statusCode int, message, 
 	}
 }
 
-func classifyByStatus(statusCode int) APIErrorKind {
+func classifyAPIError(statusCode int, clues ...string) APIErrorKind {
+	text := strings.ToLower(strings.Join(clues, " "))
+	switch {
+	case containsAny(text, "authentication_error", "invalid_api_key", "incorrect_api_key", "api_key_invalid", "api key", "unauthenticated", "unauthorized"):
+		return APIErrorKindAuthentication
+	case containsAny(text, "permission_error", "permission denied", "permission_denied", "forbidden", "insufficient_permissions"):
+		return APIErrorKindPermission
+	case containsAny(text, "rate_limit", "rate limit", "too many requests", "quota exceeded", "resource_exhausted"):
+		return APIErrorKindRateLimit
+	case containsAny(text, "not_found", "not found"):
+		return APIErrorKindNotFound
+	case containsAny(text, "request_too_large", "request too large", "payload too large"):
+		return APIErrorKindRequestTooLarge
+	case containsAny(text, "service_unavailable", "service unavailable", "unavailable"):
+		return APIErrorKindServiceUnavailable
+	case containsAny(text, "timeout", "deadline exceeded", "deadline_exceeded"):
+		return APIErrorKindTimeout
+	case containsAny(text, "overloaded"):
+		return APIErrorKindOverloaded
+	case containsAny(text, "content policy", "content_policy"):
+		return APIErrorKindContentPolicy
+	case containsAny(text, "server_error", "api_error", "internal_error", "internal server", "internal"):
+		return APIErrorKindServer
+	case containsAny(text,
+		"invalid_request", "invalid_argument", "billing_error", "invalid_prompt", "invalid_image",
+		"image_too_large", "image_too_small", "image_parse_error", "image_file_too_large",
+		"unsupported_image_media_type", "empty_image_file", "failed_to_download_image", "image_file_not_found"):
+		return APIErrorKindInvalidRequest
+	}
+
 	switch statusCode {
 	case 0:
 		return APIErrorKindUnknown
@@ -91,235 +105,40 @@ func classifyByStatus(statusCode int) APIErrorKind {
 	}
 }
 
-func containsAnyFold(s string, values ...string) bool {
-	s = strings.ToLower(s)
+func containsAny(text string, values ...string) bool {
 	for _, value := range values {
-		if strings.Contains(s, strings.ToLower(value)) {
+		if strings.Contains(text, value) {
 			return true
 		}
 	}
 	return false
 }
 
-func normalizeOpenAICompatibleKind(statusCode int, typ, code, message string) APIErrorKind {
-	joined := strings.ToLower(strings.Join([]string{typ, code, message}, " "))
-	switch {
-	case containsAnyFold(joined, "authentication_error", "invalid_api_key", "incorrect_api_key", "api key", "unauthenticated", "unauthorized"):
-		return APIErrorKindAuthentication
-	case containsAnyFold(joined, "permission_error", "permission denied", "forbidden", "insufficient_permissions"):
-		return APIErrorKindPermission
-	case containsAnyFold(joined, "rate_limit", "too many requests", "quota exceeded", "rate limit"):
-		return APIErrorKindRateLimit
-	case containsAnyFold(joined, "not_found"):
-		return APIErrorKindNotFound
-	case containsAnyFold(joined, "request_too_large", "payload too large"):
-		return APIErrorKindRequestTooLarge
-	case containsAnyFold(joined, "service_unavailable", "unavailable"):
-		return APIErrorKindServiceUnavailable
-	case containsAnyFold(joined, "timeout", "deadline exceeded"):
-		return APIErrorKindTimeout
-	case containsAnyFold(joined, "overloaded"):
-		return APIErrorKindOverloaded
-	case containsAnyFold(joined, "content policy"):
-		return APIErrorKindContentPolicy
-	case containsAnyFold(joined, "server_error", "api_error", "internal_error", "internal server"):
-		return APIErrorKindServer
-	default:
-		return classifyByStatus(statusCode)
-	}
-}
-
-func normalizeAnthropicKind(statusCode int, typ, message string) APIErrorKind {
-	switch strings.ToLower(strings.TrimSpace(typ)) {
-	case "authentication_error":
-		return APIErrorKindAuthentication
-	case "permission_error":
-		return APIErrorKindPermission
-	case "not_found_error":
-		return APIErrorKindNotFound
-	case "rate_limit_error":
-		return APIErrorKindRateLimit
-	case "timeout_error":
-		return APIErrorKindTimeout
-	case "api_error":
-		return APIErrorKindServer
-	case "overloaded_error":
-		return APIErrorKindOverloaded
-	case "invalid_request_error", "billing_error":
-		return APIErrorKindInvalidRequest
-	default:
-		return normalizeOpenAICompatibleKind(statusCode, typ, "", message)
-	}
-}
-
-func normalizeGeminiKind(statusCode int, status, message string, details []map[string]any) APIErrorKind {
-	status = strings.ToUpper(strings.TrimSpace(status))
-	detailsJSON, _ := json.Marshal(details)
-	detailsText := strings.ToLower(string(detailsJSON))
-	messageLower := strings.ToLower(message)
-
-	if strings.Contains(detailsText, "api_key_invalid") || strings.Contains(messageLower, "api key") {
-		return APIErrorKindAuthentication
-	}
-
-	switch status {
-	case "UNAUTHENTICATED":
-		return APIErrorKindAuthentication
-	case "PERMISSION_DENIED":
-		return APIErrorKindPermission
-	case "NOT_FOUND":
-		return APIErrorKindNotFound
-	case "RESOURCE_EXHAUSTED":
-		return APIErrorKindRateLimit
-	case "INVALID_ARGUMENT":
-		return APIErrorKindInvalidRequest
-	case "DEADLINE_EXCEEDED":
-		return APIErrorKindTimeout
-	case "UNAVAILABLE":
-		return APIErrorKindServiceUnavailable
-	case "INTERNAL":
-		return APIErrorKindServer
-	default:
-		return classifyByStatus(statusCode)
-	}
-}
-
-func normalizeResponsesEventKind(code, message string) APIErrorKind {
-	joined := strings.ToLower(strings.Join([]string{code, message}, " "))
-	switch {
-	case containsAnyFold(joined, "rate_limit_exceeded", "rate limit"):
-		return APIErrorKindRateLimit
-	case containsAnyFold(joined, "server_error"):
-		return APIErrorKindServer
-	case containsAnyFold(joined, "timeout"):
-		return APIErrorKindTimeout
-	case containsAnyFold(joined, "content_policy"):
-		return APIErrorKindContentPolicy
-	case containsAnyFold(joined, "invalid_prompt", "invalid_image", "invalid_base64_image", "invalid_image_url", "image_too_large", "image_too_small", "image_parse_error", "invalid_image_mode", "image_file_too_large", "unsupported_image_media_type", "empty_image_file", "failed_to_download_image", "image_file_not_found"):
-		return APIErrorKindInvalidRequest
-	default:
-		return APIErrorKindUnknown
-	}
-}
-
-func extractGenericErrorMessage(rawBody string) string {
+func parseAPIErrorResponse(rawBody string) apiErrorPayload {
+	rawBody = strings.TrimSpace(rawBody)
 	if rawBody == "" {
-		return ""
+		return apiErrorPayload{}
 	}
-	var payload genericAPIErrorPayload
-	if err := json.Unmarshal([]byte(rawBody), &payload); err != nil {
-		return strings.TrimSpace(rawBody)
+
+	var response struct {
+		Error apiErrorPayload `json:"error"`
 	}
-	for payload.Error != nil {
-		payload = *payload.Error
+	if err := json.Unmarshal([]byte(rawBody), &response); err != nil {
+		return apiErrorPayload{Message: rawBody}
 	}
-	if strings.TrimSpace(payload.Message) != "" {
-		return strings.TrimSpace(payload.Message)
+
+	payload := response.Error
+	payload.Type = strings.TrimSpace(payload.Type)
+	payload.Status = strings.TrimSpace(payload.Status)
+	payload.Message = strings.TrimSpace(payload.Message)
+	payload.Code = json.RawMessage(strings.TrimSpace(string(payload.Code)))
+	if payload.Message == "" {
+		payload.Message = rawBody
 	}
-	return strings.TrimSpace(rawBody)
+	return payload
 }
 
-func extractGenericErrorFields(rawBody string) (message, typ, code, status string) {
-	if rawBody == "" {
-		return "", "", "", ""
-	}
-	var payload genericAPIErrorPayload
-	if err := json.Unmarshal([]byte(rawBody), &payload); err != nil {
-		return strings.TrimSpace(rawBody), "", "", ""
-	}
-	for payload.Error != nil {
-		payload = *payload.Error
-	}
-	return strings.TrimSpace(payload.Message), strings.TrimSpace(payload.Type), stringifyCode(payload.Code), strings.TrimSpace(payload.Status)
-}
-
-func stringifyCode(code any) string {
-	switch v := code.(type) {
-	case nil:
-		return ""
-	case string:
-		return strings.TrimSpace(v)
-	case float64:
-		return fmt.Sprintf("%.0f", v)
-	case json.Number:
-		return v.String()
-	default:
-		return strings.TrimSpace(fmt.Sprint(v))
-	}
-}
-
-func mapOpenAICompatibleError(provider Provider, err error) error {
-	var apierr *oai.Error
-	if !errors.As(err, &apierr) {
-		return nil
-	}
-	kind := normalizeOpenAICompatibleKind(apierr.StatusCode, apierr.Type, apierr.Code, apierr.Message)
-	return newAPIError(provider, kind, apierr.StatusCode, apierr.Message, apierr.RawJSON(), err)
-}
-
-func mapResponsesRequestError(err error) error {
-	var apierr *responses.Error
-	if !errors.As(err, &apierr) {
-		return nil
-	}
-	kind := normalizeOpenAICompatibleKind(apierr.StatusCode, apierr.Type, apierr.Code, apierr.Message)
-	return newAPIError(ProviderResponses, kind, apierr.StatusCode, apierr.Message, apierr.RawJSON(), err)
-}
-
-func mapAnthropicError(err error) error {
-	var apierr *a.Error
-	if !errors.As(err, &apierr) {
-		return nil
-	}
-	message, typ, _, _ := extractGenericErrorFields(apierr.RawJSON())
-	kind := normalizeAnthropicKind(apierr.StatusCode, typ, message)
-	return newAPIError(ProviderAnthropic, kind, apierr.StatusCode, message, apierr.RawJSON(), err)
-}
-
-func mapGeminiError(err error) error {
-	var apierr *genai.APIError
-	if errors.As(err, &apierr) && apierr != nil {
-		kind := normalizeGeminiKind(apierr.Code, apierr.Status, apierr.Message, apierr.Details)
-		return newAPIError(ProviderGemini, kind, apierr.Code, apierr.Message, "", err)
-	}
-
-	var apierrValue genai.APIError
-	if errors.As(err, &apierrValue) {
-		kind := normalizeGeminiKind(apierrValue.Code, apierrValue.Status, apierrValue.Message, apierrValue.Details)
-		return newAPIError(ProviderGemini, kind, apierrValue.Code, apierrValue.Message, "", err)
-	}
-
-	return nil
-}
-
-func newHTTPAPIError(provider Provider, statusCode int, rawBody string) error {
-	message, typ, code, status := extractGenericErrorFields(rawBody)
-	kind := normalizeOpenAICompatibleKind(statusCode, typ, code, status+" "+message)
-	return newAPIError(provider, kind, statusCode, message, rawBody, nil)
-}
-
-func newResponsesStreamAPIError(code, message, rawBody string) error {
-	kind := normalizeResponsesEventKind(code, message)
-	return newAPIError(ProviderResponses, kind, 0, message, rawBody, nil)
-}
-
-func newZAIHeuristicAPIError(err error) error {
-	if err == nil {
-		return nil
-	}
-	errText := err.Error()
-	switch {
-	case containsAnyFold(errText, "401", "authentication", "unauthorized", "api key"):
-		return newAPIError(ProviderZAI, APIErrorKindAuthentication, 401, errText, "", err)
-	case containsAnyFold(errText, "403", "permission", "forbidden"):
-		return newAPIError(ProviderZAI, APIErrorKindPermission, 403, errText, "", err)
-	case containsAnyFold(errText, "429", "rate limit", "quota exceeded", "1113"):
-		return newAPIError(ProviderZAI, APIErrorKindRateLimit, 429, errText, "", err)
-	case containsAnyFold(errText, "503", "service unavailable", "unavailable"):
-		return newAPIError(ProviderZAI, APIErrorKindServiceUnavailable, 503, errText, "", err)
-	case containsAnyFold(errText, "500", "502", "504", "internal server", "server error"):
-		return newAPIError(ProviderZAI, APIErrorKindServer, 500, errText, "", err)
-	default:
-		return nil
-	}
+func newHTTPAPIError(provider Provider, statusCode int, rawBody string) *ApiErr {
+	payload := parseAPIErrorResponse(rawBody)
+	return newAPIError(provider, statusCode, payload.Message, rawBody, nil, payload.Type, string(payload.Code), payload.Status)
 }

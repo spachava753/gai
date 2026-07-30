@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"maps"
@@ -14,6 +15,25 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
+
+func mapGeminiError(err error) *ApiErr {
+	var apiErr genai.APIError
+	if !errors.As(err, &apiErr) {
+		var apiErrPointer *genai.APIError
+		if !errors.As(err, &apiErrPointer) || apiErrPointer == nil {
+			return nil
+		}
+		apiErr = *apiErrPointer
+	}
+
+	clues := []string{apiErr.Status}
+	for _, detail := range apiErr.Details {
+		if reason, ok := detail["reason"].(string); ok {
+			clues = append(clues, reason)
+		}
+	}
+	return newAPIError(ProviderGemini, apiErr.Code, apiErr.Message, "", err, clues...)
+}
 
 const (
 	// GeminiExtraFieldThoughtSignature stores the thought signature for thinking blocks.

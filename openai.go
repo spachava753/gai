@@ -24,6 +24,14 @@ import (
 	oai "github.com/openai/openai-go/v3"
 )
 
+func mapOpenAIError(provider Provider, err error) *ApiErr {
+	var apiErr *oai.Error
+	if !errors.As(err, &apiErr) {
+		return nil
+	}
+	return newAPIError(provider, apiErr.StatusCode, apiErr.Message, apiErr.RawJSON(), err, apiErr.Type, apiErr.Code)
+}
+
 const (
 	// OpenAIExtraFieldImageWidth stores the image width in pixels.
 	// Can be set in Block.ExtraFields for Image blocks to specify dimensions
@@ -539,7 +547,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	// Make the API call
 	resp, err := g.client.New(ctx, params)
 	if err != nil {
-		if mapped := mapOpenAICompatibleError(ProviderOpenAI, err); mapped != nil {
+		if mapped := mapOpenAIError(ProviderOpenAI, err); mapped != nil {
 			return Response{}, mapped
 		}
 		return Response{}, fmt.Errorf("failed to create new message: %w", err)
@@ -923,7 +931,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 		// Check for stream errors
 		if stream.Err() != nil {
-			if mapped := mapOpenAICompatibleError(ProviderOpenAI, stream.Err()); mapped != nil {
+			if mapped := mapOpenAIError(ProviderOpenAI, stream.Err()); mapped != nil {
 				yield(StreamChunk{}, mapped)
 			} else {
 				yield(StreamChunk{}, stream.Err())

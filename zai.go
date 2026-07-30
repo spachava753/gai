@@ -664,7 +664,7 @@ func (g *ZaiGenerator) Generate(ctx context.Context, dialog Dialog, options *Gen
 
 	resp, err := g.client.PaasV4ChatCompletionsPost(ctx, request, params)
 	if err != nil {
-		return Response{}, g.mapError(err)
+		return Response{}, mapZAIError(err)
 	}
 
 	result := Response{UsageMetadata: make(Metadata)}
@@ -751,7 +751,7 @@ func (g *ZaiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOp
 
 		stream, err := g.streamClient.NewStreaming(ctx, request, params)
 		if err != nil {
-			yield(StreamChunk{}, g.mapError(err))
+			yield(StreamChunk{}, mapZAIError(err))
 			return
 		}
 		defer stream.Close()
@@ -829,7 +829,7 @@ func (g *ZaiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOp
 		}
 
 		if stream.Err() != nil {
-			yield(StreamChunk{}, g.mapError(stream.Err()))
+			yield(StreamChunk{}, mapZAIError(stream.Err()))
 			return
 		}
 
@@ -1047,23 +1047,20 @@ func (c *defaultZaiClient) NewStreaming(ctx context.Context, request zai.PaasV4C
 	return &zaiStream{body: resp.Body, scanner: scanner}, nil
 }
 
-func (g *ZaiGenerator) mapError(err error) error {
-	if err == nil {
-		return nil
-	}
-	var apiErr *ApiErr
-	if errors.As(err, &apiErr) {
+func mapZAIError(err error) error {
+	var statusErr *zai.ErrorStatusCode
+	if !errors.As(err, &statusErr) {
 		return err
 	}
-	var statusErr *zai.ErrorStatusCode
-	if errors.As(err, &statusErr) {
-		rawBody, _ := json.Marshal(statusErr.Response)
-		return newHTTPAPIError(ProviderZAI, statusErr.StatusCode, string(rawBody))
-	}
-	if mapped := newZAIHeuristicAPIError(err); mapped != nil {
-		return mapped
-	}
-	return err
+	rawBody, _ := json.Marshal(statusErr.Response)
+	return newAPIError(
+		ProviderZAI,
+		statusErr.StatusCode,
+		statusErr.Response.Message,
+		string(rawBody),
+		err,
+		fmt.Sprint(statusErr.Response.Code),
+	)
 }
 
 var _ Generator = (*ZaiGenerator)(nil)

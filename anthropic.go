@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"strconv"
@@ -12,6 +13,16 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 )
+
+func mapAnthropicError(err error) *ApiErr {
+	var apiErr *a.Error
+	if !errors.As(err, &apiErr) {
+		return nil
+	}
+	rawBody := apiErr.RawJSON()
+	payload := parseAPIErrorResponse(rawBody)
+	return newAPIError(ProviderAnthropic, apiErr.StatusCode, payload.Message, rawBody, err, payload.Type, string(payload.Code), payload.Status)
+}
 
 // AnthropicGenerator implements the gai.Generator interface using OpenAI's API
 type AnthropicGenerator struct {

@@ -356,7 +356,7 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 	// Make the API call with request options
 	resp, err := g.client.New(ctx, params, reqOpts...)
 	if err != nil {
-		if mapped := mapOpenAICompatibleError(ProviderOpenRouter, err); mapped != nil {
+		if mapped := mapOpenAIError(ProviderOpenRouter, err); mapped != nil {
 			return Response{}, mapped
 		}
 		return Response{}, fmt.Errorf("failed to create new message: %w", err)

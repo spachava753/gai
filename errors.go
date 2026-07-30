@@ -140,21 +140,26 @@ const (
 	APIErrorKindContentPolicy      APIErrorKind = "content_policy"
 )
 
-// ApiErr is returned when a provider responds with a server/API error. It stores
-// a normalized classification, the HTTP status code when available, the raw body
-// when available, and wraps the original provider error in Cause.
+// ApiErr represents an error returned by an upstream provider. Kind provides a
+// provider-independent classification for retry and fallback decisions, while
+// the remaining fields retain provider details when available.
+//
+// ApiErr unwraps to Cause so callers can inspect the underlying error with
+// [errors.Is] or [errors.As].
 type ApiErr struct {
-	Provider Provider     `json:"provider" yaml:"provider"`
-	Kind     APIErrorKind `json:"kind" yaml:"kind"`
+	// Provider identifies the upstream service that returned the error.
+	Provider Provider `json:"provider" yaml:"provider"`
+	// Kind is the provider-independent classification of the error.
+	Kind APIErrorKind `json:"kind" yaml:"kind"`
 
-	// StatusCode is the HTTP status code returned by the API when available.
+	// StatusCode is the HTTP status code returned by the API, or zero when unavailable.
 	StatusCode int `json:"status_code,omitempty" yaml:"status_code,omitempty"`
-	// Message is the best-effort human-readable message extracted from the server response.
+	// Message is the best-effort human-readable message extracted from the provider response.
 	Message string `json:"message,omitempty" yaml:"message,omitempty"`
-	// RawBody is the unmodified server response body when the provider exposes it.
+	// RawBody is the provider response body when available.
 	RawBody string `json:"raw_body,omitempty" yaml:"raw_body,omitempty"`
-	// Cause is the original provider error or a synthetic internal error representing
-	// the raw provider response when no SDK error object exists.
+	// Cause is the original SDK error when available. For errors created directly
+	// from a provider response, it is a synthesized error containing Message or RawBody.
 	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
 }
 
@@ -174,7 +179,7 @@ func (a *ApiErr) Error() string {
 	return fmt.Sprintf("%s %s", a.Provider, a.Kind)
 }
 
-// Unwrap returns the original provider error when one exists.
+// Unwrap returns Cause, which may be the original SDK error or a synthesized response error.
 func (a *ApiErr) Unwrap() error {
 	if a == nil {
 		return nil

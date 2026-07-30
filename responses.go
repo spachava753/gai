@@ -14,6 +14,10 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
+func newResponsesStreamAPIError(code, message, rawBody string) *ApiErr {
+	return newAPIError(ProviderResponses, 0, message, rawBody, nil, code)
+}
+
 // ResponsesThoughtSummaryDetailParam is a key used for storing the thought summary detail level
 // in GenOpts.ExtraArgs. Setting parameter will set the level of detail of thought summaries that
 // are returned from the OpenAI Responses API. One of `auto`, `concise`, or `detailed`.
@@ -614,7 +618,7 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 	res, err := r.client.New(ctx, params)
 	if err != nil {
-		if mapped := mapResponsesRequestError(err); mapped != nil {
+		if mapped := mapOpenAIError(ProviderResponses, err); mapped != nil {
 			return Response{}, mapped
 		}
 		return Response{}, fmt.Errorf("responses: generation failed: %w", err)
@@ -897,7 +901,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 		}
 
 		if stream.Err() != nil {
-			if mapped := mapResponsesRequestError(stream.Err()); mapped != nil {
+			if mapped := mapOpenAIError(ProviderResponses, stream.Err()); mapped != nil {
 				yield(StreamChunk{}, mapped)
 			} else {
 				yield(StreamChunk{}, stream.Err())
