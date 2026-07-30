@@ -17,6 +17,48 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+func geminiResponseError(response *genai.GenerateContentResponse) error {
+	if response == nil {
+		return errors.New("gemini: empty generation response")
+	}
+	if feedback := response.PromptFeedback; feedback != nil && feedback.BlockReason != genai.BlockedReasonUnspecified && feedback.BlockReason != "" {
+		message := feedback.BlockReasonMessage
+		if message == "" {
+			message = fmt.Sprintf("prompt blocked: %s", feedback.BlockReason)
+		}
+		return ContentPolicyErr(message)
+	}
+	if len(response.Candidates) == 0 || response.Candidates[0] == nil {
+		return nil
+	}
+
+	candidate := response.Candidates[0]
+	reason := candidate.FinishReason
+	message := candidate.FinishMessage
+	if message == "" {
+		message = string(reason)
+	}
+	switch reason {
+	case "", genai.FinishReasonUnspecified, genai.FinishReasonStop:
+		return nil
+	case genai.FinishReasonMaxTokens:
+		return ErrMaxGenerationLimit
+	case genai.FinishReasonSafety,
+		genai.FinishReasonRecitation,
+		genai.FinishReasonBlocklist,
+		genai.FinishReasonProhibitedContent,
+		genai.FinishReasonSPII,
+		genai.FinishReasonImageSafety,
+		genai.FinishReasonImageProhibitedContent,
+		genai.FinishReasonImageRecitation:
+		return ContentPolicyErr(message)
+	case genai.FinishReasonMalformedFunctionCall, genai.FinishReasonUnexpectedToolCall:
+		return fmt.Errorf("gemini: generation failed: %s", message)
+	default:
+		return fmt.Errorf("gemini: generation stopped: %s", message)
+	}
+}
+
 func classifyGeminiError(apiErr genai.APIError) APIErrorKind {
 	for _, detail := range apiErr.Details {
 		reason, _ := detail["reason"].(string)
@@ -449,15 +491,14 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		result.Candidates = append(result.Candidates, msg)
 	}
 
-	if len(resp.Candidates) > 0 && resp.Candidates[0] != nil {
-		switch resp.Candidates[0].FinishReason {
-		case genai.FinishReasonStop:
-			result.FinishReason = EndTurn
-		case genai.FinishReasonMaxTokens:
+	if err := geminiResponseError(resp); err != nil {
+		if errors.Is(err, ErrMaxGenerationLimit) {
 			result.FinishReason = MaxGenerationLimit
-		default:
-			result.FinishReason = EndTurn
 		}
+		return result, err
+	}
+	if len(resp.Candidates) > 0 && resp.Candidates[0] != nil {
+		result.FinishReason = EndTurn
 	}
 
 	if hasToolCalls && result.FinishReason == EndTurn {
@@ -559,6 +600,11 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 				} else {
 					yield(StreamChunk{}, fmt.Errorf("gemini: generation failed: %w", err))
 				}
+				return
+			}
+
+			if err := geminiResponseError(resp); err != nil {
+				yield(StreamChunk{}, err)
 				return
 			}
 

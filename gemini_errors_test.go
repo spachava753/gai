@@ -5,11 +5,77 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/genai"
 )
+
+func TestGeminiResponseError(t *testing.T) {
+	tests := []struct {
+		name       string
+		response   *genai.GenerateContentResponse
+		wantPolicy bool
+		wantLimit  bool
+		contains   string
+	}{
+		{name: "successful stop", response: geminiResponseWithFinishReason(genai.FinishReasonStop)},
+		{name: "max tokens", response: geminiResponseWithFinishReason(genai.FinishReasonMaxTokens), wantLimit: true},
+		{
+			name: "blocked prompt",
+			response: &genai.GenerateContentResponse{PromptFeedback: &genai.GenerateContentResponsePromptFeedback{
+				BlockReason:        genai.BlockedReasonSafety,
+				BlockReasonMessage: "unsafe prompt",
+			}},
+			wantPolicy: true,
+			contains:   "unsafe prompt",
+		},
+		{name: "candidate safety", response: geminiResponseWithFinishReason(genai.FinishReasonSafety), wantPolicy: true, contains: "SAFETY"},
+		{name: "candidate blocklist", response: geminiResponseWithFinishReason(genai.FinishReasonBlocklist), wantPolicy: true, contains: "BLOCKLIST"},
+		{name: "candidate prohibited content", response: geminiResponseWithFinishReason(genai.FinishReasonProhibitedContent), wantPolicy: true, contains: "PROHIBITED_CONTENT"},
+		{name: "candidate SPII", response: geminiResponseWithFinishReason(genai.FinishReasonSPII), wantPolicy: true, contains: "SPII"},
+		{name: "candidate recitation", response: geminiResponseWithFinishReason(genai.FinishReasonRecitation), wantPolicy: true, contains: "RECITATION"},
+		{name: "candidate image safety", response: geminiResponseWithFinishReason(genai.FinishReasonImageSafety), wantPolicy: true, contains: "IMAGE_SAFETY"},
+		{name: "candidate image prohibited content", response: geminiResponseWithFinishReason(genai.FinishReasonImageProhibitedContent), wantPolicy: true, contains: "IMAGE_PROHIBITED_CONTENT"},
+		{name: "candidate image recitation", response: geminiResponseWithFinishReason(genai.FinishReasonImageRecitation), wantPolicy: true, contains: "IMAGE_RECITATION"},
+		{name: "malformed function call", response: geminiResponseWithFinishReason(genai.FinishReasonMalformedFunctionCall), contains: "MALFORMED_FUNCTION_CALL"},
+		{name: "unexpected tool call", response: geminiResponseWithFinishReason(genai.FinishReasonUnexpectedToolCall), contains: "UNEXPECTED_TOOL_CALL"},
+		{name: "unknown reason", response: geminiResponseWithFinishReason(genai.FinishReasonOther), contains: "OTHER"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := geminiResponseError(tt.response)
+			wantErr := tt.wantPolicy || tt.wantLimit || tt.contains != ""
+			if !wantErr {
+				if err != nil {
+					t.Fatalf("geminiResponseError() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("geminiResponseError() = nil, want error")
+			}
+			if tt.wantPolicy {
+				var policyErr ContentPolicyErr
+				if !errors.As(err, &policyErr) {
+					t.Fatalf("geminiResponseError() = %T, want ContentPolicyErr", err)
+				}
+			}
+			if tt.wantLimit && !errors.Is(err, ErrMaxGenerationLimit) {
+				t.Fatalf("geminiResponseError() = %v, want ErrMaxGenerationLimit", err)
+			}
+			if tt.contains != "" && !strings.Contains(err.Error(), tt.contains) {
+				t.Fatalf("geminiResponseError() = %q, want error containing %q", err, tt.contains)
+			}
+		})
+	}
+}
+
+func geminiResponseWithFinishReason(reason genai.FinishReason) *genai.GenerateContentResponse {
+	return &genai.GenerateContentResponse{Candidates: []*genai.Candidate{{FinishReason: reason}}}
+}
 
 func TestGeminiAPIErrorMapping(t *testing.T) {
 	testCases := []struct {
