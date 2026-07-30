@@ -97,6 +97,7 @@ Provider-specific metadata placement
 
 Naming and location
 - Unit tests live alongside implementation: `file_test.go`
+- Minimize test file count: add tests to an existing relevant `*_test.go` file; create another test file only when no suitable file exists or technical separation requires it
 - Example files: `*_example_test.go` demonstrate canonical usage
 
 ## Security considerations

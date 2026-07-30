@@ -178,6 +178,22 @@
 //		fmt.Printf("cached tokens: %d\n", cached)
 //	}
 //
+// # Responses API Service Tiers
+//
+// Set [ResponsesServiceTierParam] in [GenOpts.ExtraArgs] to choose how OpenAI processes
+// a Responses API request. Supported values are "auto", "default", "flex", "scale",
+// and "priority". If omitted, OpenAI uses its default "auto" behavior. The option applies
+// to both Generate and Stream calls.
+//
+//	opts := &gai.GenOpts{ExtraArgs: map[string]any{
+//		gai.ResponsesServiceTierParam: "priority",
+//	}}
+//	resp, err := gen.Generate(ctx, dialog, opts)
+//	if err != nil {
+//		fmt.Printf("Error: %v\n", err)
+//		return
+//	}
+//
 // # Tool Usage Example
 //
 // Register tools directly on generators that implement [ToolCallingGenerator]. The

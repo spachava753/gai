@@ -12,6 +12,55 @@ import (
 	"testing"
 )
 
+func TestResponsesGeneratorBuildParamsServiceTier(t *testing.T) {
+	withServiceTier := func(value any) *GenOpts {
+		return &GenOpts{ExtraArgs: map[string]any{ResponsesServiceTierParam: value}}
+	}
+
+	tests := []struct {
+		name    string
+		options *GenOpts
+		want    responses.ResponseNewParamsServiceTier
+		wantErr string
+	}{
+		{name: "unset"},
+		{name: "auto", options: withServiceTier("auto"), want: responses.ResponseNewParamsServiceTierAuto},
+		{name: "default", options: withServiceTier("default"), want: responses.ResponseNewParamsServiceTierDefault},
+		{name: "flex", options: withServiceTier("flex"), want: responses.ResponseNewParamsServiceTierFlex},
+		{name: "scale", options: withServiceTier("scale"), want: responses.ResponseNewParamsServiceTierScale},
+		{name: "priority", options: withServiceTier("priority"), want: responses.ResponseNewParamsServiceTierPriority},
+		{
+			name:    "SDK value",
+			options: withServiceTier(responses.ResponseNewParamsServiceTierPriority),
+			want:    responses.ResponseNewParamsServiceTierPriority,
+		},
+		{name: "invalid value", options: withServiceTier("fast"), wantErr: "must be one of"},
+		{name: "invalid type", options: withServiceTier(1), wantErr: "must be a string"},
+	}
+
+	generator := NewResponsesGenerator(nil, "gpt-5", "")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params, err := generator.buildParams(nil, tt.options)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("buildParams() error = nil, want error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("buildParams() error = %q, want error containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildParams() error = %v", err)
+			}
+			if params.ServiceTier != tt.want {
+				t.Fatalf("ServiceTier = %q, want %q", params.ServiceTier, tt.want)
+			}
+		})
+	}
+}
+
 func TestResponsesGenerator_Generate_pdf(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	pdfBytes, err := os.ReadFile("sample.pdf")
