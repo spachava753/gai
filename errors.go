@@ -3,6 +3,7 @@ package gai
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // ErrMaxGenerationLimit is returned when a Generator has generated the maximum number of tokens
@@ -158,6 +159,9 @@ type ApiErr struct {
 	Message string `json:"message,omitempty" yaml:"message,omitempty"`
 	// RawBody is the provider response body when available.
 	RawBody string `json:"raw_body,omitempty" yaml:"raw_body,omitempty"`
+	// RetryAfterDuration is the provider-requested delay before another attempt,
+	// or nil when the provider supplied no retry timing information.
+	RetryAfterDuration *time.Duration `json:"retry_after,omitempty" yaml:"retry_after,omitempty"`
 	// Cause is the underlying SDK or transport error when one is available.
 	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
 }
@@ -184,6 +188,15 @@ func (a *ApiErr) Unwrap() error {
 		return nil
 	}
 	return a.Cause
+}
+
+// RetryAfter reports the provider-requested delay before another attempt.
+// The boolean is false when the provider supplied no retry timing information.
+func (a *ApiErr) RetryAfter() (time.Duration, bool) {
+	if a == nil || a.RetryAfterDuration == nil {
+		return 0, false
+	}
+	return *a.RetryAfterDuration, true
 }
 
 // Retryable reports whether the error represents a retryable upstream failure.

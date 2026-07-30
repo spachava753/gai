@@ -388,11 +388,11 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 	if err != nil {
 		return Response{}, fmt.Errorf("request failed: %w", err)
 	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Response{}, mapHTTPAPIError(ProviderCerebras, resp)
+	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Response{}, mapHTTPAPIError(ProviderCerebras, resp.StatusCode, string(respBody))
-	}
 
 	var cr cerebrasChatResponse
 	if err := json.Unmarshal(respBody, &cr); err != nil {

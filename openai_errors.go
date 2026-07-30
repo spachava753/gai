@@ -13,11 +13,12 @@ func mapOpenAISDKError(provider Provider, err error) *ApiErr {
 		return nil
 	}
 	return &ApiErr{
-		Provider:   provider,
-		Kind:       classifyHTTPStatus(apiErr.StatusCode),
-		StatusCode: apiErr.StatusCode,
-		Message:    apiErr.Message,
-		RawBody:    apiErr.RawJSON(),
-		Cause:      err,
+		Provider:           provider,
+		Kind:               classifyHTTPStatus(apiErr.StatusCode),
+		StatusCode:         apiErr.StatusCode,
+		Message:            apiErr.Message,
+		RawBody:            apiErr.RawJSON(),
+		RetryAfterDuration: retryAfterFromResponse(apiErr.Response),
+		Cause:              err,
 	}
 }

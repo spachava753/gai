@@ -36,6 +36,28 @@ type RetryGenerator struct {
 	retryOptions     []backoff.RetryOption // User-provided options for the backoff.Retry call (e.g., MaxElapsedTime, Notify).
 }
 
+type retryAfterError struct {
+	err  error
+	hint backoff.RetryAfterError
+}
+
+func (e *retryAfterError) Error() string {
+	return e.err.Error()
+}
+
+func (e *retryAfterError) Unwrap() error {
+	return e.err
+}
+
+func (e *retryAfterError) As(target any) bool {
+	retryAfter, ok := target.(**backoff.RetryAfterError)
+	if !ok {
+		return false
+	}
+	*retryAfter = &e.hint
+	return true
+}
+
 // NewRetryGenerator creates a new RetryGenerator.
 //
 // Parameters:
@@ -83,6 +105,12 @@ func (rg *RetryGenerator) wrapRetryError(err error) error {
 	}
 	var apiErr *ApiErr
 	if errors.As(err, &apiErr) && apiErr.Retryable() {
+		if delay, ok := apiErr.RetryAfter(); ok {
+			return &retryAfterError{
+				err:  err,
+				hint: backoff.RetryAfterError{Duration: delay},
+			}
+		}
 		return err
 	}
 	if errors.Is(err, context.Canceled) {
@@ -100,7 +128,11 @@ func (rg *RetryGenerator) retryCallOptions() []backoff.RetryOption {
 	return callOpts
 }
 
-func unwrapPermanentRetryError(err error) error {
+func unwrapRetryError(err error) error {
+	var retryAfter *retryAfterError
+	if errors.As(err, &retryAfter) {
+		return retryAfter.err
+	}
 	var permanent *backoff.PermanentError
 	if errors.As(err, &permanent) {
 		return permanent.Err
@@ -127,7 +159,7 @@ func (rg *RetryGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 	resp, err := backoff.Retry(ctx, operation, rg.retryCallOptions()...)
 	if err != nil {
-		return resp, unwrapPermanentRetryError(err)
+		return resp, unwrapRetryError(err)
 	}
 	return resp, nil
 }
@@ -177,7 +209,7 @@ func (rg *RetryGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			return
 		}
 
-		yield(StreamChunk{}, unwrapPermanentRetryError(err))
+		yield(StreamChunk{}, unwrapRetryError(err))
 	}
 }
 

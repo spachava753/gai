@@ -49,12 +49,13 @@ func mapAnthropicError(err error) *ApiErr {
 	}
 	rawBody := apiErr.RawJSON()
 	return &ApiErr{
-		Provider:   ProviderAnthropic,
-		Kind:       classifyAnthropicError(apiErr.StatusCode, apiErr.Type()),
-		StatusCode: apiErr.StatusCode,
-		Message:    parseAPIErrorMessage(rawBody),
-		RawBody:    rawBody,
-		Cause:      err,
+		Provider:           ProviderAnthropic,
+		Kind:               classifyAnthropicError(apiErr.StatusCode, apiErr.Type()),
+		StatusCode:         apiErr.StatusCode,
+		Message:            parseAPIErrorMessage(rawBody),
+		RawBody:            rawBody,
+		RetryAfterDuration: retryAfterFromResponse(apiErr.Response),
+		Cause:              err,
 	}
 }
 

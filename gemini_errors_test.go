@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"google.golang.org/genai"
 )
@@ -93,6 +94,9 @@ func TestGeminiAPIErrorMapping(t *testing.T) {
 				}
 				if apiErr.Kind != APIErrorKindRateLimit {
 					t.Fatalf("Expected error kind %q, got %q", APIErrorKindRateLimit, apiErr.Kind)
+				}
+				if delay, ok := apiErr.RetryAfter(); !ok || delay != 43*time.Second {
+					t.Fatalf("RetryAfter() = (%s, %t), want (43s, true)", delay, ok)
 				}
 				if apiErr.Message == "" {
 					t.Errorf("Expected non-empty rate limit error message")

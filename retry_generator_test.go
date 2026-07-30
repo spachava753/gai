@@ -161,6 +161,71 @@ func TestRetryGenerator_Generate_RetryAndSucceed(t *testing.T) {
 	}
 }
 
+func TestRetryGenerator_Generate_HonorsRetryAfter(t *testing.T) {
+	retryAfter := 5 * time.Millisecond
+	retryableErr := &gai.ApiErr{
+		Provider:           gai.ProviderOpenAI,
+		Kind:               gai.APIErrorKindRateLimit,
+		StatusCode:         http.StatusTooManyRequests,
+		Message:            "too many requests",
+		RetryAfterDuration: &retryAfter,
+	}
+
+	m := &mockGenerator{}
+	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+		if m.generateCallCount == 1 {
+			return gai.Response{}, retryableErr
+		}
+		return gai.Response{}, nil
+	}
+
+	var notifiedDelay time.Duration
+	var notifiedErr error
+	rg := gai.NewRetryGenerator(
+		m,
+		backoff.NewConstantBackOff(time.Millisecond),
+		backoff.WithMaxTries(2),
+		backoff.WithNotify(func(err error, delay time.Duration) {
+			notifiedErr = err
+			notifiedDelay = delay
+		}),
+	)
+
+	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if m.generateCallCount != 2 {
+		t.Fatalf("Generate() calls = %d, want 2", m.generateCallCount)
+	}
+	if notifiedDelay != retryAfter {
+		t.Fatalf("notified delay = %s, want %s", notifiedDelay, retryAfter)
+	}
+	if !errors.Is(notifiedErr, retryableErr) {
+		t.Fatalf("notified error = %v, want wrapped ApiErr", notifiedErr)
+	}
+}
+
+func TestRetryGenerator_Generate_RetryAfterReturnsOriginalError(t *testing.T) {
+	retryAfter := time.Duration(0)
+	expectedErr := &gai.ApiErr{
+		Provider:           gai.ProviderOpenAI,
+		Kind:               gai.APIErrorKindRateLimit,
+		RetryAfterDuration: &retryAfter,
+	}
+	m := &mockGenerator{
+		GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+			return gai.Response{}, expectedErr
+		},
+	}
+	rg := gai.NewRetryGenerator(m, backoff.NewConstantBackOff(time.Millisecond), backoff.WithMaxTries(1))
+
+	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	if err != expectedErr {
+		t.Fatalf("Generate() error = %T %v, want original ApiErr", err, err)
+	}
+}
+
 func TestRetryGenerator_Generate_PermanentError(t *testing.T) {
 	permanentErr := errors.New("permanent error")
 	m := &mockGenerator{

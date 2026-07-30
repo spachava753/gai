@@ -1037,9 +1037,7 @@ func (c *defaultZaiClient) NewStreaming(ctx context.Context, request zai.PaasV4C
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		return nil, mapHTTPAPIError(ProviderZAI, resp.StatusCode, string(body))
+		return nil, mapHTTPAPIError(ProviderZAI, resp)
 	}
 
 	scanner := bufio.NewScanner(resp.Body)

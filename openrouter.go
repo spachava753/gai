@@ -140,12 +140,13 @@ func mapOpenRouterError(err error) *ApiErr {
 	var payload openRouterErrorPayload
 	_ = json.Unmarshal([]byte(apiErr.RawJSON()), &payload)
 	return &ApiErr{
-		Provider:   ProviderOpenRouter,
-		Kind:       classifyOpenRouterError(apiErr.StatusCode, payload.canonicalErrorType()),
-		StatusCode: apiErr.StatusCode,
-		Message:    apiErr.Message,
-		RawBody:    apiErr.RawJSON(),
-		Cause:      err,
+		Provider:           ProviderOpenRouter,
+		Kind:               classifyOpenRouterError(apiErr.StatusCode, payload.canonicalErrorType()),
+		StatusCode:         apiErr.StatusCode,
+		Message:            apiErr.Message,
+		RawBody:            apiErr.RawJSON(),
+		RetryAfterDuration: retryAfterFromResponse(apiErr.Response),
+		Cause:              err,
 	}
 }
 

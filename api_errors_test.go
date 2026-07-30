@@ -3,8 +3,11 @@ package gai
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	anthropicshared "github.com/anthropics/anthropic-sdk-go/shared"
 	oai "github.com/openai/openai-go/v3"
@@ -12,6 +15,59 @@ import (
 
 	"github.com/spachava753/gai/internal/zai"
 )
+
+type trackingReadCloser struct {
+	io.Reader
+	closed bool
+}
+
+func (r *trackingReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name  string
+		value string
+		want  time.Duration
+		ok    bool
+	}{
+		{name: "delta seconds", value: "120", want: 2 * time.Minute, ok: true},
+		{name: "HTTP date", value: now.Add(90 * time.Second).Format(http.TimeFormat), want: 90 * time.Second, ok: true},
+		{name: "past HTTP date", value: now.Add(-time.Minute).Format(http.TimeFormat), want: 0, ok: true},
+		{name: "zero", value: "0", want: 0, ok: true},
+		{name: "negative", value: "-1"},
+		{name: "invalid", value: "later"},
+		{name: "missing"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseRetryAfter(tt.value, now)
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("parseRetryAfter(%q) = (%s, %t), want (%s, %t)", tt.value, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+func TestAPIErrorRetryAfter(t *testing.T) {
+	var nilError *ApiErr
+	if _, ok := nilError.RetryAfter(); ok {
+		t.Fatal("nil ApiErr reports a retry delay")
+	}
+	if _, ok := (&ApiErr{}).RetryAfter(); ok {
+		t.Fatal("ApiErr without a retry delay reports one")
+	}
+
+	delay := time.Duration(0)
+	apiErr := &ApiErr{RetryAfterDuration: &delay}
+	if got, ok := apiErr.RetryAfter(); !ok || got != 0 {
+		t.Fatalf("RetryAfter() = (%s, %t), want (0s, true)", got, ok)
+	}
+}
 
 func TestClassifyHTTPStatus(t *testing.T) {
 	tests := []struct {
@@ -78,7 +134,11 @@ func TestHTTPAPIErrorNormalization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := mapHTTPAPIError(tt.provider, tt.statusCode, tt.body)
+			response := &http.Response{
+				StatusCode: tt.statusCode,
+				Body:       io.NopCloser(strings.NewReader(tt.body)),
+			}
+			got := mapHTTPAPIError(tt.provider, response)
 			if got.Provider != tt.provider {
 				t.Fatalf("Provider = %q, want %q", got.Provider, tt.provider)
 			}
@@ -91,6 +151,9 @@ func TestHTTPAPIErrorNormalization(t *testing.T) {
 			if got.Message != tt.wantMessage {
 				t.Fatalf("Message = %q, want %q", got.Message, tt.wantMessage)
 			}
+			if got.RawBody != tt.body {
+				t.Fatalf("RawBody = %q, want %q", got.RawBody, tt.body)
+			}
 			if got.Retryable() != tt.wantRetryable {
 				t.Fatalf("Retryable() = %t, want %t", got.Retryable(), tt.wantRetryable)
 			}
@@ -98,6 +161,26 @@ func TestHTTPAPIErrorNormalization(t *testing.T) {
 				t.Fatalf("Cause = %v, want nil without an underlying error", got.Cause)
 			}
 		})
+	}
+}
+
+func TestHTTPAPIErrorRetryAfter(t *testing.T) {
+	const body = `{"error":{"message":"rate limited"}}`
+	responseBody := &trackingReadCloser{Reader: strings.NewReader(body)}
+	response := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Retry-After": []string{"7"}},
+		Body:       responseBody,
+	}
+	got := mapHTTPAPIError(ProviderCerebras, response)
+
+	if !responseBody.closed {
+		t.Fatal("response body was not closed")
+	}
+
+	delay, ok := got.RetryAfter()
+	if !ok || delay != 7*time.Second {
+		t.Fatalf("RetryAfter() = (%s, %t), want (7s, true)", delay, ok)
 	}
 }
 
@@ -140,6 +223,7 @@ func TestOpenAIErrorMappingUsesHTTPStatus(t *testing.T) {
 		t.Fatalf("unmarshal SDK error: %v", err)
 	}
 	cause.StatusCode = http.StatusServiceUnavailable
+	cause.Response = &http.Response{Header: http.Header{"Retry-After": []string{"9"}}}
 
 	got := mapOpenAISDKError(ProviderOpenAI, &cause)
 	if got == nil {
@@ -147,6 +231,9 @@ func TestOpenAIErrorMappingUsesHTTPStatus(t *testing.T) {
 	}
 	if got.Kind != APIErrorKindServiceUnavailable {
 		t.Fatalf("Kind = %q, want %q", got.Kind, APIErrorKindServiceUnavailable)
+	}
+	if delay, ok := got.RetryAfter(); !ok || delay != 9*time.Second {
+		t.Fatalf("RetryAfter() = (%s, %t), want (9s, true)", delay, ok)
 	}
 	if !errors.Is(got, &cause) {
 		t.Fatal("mapped error does not wrap the SDK error")
@@ -159,6 +246,7 @@ func TestOpenRouterSDKOverloadMapping(t *testing.T) {
 		t.Fatalf("unmarshal SDK error: %v", err)
 	}
 	cause.StatusCode = http.StatusServiceUnavailable
+	cause.Response = &http.Response{Header: http.Header{"Retry-After": []string{"11"}}}
 
 	got := mapOpenRouterError(&cause)
 	if got == nil {
@@ -169,6 +257,9 @@ func TestOpenRouterSDKOverloadMapping(t *testing.T) {
 	}
 	if !got.Retryable() {
 		t.Fatal("Retryable() = false, want true")
+	}
+	if delay, ok := got.RetryAfter(); !ok || delay != 11*time.Second {
+		t.Fatalf("RetryAfter() = (%s, %t), want (11s, true)", delay, ok)
 	}
 	if !errors.Is(got, &cause) {
 		t.Fatal("mapped error does not wrap the SDK error")

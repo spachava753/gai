@@ -10,6 +10,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"google.golang.org/genai"
 
@@ -49,6 +50,24 @@ func classifyGeminiError(apiErr genai.APIError) APIErrorKind {
 	}
 }
 
+func retryAfterFromGeminiError(apiErr genai.APIError) *time.Duration {
+	for _, detail := range apiErr.Details {
+		if detail["@type"] != "type.googleapis.com/google.rpc.RetryInfo" {
+			continue
+		}
+		value, ok := detail["retryDelay"].(string)
+		if !ok {
+			return nil
+		}
+		delay, err := time.ParseDuration(value)
+		if err != nil || delay < 0 {
+			return nil
+		}
+		return &delay
+	}
+	return nil
+}
+
 func mapGeminiError(err error) *ApiErr {
 	var apiErr genai.APIError
 	if !errors.As(err, &apiErr) {
@@ -60,11 +79,12 @@ func mapGeminiError(err error) *ApiErr {
 	}
 
 	return &ApiErr{
-		Provider:   ProviderGemini,
-		Kind:       classifyGeminiError(apiErr),
-		StatusCode: apiErr.Code,
-		Message:    apiErr.Message,
-		Cause:      err,
+		Provider:           ProviderGemini,
+		Kind:               classifyGeminiError(apiErr),
+		StatusCode:         apiErr.Code,
+		Message:            apiErr.Message,
+		RetryAfterDuration: retryAfterFromGeminiError(apiErr),
+		Cause:              err,
 	}
 }
 

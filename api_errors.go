@@ -2,7 +2,11 @@ package gai
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type apiErrorMessage struct {
@@ -43,6 +47,43 @@ func classifyHTTPStatus(statusCode int) APIErrorKind {
 	}
 }
 
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+
+	if seconds, err := strconv.ParseUint(value, 10, 64); err == nil {
+		const maxDurationSeconds = uint64((1<<63 - 1) / int64(time.Second))
+		if seconds > maxDurationSeconds {
+			return 0, false
+		}
+		return time.Duration(seconds) * time.Second, true
+	}
+
+	retryAt, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	return max(time.Duration(0), retryAt.Sub(now)), true
+}
+
+func retryAfterFromResponse(response *http.Response) *time.Duration {
+	if response == nil {
+		return nil
+	}
+
+	now := time.Now()
+	if serverDate, err := http.ParseTime(response.Header.Get("Date")); err == nil {
+		now = serverDate
+	}
+	delay, ok := parseRetryAfter(response.Header.Get("Retry-After"), now)
+	if !ok {
+		return nil
+	}
+	return &delay
+}
+
 func parseAPIErrorMessage(rawBody string) string {
 	rawBody = strings.TrimSpace(rawBody)
 	if rawBody == "" {
@@ -62,12 +103,18 @@ func parseAPIErrorMessage(rawBody string) string {
 	return rawBody
 }
 
-func mapHTTPAPIError(provider Provider, statusCode int, rawBody string) *ApiErr {
+// mapHTTPAPIError consumes and closes response.Body.
+func mapHTTPAPIError(provider Provider, response *http.Response) *ApiErr {
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	rawBody := string(body)
+
 	return &ApiErr{
-		Provider:   provider,
-		Kind:       classifyHTTPStatus(statusCode),
-		StatusCode: statusCode,
-		Message:    parseAPIErrorMessage(rawBody),
-		RawBody:    rawBody,
+		Provider:           provider,
+		Kind:               classifyHTTPStatus(response.StatusCode),
+		StatusCode:         response.StatusCode,
+		Message:            parseAPIErrorMessage(rawBody),
+		RawBody:            rawBody,
+		RetryAfterDuration: retryAfterFromResponse(response),
 	}
 }
