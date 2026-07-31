@@ -94,7 +94,7 @@ import (
 //	gen := gai.Wrap(baseGenerator,
 //	    WithLogging(logger),     // Outermost: logs all calls
 //	    WithMetrics(collector),  // Middle: collects metrics
-//	    WithRetry(nil),          // Innermost: retries Generate and pre-output Stream failures
+//	    WithRetry(DefaultRetryConfig()), // Innermost: retries Generate and pre-output Stream failures
 //	)
 //
 //	// Now gen.Generate() flows: Logging → Metrics → Retry → base
@@ -173,7 +173,7 @@ type WrapperFunc func(Generator) Generator
 //	gen := Wrap(baseGen,
 //	    WithLogging(logger),   // 1st: outermost - receives call first
 //	    WithMetrics(collector),// 2nd: middle
-//	    WithRetry(nil),        // 3rd: innermost - closest to baseGen
+//	    WithRetry(DefaultRetryConfig()), // 3rd: innermost - closest to baseGen
 //	)
 //
 // This creates the structure: Logging{Metrics{Retry{baseGen}}}

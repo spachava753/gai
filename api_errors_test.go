@@ -39,7 +39,7 @@ func TestParseRetryAfter(t *testing.T) {
 		{name: "HTTP date", value: now.Add(90 * time.Second).Format(http.TimeFormat), want: 90 * time.Second, ok: true},
 		{name: "past HTTP date", value: now.Add(-time.Minute).Format(http.TimeFormat), want: 0, ok: true},
 		{name: "zero", value: "0", want: 0, ok: true},
-		{name: "negative", value: "-1", want: 0, ok: true},
+		{name: "negative", value: "-1"},
 		{name: "not a number", value: "NaN"},
 		{name: "infinite", value: "+Inf"},
 		{name: "overflow", value: "1e20"},
@@ -217,6 +217,54 @@ func TestHTTPAPIErrorRetryAfter(t *testing.T) {
 	delay, ok := got.RetryAfter()
 	if !ok || delay != 250*time.Millisecond {
 		t.Fatalf("RetryAfter() = (%s, %t), want (250ms, true)", delay, ok)
+	}
+}
+
+func TestRetryAfterFromResponseValidation(t *testing.T) {
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		header http.Header
+		want   time.Duration
+		ok     bool
+	}{
+		{
+			name: "negative milliseconds falls back to seconds",
+			header: http.Header{
+				"Retry-After-Ms": []string{"-1"},
+				"Retry-After":    []string{"7"},
+			},
+			want: 7 * time.Second,
+			ok:   true,
+		},
+		{
+			name: "past HTTP date",
+			header: http.Header{
+				"Date":        []string{now.Format(http.TimeFormat)},
+				"Retry-After": []string{now.Add(-time.Minute).Format(http.TimeFormat)},
+			},
+			want: 0,
+			ok:   true,
+		},
+		{
+			name:   "negative seconds",
+			header: http.Header{"Retry-After": []string{"-1"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := retryAfterFromResponse(&http.Response{Header: tt.header})
+			if got == nil {
+				if tt.ok {
+					t.Fatalf("retryAfterFromResponse() = nil, want %s", tt.want)
+				}
+				return
+			}
+			if !tt.ok || *got != tt.want {
+				t.Fatalf("retryAfterFromResponse() = %s, want (%s, %t)", *got, tt.want, tt.ok)
+			}
+		})
 	}
 }
 

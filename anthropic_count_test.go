@@ -12,7 +12,6 @@ import (
 	a "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
-	"github.com/cenkalti/backoff/v5"
 )
 
 // mockAnthropicSvc is a mock implementation of AnthropicSvc for testing.
@@ -109,14 +108,13 @@ func TestAnthropicGeneratorStreamRetriesOverloadedSSEError(t *testing.T) {
 	generator := NewAnthropicGenerator(service, "claude", "")
 
 	var notified error
-	retryingGenerator := NewRetryGenerator(
-		generator,
-		backoff.NewConstantBackOff(time.Millisecond),
-		backoff.WithMaxTries(2),
-		backoff.WithNotify(func(err error, _ time.Duration) {
+	retryingGenerator := NewRetryGenerator(generator, RetryConfig{
+		Backoff:     func(uint) (time.Duration, bool) { return time.Millisecond, true },
+		MaxAttempts: 2,
+		Notify: func(err error, _ time.Duration) {
 			notified = err
-		}),
-	)
+		},
+	})
 
 	for _, err := range retryingGenerator.Stream(t.Context(), Dialog{{
 		Role:   User,

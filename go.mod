@@ -4,7 +4,6 @@ go 1.25.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.61.0
-	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/go-faster/errors v0.8.0
 	github.com/go-faster/jx v1.2.0
 	github.com/google/jsonschema-go v0.4.3

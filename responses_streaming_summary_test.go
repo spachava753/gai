@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cenkalti/backoff/v5"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/responses"
@@ -118,14 +117,13 @@ func TestResponsesGeneratorStreamRetriesServerOverloadSSEError(t *testing.T) {
 	generator := NewResponsesGenerator(svc, "gpt-5", "")
 
 	var notified error
-	retryingGenerator := NewRetryGenerator(
-		&generator,
-		backoff.NewConstantBackOff(time.Millisecond),
-		backoff.WithMaxTries(2),
-		backoff.WithNotify(func(err error, _ time.Duration) {
+	retryingGenerator := NewRetryGenerator(&generator, RetryConfig{
+		Backoff:     func(uint) (time.Duration, bool) { return time.Millisecond, true },
+		MaxAttempts: 2,
+		Notify: func(err error, _ time.Duration) {
 			notified = err
-		}),
-	)
+		},
+	})
 
 	for _, err := range retryingGenerator.Stream(t.Context(), Dialog{{
 		Role:   User,

@@ -218,7 +218,7 @@ func TestWrap_Empty(t *testing.T) {
 
 func TestWithRetry(t *testing.T) {
 	base := &wrapperMockGenerator{}
-	wrapperFn := WithRetry(nil)
+	wrapperFn := WithRetry(DefaultRetryConfig())
 	wrapped := wrapperFn(base)
 
 	if _, ok := wrapped.(*RetryGenerator); !ok {

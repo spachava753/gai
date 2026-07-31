@@ -318,6 +318,28 @@ func main() {
 }
 ```
 
+## Retrying Transient Failures
+
+RetryGenerator retries standalone context deadline errors and ApiErr values classified as retryable. The caller authorizes every retry through RetryConfig.Backoff. A provider Retry-After hint can replace the callback's delay, but cannot override a false decision. Start from DefaultRetryConfig to opt into exponential backoff with jitter, then add explicit retry-scheduling limits:
+
+```go
+config := gai.DefaultRetryConfig()
+config.MaxAttempts = 4
+config.MaxElapsedTime = 30 * time.Second
+
+var retries atomic.Uint64
+config.Notify = func(err error, delay time.Duration) {
+	retries.Add(1)
+}
+
+retryingGenerator := gai.NewRetryGenerator(baseGenerator, config)
+ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+defer cancel()
+response, err := retryingGenerator.Generate(ctx, dialog, nil)
+```
+
+MaxElapsedTime is checked only between attempts; it cannot interrupt an in-flight provider call. Use a context deadline, as above, for a hard wall-clock bound. Backoff and Notify can run concurrently when the generator is shared, so callbacks must be concurrency-safe. Stream retries only failures before its first emitted chunk; errors after output are returned without replaying the stream. RetryGenerator does not disable retries in provider SDKs; disable SDK retries separately to avoid nested retry loops.
+
 ## Working with Thinking Blocks
 
 Many LLM providers support "thinking" or "reasoning" output, where the model shows its internal reasoning process. gai normalizes these into Thinking blocks (BlockType == Thinking).

@@ -4,22 +4,62 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"math/rand/v2"
 	"time"
-
-	"github.com/cenkalti/backoff/v5"
 )
 
 const (
-	// Default parameters for the ExponentialBackOff if no base policy is provided by the user.
 	defaultGenRetryInitialInterval = 500 * time.Millisecond
 	defaultGenRetryMaxInterval     = 15 * time.Second
-	// Default MaxElapsedTime if the user provides no specific RetryOptions that override it.
-	defaultGenRetryMaxElapsedTime = 1 * time.Minute
 )
 
+// RetryConfig controls retry timing and limits.
+type RetryConfig struct {
+	// Backoff returns the fallback delay and whether to retry. It authorizes every
+	// retry; a provider Retry-After hint replaces only the returned delay. The
+	// retry argument starts at 1 and increments for each retry within one Generate
+	// or Stream call. A nil Backoff disables retries. When retrying, a non-positive
+	// delay retries immediately. The function may be called concurrently.
+	Backoff func(retry uint) (time.Duration, bool)
+	// MaxAttempts limits total calls, including the initial call. Zero has no limit.
+	MaxAttempts uint
+	// MaxElapsedTime prevents scheduling a retry whose selected delay would exceed
+	// the total retry budget. It is checked only between attempts and does not
+	// cancel an in-flight operation; use a context deadline for a hard time limit.
+	// A non-positive duration has no retry-scheduling limit.
+	MaxElapsedTime time.Duration
+	// Notify runs before each retry with the original error and selected delay.
+	// It may be called concurrently.
+	Notify func(error, time.Duration)
+}
+
+// DefaultRetryConfig returns a config with exponential intervals starting at
+// 500ms and doubling to a 15s cap, with up to 50% downward jitter and no attempt
+// or retry-scheduling limit. Context cancellation governs the hard call limit.
+func DefaultRetryConfig() RetryConfig {
+	return RetryConfig{Backoff: exponentialBackoff(rand.Int64N)}
+}
+
+func exponentialBackoff(randomInt64N func(int64) int64) func(uint) (time.Duration, bool) {
+	return func(retry uint) (time.Duration, bool) {
+		interval := defaultGenRetryInitialInterval
+		for current := uint(1); current < retry; current++ {
+			if interval >= defaultGenRetryMaxInterval/2 {
+				interval = defaultGenRetryMaxInterval
+				break
+			}
+			interval *= 2
+		}
+
+		minimum := interval / 2
+		jitter := time.Duration(randomInt64N(int64(interval-minimum) + 1))
+		return minimum + jitter, true
+	}
+}
+
 // RetryGenerator is a Generator that wraps another Generator and retries failed
-// Generate calls and Stream startup failures according to a specified base backoff
-// policy and retry options.
+// Generate calls and Stream startup failures according to its retry
+// configuration.
 //
 // It retries on specific errors:
 //   - context.DeadlineExceeded (from the Generate/Stream call itself, not the overall context)
@@ -35,137 +75,142 @@ const (
 // To avoid nested retry loops, disable provider retries when constructing OpenAI or
 // Anthropic clients with the corresponding option.WithMaxRetries(0) client option.
 type RetryGenerator struct {
-	GeneratorWrapper                       // Embed for default Count/Register delegation and unsupported Stream fallback.
-	baseBackOff      backoff.BackOff       // The core backoff strategy (e.g., *ExponentialBackOff).
-	retryOptions     []backoff.RetryOption // User-provided options for the backoff.Retry call (e.g., MaxElapsedTime, Notify).
+	GeneratorWrapper             // Embed for default Count/Register delegation and unsupported Stream fallback.
+	config           RetryConfig // Copied at construction; mutable retry state is scoped to each invocation.
 }
 
-type retryAfterError struct {
-	err  error
-	hint backoff.RetryAfterError
+type permanentRetryError struct {
+	err error
 }
 
-func (e *retryAfterError) Error() string {
+func (e *permanentRetryError) Error() string {
 	return e.err.Error()
 }
 
-func (e *retryAfterError) Unwrap() error {
+func (e *permanentRetryError) Unwrap() error {
 	return e.err
 }
 
-func (e *retryAfterError) As(target any) bool {
-	retryAfter, ok := target.(**backoff.RetryAfterError)
-	if !ok {
-		return false
-	}
-	*retryAfter = &e.hint
-	return true
+type retryDecision struct {
+	retryAfter    time.Duration
+	retry         bool
+	hasRetryAfter bool
 }
 
-// NewRetryGenerator creates a new RetryGenerator.
-//
-// Parameters:
-//   - generator: The underlying Generator to wrap.
-//   - baseBo: The base backoff.BackOff policy to use (e.g., an instance of *ExponentialBackOff).
-//     If nil, a default *ExponentialBackOff with standard intervals (Initial: 500ms, Max: 15s) is created.
-//   - opts: Optional backoff.RetryOption(s) to apply to each Retry call. These can configure
-//     aspects like max elapsed time, max retries, or notification functions.
-//     If no opts are provided, a default MaxElapsedTime (1 minute) will be applied.
-//     If opts are provided, they are used directly; ensure they are comprehensive for your needs
-//     (e.g., if you provide WithMaxTries, consider if you also need WithMaxElapsedTime).
-//     It is recommended NOT to include backoff.WithBackOff() in opts, as `baseBo` is
-//     always applied as the primary backoff strategy.
-func NewRetryGenerator(generator Generator, baseBo backoff.BackOff, opts ...backoff.RetryOption) *RetryGenerator {
-	actualBaseBo := baseBo
-	if actualBaseBo == nil {
-		exp := backoff.NewExponentialBackOff()
-		exp.InitialInterval = defaultGenRetryInitialInterval
-		exp.MaxInterval = defaultGenRetryMaxInterval
-		actualBaseBo = exp
-	}
-
-	// If user provides any options, use them as is.
-	// Otherwise, apply a default MaxElapsedTime.
-	finalOpts := opts
-	if len(opts) == 0 {
-		finalOpts = []backoff.RetryOption{
-			backoff.WithMaxElapsedTime(defaultGenRetryMaxElapsedTime),
-		}
-	}
-
+// NewRetryGenerator creates a RetryGenerator with the provided config.
+func NewRetryGenerator(generator Generator, config RetryConfig) *RetryGenerator {
 	return &RetryGenerator{
 		GeneratorWrapper: GeneratorWrapper{Inner: generator},
-		baseBackOff:      actualBaseBo,
-		retryOptions:     finalOpts,
+		config:           config,
 	}
 }
 
-func (rg *RetryGenerator) wrapRetryError(err error) error {
-	if err == nil {
-		return nil
+func classifyRetryError(err error) retryDecision {
+	if errors.Is(err, context.Canceled) {
+		return retryDecision{}
+	}
+
+	var apiErr *ApiErr
+	if errors.As(err, &apiErr) {
+		if !apiErr.Retryable() {
+			return retryDecision{}
+		}
+		delay, ok := apiErr.RetryAfter()
+		return retryDecision{
+			retryAfter:    delay,
+			retry:         true,
+			hasRetryAfter: ok,
+		}
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return err
+		return retryDecision{retry: true}
 	}
-	var apiErr *ApiErr
-	if errors.As(err, &apiErr) && apiErr.Retryable() {
-		if delay, ok := apiErr.RetryAfter(); ok {
-			return &retryAfterError{
-				err:  err,
-				hint: backoff.RetryAfterError{Duration: delay},
+	return retryDecision{}
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		default:
+			return nil
+		}
+	}
+
+	select {
+	case <-time.After(delay):
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+}
+
+func retry[T any](ctx context.Context, operation func() (T, error), config RetryConfig) (T, error) {
+	startedAt := time.Now()
+
+	for attempt := uint(1); ; attempt++ {
+		if cause := context.Cause(ctx); cause != nil {
+			var zero T
+			return zero, cause
+		}
+
+		result, err := operation()
+		if err == nil {
+			return result, nil
+		}
+
+		var permanent *permanentRetryError
+		if errors.As(err, &permanent) {
+			return result, permanent.err
+		}
+
+		decision := classifyRetryError(err)
+		if !decision.retry {
+			return result, err
+		}
+		if cause := context.Cause(ctx); cause != nil {
+			return result, cause
+		}
+		if config.MaxAttempts > 0 && attempt >= config.MaxAttempts {
+			return result, err
+		}
+
+		if config.Backoff == nil {
+			return result, err
+		}
+		delay, shouldRetry := config.Backoff(attempt)
+		if !shouldRetry {
+			return result, err
+		}
+		delay = max(delay, 0)
+		if decision.hasRetryAfter {
+			delay = decision.retryAfter
+		}
+
+		if config.MaxElapsedTime > 0 {
+			elapsed := time.Since(startedAt)
+			if elapsed > config.MaxElapsedTime || delay > config.MaxElapsedTime-elapsed {
+				return result, err
 			}
 		}
-		return err
+		if config.Notify != nil {
+			config.Notify(err, delay)
+		}
+		if err := waitForRetry(ctx, delay); err != nil {
+			return result, err
+		}
 	}
-	if errors.Is(err, context.Canceled) {
-		return backoff.Permanent(err)
-	}
-	return backoff.Permanent(err)
-}
-
-func (rg *RetryGenerator) retryCallOptions() []backoff.RetryOption {
-	rg.baseBackOff.Reset()
-
-	callOpts := make([]backoff.RetryOption, 0, 1+len(rg.retryOptions))
-	callOpts = append(callOpts, backoff.WithBackOff(rg.baseBackOff))
-	callOpts = append(callOpts, rg.retryOptions...)
-	return callOpts
-}
-
-func unwrapRetryError(err error) error {
-	var retryAfter *retryAfterError
-	if errors.As(err, &retryAfter) {
-		return retryAfter.err
-	}
-	var permanent *backoff.PermanentError
-	if errors.As(err, &permanent) {
-		return permanent.Err
-	}
-	return err
 }
 
 // Generate calls the underlying Generator's Generate method, retrying on
-// specific errors according to the configured backoff policy and options.
-// The provided context (ctx) is respected by the retry loop: if ctx is
-// cancelled, retries will stop.
+// specific errors according to the configured backoff and limits.
+// The provided context stops retries and is passed to the underlying generator;
+// use a context deadline to bound in-flight operations and total wall-clock time.
 func (rg *RetryGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
-	operation := func() (Response, error) {
-		if err := ctx.Err(); err != nil {
-			return Response{}, backoff.Permanent(err)
-		}
-
-		resp, err := rg.Inner.Generate(ctx, dialog, options)
-		if err != nil {
-			return resp, rg.wrapRetryError(err)
-		}
-		return resp, nil
-	}
-
-	resp, err := backoff.Retry(ctx, operation, rg.retryCallOptions()...)
-	if err != nil {
-		return resp, unwrapRetryError(err)
-	}
-	return resp, nil
+	return retry(ctx, func() (Response, error) {
+		return rg.Inner.Generate(ctx, dialog, options)
+	}, rg.config)
 }
 
 // Stream calls the underlying StreamingGenerator's Stream method, retrying only
@@ -186,17 +231,13 @@ func (rg *RetryGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		}
 
 		operation := func() (struct{}, error) {
-			if err := ctx.Err(); err != nil {
-				return struct{}{}, backoff.Permanent(err)
-			}
-
 			emittedAny := false
 			for chunk, err := range sg.Stream(ctx, dialog, options) {
 				if err != nil {
 					if emittedAny {
-						return struct{}{}, backoff.Permanent(err)
+						return struct{}{}, &permanentRetryError{err: err}
 					}
-					return struct{}{}, rg.wrapRetryError(err)
+					return struct{}{}, err
 				}
 
 				emittedAny = true
@@ -208,12 +249,10 @@ func (rg *RetryGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			return struct{}{}, nil
 		}
 
-		_, err := backoff.Retry(ctx, operation, rg.retryCallOptions()...)
-		if err == nil {
-			return
+		_, err := retry(ctx, operation, rg.config)
+		if err != nil {
+			yield(StreamChunk{}, err)
 		}
-
-		yield(StreamChunk{}, unwrapRetryError(err))
 	}
 }
 
@@ -227,8 +266,8 @@ var (
 
 // WithRetry returns a WrapperFunc that wraps a generator with retry logic.
 // See NewRetryGenerator for parameter details.
-func WithRetry(baseBo backoff.BackOff, opts ...backoff.RetryOption) WrapperFunc {
+func WithRetry(config RetryConfig) WrapperFunc {
 	return func(g Generator) Generator {
-		return NewRetryGenerator(g, baseBo, opts...)
+		return NewRetryGenerator(g, config)
 	}
 }

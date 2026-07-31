@@ -58,7 +58,10 @@ func parseRetryAfterNumber(value string, unit time.Duration) (time.Duration, boo
 	if err != nil || math.IsNaN(amount) || math.IsInf(amount, 0) {
 		return 0, false
 	}
-	if amount <= 0 {
+	if amount < 0 {
+		return 0, false
+	}
+	if amount == 0 {
 		return 0, true
 	}
 
