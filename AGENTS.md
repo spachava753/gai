@@ -16,6 +16,7 @@ GAI is a Go library for interacting with LLM providers (OpenAI, Anthropic, Googl
 - Samples: `sample.jpg`, `sample.pdf`, `sample.wav` for multimodal tests/examples
 - Scripts: `scripts/` includes docs-generation helper
 - `README.md` is generated from `doc.go` via `go run ./scripts/generate-readme.go`; do not edit `README.md` directly or hand-patch generated output
+- `design.md` records the generator interfaces, shared types, state ownership, and rationale implemented by the current release
 
 Conventions
 - Single module, no internal/ submodules yet
