@@ -55,12 +55,12 @@ func defaultShouldFallback(err error) bool {
 // Generate implements the Generator interface.
 // It tries each generator in order, falling back to the next one if the current returns an error
 // that meets the fallback criteria.
-func (f *FallbackGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (f *FallbackGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	var lastErr error
 
 	// Try each generator in sequence
 	for _, generator := range f.generators {
-		response, err := generator.Generate(ctx, dialog, options)
+		response, err := generator.Generate(ctx, request)
 
 		// If no error, return the successful response
 		if err == nil {

@@ -69,7 +69,7 @@ func exponentialBackoff(randomInt64N func(int64) int64) func(uint) (time.Duratio
 // emitted to the caller, subsequent errors are returned as-is rather than retried,
 // because retrying after partial output would duplicate already-observed content.
 // If the consumer stops iteration by returning false from yield, the stream ends
-// successfully without surfacing an error, following the standard iter.Seq2 contract.
+// successfully without surfacing an error, following the standard iter.Seq contract.
 //
 // RetryGenerator does not disable retries configured in the wrapped provider SDK.
 // To avoid nested retry loops, disable provider retries when constructing OpenAI or
@@ -207,9 +207,9 @@ func retry[T any](ctx context.Context, operation func() (T, error), config Retry
 // specific errors according to the configured backoff and limits.
 // The provided context stops retries and is passed to the underlying generator;
 // use a context deadline to bound in-flight operations and total wall-clock time.
-func (rg *RetryGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (rg *RetryGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	return retry(ctx, func() (Response, error) {
-		return rg.Inner.Generate(ctx, dialog, options)
+		return rg.Inner.Generate(ctx, request)
 	}, rg.config)
 }
 
@@ -218,12 +218,12 @@ func (rg *RetryGenerator) Generate(ctx context.Context, dialog Dialog, options *
 // observed by the caller, the stream becomes non-retriable to avoid duplicating
 // partial content on a subsequent attempt. If yield returns false, Stream stops
 // immediately and reports success rather than converting the early stop into an error.
-func (rg *RetryGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
-	return func(yield func(StreamChunk, error) bool) {
+func (rg *RetryGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
+	return func(yield func(StreamChunk) bool) {
 		sg, ok := rg.Inner.(StreamingGenerator)
 		if !ok {
-			for chunk, err := range rg.GeneratorWrapper.Stream(ctx, dialog, options) {
-				if !yield(chunk, err) {
+			for chunk := range rg.GeneratorWrapper.Stream(ctx, request) {
+				if !yield(chunk) {
 					return
 				}
 			}
@@ -232,16 +232,16 @@ func (rg *RetryGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 		operation := func() (struct{}, error) {
 			emittedAny := false
-			for chunk, err := range sg.Stream(ctx, dialog, options) {
-				if err != nil {
+			for chunk := range sg.Stream(ctx, request) {
+				if chunk.Err != nil {
 					if emittedAny {
-						return struct{}{}, &permanentRetryError{err: err}
+						return struct{}{}, &permanentRetryError{err: chunk.Err}
 					}
-					return struct{}{}, err
+					return struct{}{}, chunk.Err
 				}
 
 				emittedAny = true
-				if !yield(chunk, nil) {
+				if !yield(chunk) {
 					return struct{}{}, nil
 				}
 			}
@@ -251,17 +251,16 @@ func (rg *RetryGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 		_, err := retry(ctx, operation, rg.config)
 		if err != nil {
-			yield(StreamChunk{}, err)
+			yield(StreamChunk{Err: err})
 		}
 	}
 }
 
 // Compile-time interface checks.
 var (
-	_ Generator            = (*RetryGenerator)(nil)
-	_ TokenCounter         = (*RetryGenerator)(nil)
-	_ ToolCallingGenerator = (*RetryGenerator)(nil)
-	_ StreamingGenerator   = (*RetryGenerator)(nil)
+	_ Generator          = (*RetryGenerator)(nil)
+	_ TokenCounter       = (*RetryGenerator)(nil)
+	_ StreamingGenerator = (*RetryGenerator)(nil)
 )
 
 // WithRetry returns a WrapperFunc that wraps a generator with retry logic.

@@ -18,16 +18,8 @@ func Test_mixGenerators(t *testing.T) {
 	anthropicClient := a.NewClient()
 	openaiClient := openai.NewClient()
 	// Create generators for each provider
-	anthropicGen := NewAnthropicGenerator(
-		&anthropicClient.Messages,
-		string(a.ModelClaudeHaiku4_5),
-		"You are Claude, a helpful AI assistant from Anthropic. Always mention you are Claude in your responses.",
-	)
-	openaiGen := NewOpenAiGenerator(
-		&openaiClient.Chat.Completions,
-		openai.ChatModelGPT4oMini,
-		"You are GPT-4o Mini, a helpful AI assistant from OpenAI. Always mention you are GPT-4o Mini in your responses.",
-	)
+	anthropicGen := NewAnthropicGenerator(&anthropicClient.Messages)
+	openaiGen := NewOpenAiGenerator(&openaiClient.Chat.Completions)
 	// Start a conversation with a user message
 	dialog := Dialog{
 		{
@@ -44,8 +36,12 @@ func Test_mixGenerators(t *testing.T) {
 	// First turn: Use Anthropic's Claude model
 	claudeResp, err := anthropicGen.Generate(
 		context.Background(),
-		dialog,
-		&GenOpts{MaxGenerationTokens: Ptr(1024)}, // Claude requires MaxGenerationTokens
+		GenerationRequest{
+			Model:        string(a.ModelClaudeHaiku4_5),
+			Instructions: SystemMessage(TextBlock("You are Claude, a helpful AI assistant from Anthropic. Always mention you are Claude in your responses.")),
+			Dialog:       dialog,
+			Options:      NewGenerationOptions(WithMaxGenerationTokens(1024)),
+		},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -68,8 +64,12 @@ func Test_mixGenerators(t *testing.T) {
 	// Second turn: Use OpenAI's GPT model for the follow-up
 	gptResp, err := openaiGen.Generate(
 		context.Background(),
-		dialog,
-		&GenOpts{MaxGenerationTokens: Ptr(1024)},
+		GenerationRequest{
+			Model:        openai.ChatModelGPT4oMini,
+			Instructions: SystemMessage(TextBlock("You are GPT-4o Mini, a helpful AI assistant from OpenAI. Always mention you are GPT-4o Mini in your responses.")),
+			Dialog:       dialog,
+			Options:      NewGenerationOptions(WithMaxGenerationTokens(1024)),
+		},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -93,12 +93,6 @@ func Test_mixGenerators(t *testing.T) {
 			return schema
 		}(),
 	}
-	if err := anthropicGen.Register(stockTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if err := openaiGen.Register(stockTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	// Start a new conversation about stocks
 	stockDialog := Dialog{
 		{
@@ -115,10 +109,15 @@ func Test_mixGenerators(t *testing.T) {
 	// First turn: Use OpenAI's GPT model with tool choice
 	gptToolResp, err := openaiGen.Generate(
 		context.Background(),
-		stockDialog,
-		&GenOpts{
-			ToolChoice:          "get_stock_price",
-			MaxGenerationTokens: Ptr(1024),
+		GenerationRequest{
+			Model:        openai.ChatModelGPT4oMini,
+			Instructions: SystemMessage(TextBlock("You are GPT-4o Mini, a helpful AI assistant from OpenAI. Always mention you are GPT-4o Mini in your responses.")),
+			Dialog:       stockDialog,
+			Tools:        []Tool{stockTool},
+			Options: NewGenerationOptions(
+				WithToolChoice("get_stock_price"),
+				WithMaxGenerationTokens(1024),
+			),
 		},
 	)
 	if err != nil {
@@ -144,8 +143,13 @@ func Test_mixGenerators(t *testing.T) {
 	// Switch to Claude for final response
 	claudeToolResp, err := anthropicGen.Generate(
 		context.Background(),
-		stockDialog,
-		&GenOpts{MaxGenerationTokens: Ptr(1024)},
+		GenerationRequest{
+			Model:        string(a.ModelClaudeHaiku4_5),
+			Instructions: SystemMessage(TextBlock("You are Claude, a helpful AI assistant from Anthropic. Always mention you are Claude in your responses.")),
+			Dialog:       stockDialog,
+			Tools:        []Tool{stockTool},
+			Options:      NewGenerationOptions(WithMaxGenerationTokens(1024)),
+		},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

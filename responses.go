@@ -113,17 +113,16 @@ func mapResponsesStreamError(err error) *ApiErr {
 	return mapped
 }
 
-// ResponsesThoughtSummaryDetailParam is a key used for storing the thought summary detail level
-// in GenOpts.ExtraArgs. Setting parameter will set the level of detail of thought summaries that
-// are returned from the OpenAI Responses API. One of `auto`, `concise`, or `detailed`.
+// ResponsesThoughtSummaryDetailParam is a GenerationOptions key for the thought
+// summary detail level. Its value is one of `auto`, `concise`, or `detailed`.
 const ResponsesThoughtSummaryDetailParam = "responses_thought_summary_detail"
 
-// ResponsesPromptCacheKeyParam is a key used in GenOpts.ExtraArgs to set the OpenAI
+// ResponsesPromptCacheKeyParam is a GenerationOptions key for the OpenAI
 // Responses API prompt_cache_key request field. Reuse the same key across requests that
 // share a long static prefix to improve cache routing and hit rates.
 const ResponsesPromptCacheKeyParam = "responses_prompt_cache_key"
 
-// ResponsesServiceTierParam is a key used in GenOpts.ExtraArgs to set the OpenAI
+// ResponsesServiceTierParam is a GenerationOptions key for the OpenAI
 // Responses API service_tier request field. Its value must be one of "auto", "default",
 // "flex", "scale", or "priority".
 const ResponsesServiceTierParam = "responses_service_tier"
@@ -172,19 +171,14 @@ type ResponsesService interface {
 // and automatically reconstructed as reasoning input items when the dialog is passed back
 // for subsequent turns (e.g., during multi-step function calling).
 type ResponsesGenerator struct {
-	client             ResponsesService
-	model              string
-	tools              map[string]responses.ToolUnionParam
-	systemInstructions string
+	client ResponsesService
 }
 
-// NewResponsesGenerator creates a new OpenAI Responses API generator with the specified model.
-// The returned generator implements the Generator, StreamingGenerator, and ToolRegister interfaces.
+// NewResponsesGenerator creates a stateless OpenAI Responses API generator.
+// The returned generator implements Generator and StreamingGenerator.
 //
 // Parameters:
-//   - client: An OpenAI completion service (typically &client.Responses)
-//   - model: The OpenAI model to use (e.g., "gpt-5")
-//   - systemInstructions: Optional system instructions that set the model's behavior
+//   - client: An OpenAI Responses service (typically &client.Responses)
 //
 // Supported modalities:
 //   - Text: Both input and output
@@ -199,16 +193,10 @@ type ResponsesGenerator struct {
 // helper function to create PDF content blocks.
 //
 // This generator fully supports the anyOf JSON Schema feature.
-func NewResponsesGenerator(client ResponsesService, model, systemInstructions string) ResponsesGenerator {
-	return ResponsesGenerator{
-		client:             client,
-		systemInstructions: systemInstructions,
-		model:              model,
-		tools:              make(map[string]responses.ToolUnionParam),
-	}
+func NewResponsesGenerator(client ResponsesService) *ResponsesGenerator {
+	return &ResponsesGenerator{client: client}
 }
 
-var _ ToolRegister = (*ResponsesGenerator)(nil)
 var _ Generator = (*ResponsesGenerator)(nil)
 var _ StreamingGenerator = (*ResponsesGenerator)(nil)
 
@@ -258,40 +246,129 @@ func mergeResponsesMessagePhase(extraFields map[string]interface{}, phase string
 	return merged, nil
 }
 
-func (r *ResponsesGenerator) Register(tool Tool) error {
-	if tool.Name == "" {
-		return &ToolRegistrationErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be empty")}
+func convertToolsToResponses(tools []Tool) ([]responses.ToolUnionParam, error) {
+	converted := make([]responses.ToolUnionParam, 0, len(tools))
+	seen := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		if tool.Name == "" {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be empty")}
+		}
+		if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be %s", tool.Name)}
+		}
+		if _, exists := seen[tool.Name]; exists {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool already provided")}
+		}
+		seen[tool.Name] = struct{}{}
+
+		params := make(map[string]any)
+		if tool.InputSchema != nil {
+			data, err := json.Marshal(tool.InputSchema)
+			if err != nil {
+				return nil, &InvalidToolErr{Tool: tool.Name, Cause: err}
+			}
+			if err := json.Unmarshal(data, &params); err != nil {
+				return nil, &InvalidToolErr{Tool: tool.Name, Cause: err}
+			}
+			if len(params) == 1 && params["type"] == "object" {
+				params = map[string]any{}
+			}
+		}
+
+		function := responses.ToolParamOfFunction(tool.Name, params, false)
+		function.OfFunction.Description = openai.String(tool.Description)
+		converted = append(converted, function)
 	}
-	if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
-		return &ToolRegistrationErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be %s", tool.Name)}
+	return converted, nil
+}
+
+type responsesGenerationOptions struct {
+	Temperature         *float64
+	TopP                *float64
+	MaxGenerationTokens *int
+	ToolChoice          string
+	ThinkingBudget      string
+	OutputModalities    []Modality
+	PromptCacheKey      string
+	ServiceTier         *responses.ResponseNewParamsServiceTier
+	ThoughtSummary      *responses.ReasoningSummary
+}
+
+func parseResponsesGenerationOptions(values GenerationOptions) (*responsesGenerationOptions, error) {
+	options := &responsesGenerationOptions{}
+
+	temperature, ok, err := generationOption[float64](values, GenerationOptionTemperature)
+	if err != nil {
+		return nil, err
 	}
-	if r.tools == nil {
-		r.tools = make(map[string]responses.ToolUnionParam)
+	if ok {
+		options.Temperature = &temperature
 	}
-	if _, exists := r.tools[tool.Name]; exists {
-		return &ToolRegistrationErr{Tool: tool.Name, Cause: fmt.Errorf("tool already registered")}
+	topP, ok, err := generationOption[float64](values, GenerationOptionTopP)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.TopP = &topP
+	}
+	maxTokens, ok, err := generationOption[int](values, GenerationOptionMaxGenerationTokens)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.MaxGenerationTokens = &maxTokens
+	}
+	if options.ToolChoice, _, err = generationOption[string](values, GenerationOptionToolChoice); err != nil {
+		return nil, err
+	}
+	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+		return nil, err
+	}
+	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
+		return nil, err
 	}
 
-	params := make(map[string]any)
-	if tool.InputSchema != nil {
-		b, err := json.Marshal(tool.InputSchema)
-		if err != nil {
-			return &ToolRegistrationErr{Tool: tool.Name, Cause: err}
+	if value, exists := values[ResponsesPromptCacheKeyParam]; exists {
+		key, ok := value.(string)
+		if !ok {
+			return nil, &InvalidParameterErr{Parameter: ResponsesPromptCacheKeyParam, Reason: fmt.Sprintf("must be a string, got %T", value)}
 		}
-		if err := json.Unmarshal(b, &params); err != nil {
-			return &ToolRegistrationErr{Tool: tool.Name, Cause: err}
+		options.PromptCacheKey = key
+	}
+	if value, exists := values[ResponsesServiceTierParam]; exists {
+		var tier responses.ResponseNewParamsServiceTier
+		switch value := value.(type) {
+		case string:
+			tier = responses.ResponseNewParamsServiceTier(value)
+		case responses.ResponseNewParamsServiceTier:
+			tier = value
+		default:
+			return nil, &InvalidParameterErr{Parameter: ResponsesServiceTierParam, Reason: fmt.Sprintf("must be a string, got %T", value)}
+		}
+		switch tier {
+		case responses.ResponseNewParamsServiceTierAuto,
+			responses.ResponseNewParamsServiceTierDefault,
+			responses.ResponseNewParamsServiceTierFlex,
+			responses.ResponseNewParamsServiceTierScale,
+			responses.ResponseNewParamsServiceTierPriority:
+			options.ServiceTier = &tier
+		default:
+			return nil, &InvalidParameterErr{Parameter: ResponsesServiceTierParam, Reason: fmt.Sprintf("%q must be one of auto, default, flex, scale, or priority", tier)}
 		}
 	}
-	if len(params) == 1 {
-		if t, ok := params["type"].(string); ok && t == "object" {
-			params = map[string]any{}
+	if value, exists := values[ResponsesThoughtSummaryDetailParam]; exists {
+		var summary responses.ReasoningSummary
+		switch value := value.(type) {
+		case string:
+			summary = responses.ReasoningSummary(value)
+		case responses.ReasoningSummary:
+			summary = value
+		default:
+			return nil, &InvalidParameterErr{Parameter: ResponsesThoughtSummaryDetailParam, Reason: fmt.Sprintf("must be a string, got %T", value)}
 		}
+		options.ThoughtSummary = &summary
 	}
-
-	fn := responses.ToolParamOfFunction(tool.Name, params, false)
-	fn.OfFunction.Description = openai.String(tool.Description)
-	r.tools[tool.Name] = fn
-	return nil
+	return options, nil
 }
 
 // buildInputItems converts a Dialog into the input item list format expected by the
@@ -521,9 +598,22 @@ func (r *ResponsesGenerator) buildInputItems(dialog Dialog) ([]responses.Respons
 // buildParams constructs the ResponseNewParams from the input items, generator config,
 // and user-provided options. It always sets store=false and includes
 // "reasoning.encrypted_content" for stateless operation.
-func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputItemUnionParam, options *GenOpts) (responses.ResponseNewParams, error) {
+func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputItemUnionParam, request GenerationRequest) (responses.ResponseNewParams, error) {
+	options, err := parseResponsesGenerationOptions(request.Options)
+	if err != nil {
+		return responses.ResponseNewParams{}, err
+	}
+	tools, err := convertToolsToResponses(request.Tools)
+	if err != nil {
+		return responses.ResponseNewParams{}, err
+	}
+	instructions, err := joinedTextInstructions(request.Instructions)
+	if err != nil {
+		return responses.ResponseNewParams{}, err
+	}
+
 	params := responses.ResponseNewParams{
-		Model: r.model,
+		Model: request.Model,
 		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: inputItems},
 		// Stateless mode: do not store responses on OpenAI servers. This means
 		// we cannot use previous_response_id and must manually manage conversation
@@ -537,85 +627,45 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 		},
 	}
 
-	if r.systemInstructions != "" {
-		params.Instructions = openai.Opt(r.systemInstructions)
+	if instructions != "" {
+		params.Instructions = openai.Opt(instructions)
 	}
+	params.Tools = tools
 
-	if len(r.tools) > 0 {
-		var tools []responses.ToolUnionParam
-		for _, t := range r.tools {
-			tools = append(tools, t)
-		}
-		params.Tools = tools
+	if options.Temperature != nil {
+		params.Temperature = openai.Opt(*options.Temperature)
 	}
-
-	if options != nil {
-		if options.Temperature != nil {
-			params.Temperature = openai.Opt(*options.Temperature)
+	if options.TopP != nil {
+		params.TopP = openai.Opt(*options.TopP)
+	}
+	if options.MaxGenerationTokens != nil {
+		params.MaxOutputTokens = openai.Opt(int64(*options.MaxGenerationTokens))
+	}
+	if options.PromptCacheKey != "" {
+		params.PromptCacheKey = openai.Opt(options.PromptCacheKey)
+	}
+	if options.ServiceTier != nil {
+		params.ServiceTier = *options.ServiceTier
+	}
+	if options.ToolChoice != "" {
+		switch options.ToolChoice {
+		case ToolChoiceAuto:
+			params.ToolChoice.OfToolChoiceMode = openai.Opt(responses.ToolChoiceOptionsAuto)
+		case ToolChoiceToolsRequired:
+			params.ToolChoice.OfToolChoiceMode = openai.Opt(responses.ToolChoiceOptionsRequired)
+		default:
+			params.ToolChoice.OfFunctionTool = &responses.ToolChoiceFunctionParam{Name: options.ToolChoice}
 		}
-		if options.TopP != nil {
-			params.TopP = openai.Opt(*options.TopP)
+	}
+	if options.ThinkingBudget != "" {
+		params.Reasoning = responses.ReasoningParam{Effort: responses.ReasoningEffort(options.ThinkingBudget)}
+		if options.ThoughtSummary != nil {
+			params.Reasoning.Summary = *options.ThoughtSummary
 		}
-		if options.MaxGenerationTokens != nil {
-			params.MaxOutputTokens = openai.Opt(int64(*options.MaxGenerationTokens))
-		}
-		if options.ExtraArgs != nil {
-			if val, ok := options.ExtraArgs[ResponsesPromptCacheKeyParam]; ok {
-				key, ok := val.(string)
-				if !ok {
-					return params, fmt.Errorf("responses prompt cache key must be a string")
-				}
-				if key != "" {
-					params.PromptCacheKey = openai.Opt(key)
-				}
-			}
-			if val, ok := options.ExtraArgs[ResponsesServiceTierParam]; ok {
-				var serviceTier responses.ResponseNewParamsServiceTier
-				switch val := val.(type) {
-				case string:
-					serviceTier = responses.ResponseNewParamsServiceTier(val)
-				case responses.ResponseNewParamsServiceTier:
-					serviceTier = val
-				default:
-					return params, fmt.Errorf("responses service tier must be a string")
-				}
-
-				switch serviceTier {
-				case responses.ResponseNewParamsServiceTierAuto,
-					responses.ResponseNewParamsServiceTierDefault,
-					responses.ResponseNewParamsServiceTierFlex,
-					responses.ResponseNewParamsServiceTierScale,
-					responses.ResponseNewParamsServiceTierPriority:
-					params.ServiceTier = serviceTier
-				default:
-					return params, fmt.Errorf("responses service tier %q must be one of auto, default, flex, scale, or priority", serviceTier)
-				}
-			}
-		}
-		if options.ToolChoice != "" {
-			switch options.ToolChoice {
-			case ToolChoiceAuto:
-				params.ToolChoice.OfToolChoiceMode = openai.Opt(responses.ToolChoiceOptionsAuto)
-			case ToolChoiceToolsRequired:
-				params.ToolChoice.OfToolChoiceMode = openai.Opt(responses.ToolChoiceOptionsRequired)
-			default:
-				params.ToolChoice.OfFunctionTool = &responses.ToolChoiceFunctionParam{Name: options.ToolChoice}
-			}
-		}
-		if options.ThinkingBudget != "" {
-			params.Reasoning = responses.ReasoningParam{Effort: responses.ReasoningEffort(options.ThinkingBudget)}
-			if options.ExtraArgs != nil {
-				if val, ok := options.ExtraArgs[ResponsesThoughtSummaryDetailParam]; ok {
-					params.Reasoning.Summary = val.(responses.ReasoningSummary)
-				}
-			}
-		}
-		if len(options.OutputModalities) > 0 {
-			for _, m := range options.OutputModalities {
-				if m != Text {
-					return params, UnsupportedOutputModalityErr(m.String())
-				}
-			}
+	}
+	for _, modality := range options.OutputModalities {
+		if modality != Text {
+			return params, UnsupportedOutputModalityErr(modality.String())
 		}
 	}
 
@@ -720,20 +770,20 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (message 
 	return message, hasToolCalls, refusal, nil
 }
 
-func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (r *ResponsesGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if r.client == nil {
 		return Response{}, fmt.Errorf("responses: client not initialized")
 	}
-	if len(dialog) == 0 {
+	if len(request.Dialog) == 0 {
 		return Response{}, ErrEmptyDialog
 	}
 
-	inputItems, err := r.buildInputItems(dialog)
+	inputItems, err := r.buildInputItems(request.Dialog)
 	if err != nil {
 		return Response{}, err
 	}
 
-	params, err := r.buildParams(inputItems, options)
+	params, err := r.buildParams(inputItems, request)
 	if err != nil {
 		return Response{}, err
 	}
@@ -792,26 +842,26 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, dialog Dialog, option
 	return result, nil
 }
 
-func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
-	return func(yield func(StreamChunk, error) bool) {
+func (r *ResponsesGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
+	return func(yield func(StreamChunk) bool) {
 		if r.client == nil {
-			yield(StreamChunk{}, fmt.Errorf("responses: client not initialized"))
+			yield(StreamChunk{Err: fmt.Errorf("responses: client not initialized")})
 			return
 		}
-		if len(dialog) == 0 {
-			yield(StreamChunk{}, ErrEmptyDialog)
-			return
-		}
-
-		inputItems, err := r.buildInputItems(dialog)
-		if err != nil {
-			yield(StreamChunk{}, err)
+		if len(request.Dialog) == 0 {
+			yield(StreamChunk{Err: ErrEmptyDialog})
 			return
 		}
 
-		params, err := r.buildParams(inputItems, options)
+		inputItems, err := r.buildInputItems(request.Dialog)
 		if err != nil {
-			yield(StreamChunk{}, err)
+			yield(StreamChunk{Err: err})
+			return
+		}
+
+		params, err := r.buildParams(inputItems, request)
+		if err != nil {
+			yield(StreamChunk{Err: err})
 			return
 		}
 
@@ -822,7 +872,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				return true
 			}
 			pendingSummarySeparator = false
-			return yield(StreamChunk{Block: SeparatorBlock()}, nil)
+			return yield(StreamChunk{Block: SeparatorBlock()})
 		}
 
 		// Start the stream
@@ -840,7 +890,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 					msg := item.AsMessage()
 					assistantMessageExtraFields, err = mergeResponsesMessagePhase(assistantMessageExtraFields, string(msg.Phase))
 					if err != nil {
-						yield(StreamChunk{}, err)
+						yield(StreamChunk{Err: err})
 						return
 					}
 				case "function_call":
@@ -858,7 +908,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							Content:      Str(fc.Name),
 						},
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-					}, nil) {
+					}) {
 						return
 					}
 				}
@@ -868,7 +918,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 					if !yield(StreamChunk{
 						Block:              TextBlock(textDelta.Delta),
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-					}, nil) {
+					}) {
 						return
 					}
 				}
@@ -883,7 +933,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							Content:      Str(fcDelta.Delta),
 						},
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-					}, nil) {
+					}) {
 						return
 					}
 				}
@@ -905,7 +955,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							},
 						},
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-					}, nil) {
+					}) {
 						return
 					}
 				}
@@ -928,7 +978,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							},
 						},
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-					}, nil) {
+					}) {
 						return
 					}
 				}
@@ -949,7 +999,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 					msg := item.AsMessage()
 					assistantMessageExtraFields, err = mergeResponsesMessagePhase(assistantMessageExtraFields, string(msg.Phase))
 					if err != nil {
-						yield(StreamChunk{}, err)
+						yield(StreamChunk{Err: err})
 						return
 					}
 				case "reasoning":
@@ -971,7 +1021,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								ExtraFields:  extra,
 							},
 							MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-						}, nil) {
+						}) {
 							return
 						}
 						pendingSummarySeparator = false
@@ -979,13 +1029,13 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				}
 				if !yield(StreamChunk{
 					Block: SeparatorBlock(),
-				}, nil) {
+				}) {
 					return
 				}
 			case "response.refusal.delta":
 				refusalDelta := event.AsResponseRefusalDelta()
 				if refusalDelta.Delta != "" {
-					yield(StreamChunk{}, ContentPolicyErr(refusalDelta.Delta))
+					yield(StreamChunk{Err: ContentPolicyErr(refusalDelta.Delta)})
 					return
 				}
 			case "response.completed":
@@ -1009,29 +1059,29 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				yield(StreamChunk{
 					Block:              MetadataBlock(metadata),
 					MessageExtraFields: maps.Clone(assistantMessageExtraFields),
-				}, nil)
+				})
 				return
 			case "response.failed":
 				failed := event.AsResponseFailed()
-				yield(StreamChunk{}, mapResponsesFailure(failed.Response.Error, failed.RawJSON()))
+				yield(StreamChunk{Err: mapResponsesFailure(failed.Response.Error, failed.RawJSON())})
 				return
 			case "response.incomplete":
-				yield(StreamChunk{}, ErrMaxGenerationLimit)
+				yield(StreamChunk{Err: ErrMaxGenerationLimit})
 				return
 			case "error":
 				errorEvent := event.AsError()
-				yield(StreamChunk{}, mapResponsesErrorEvent(errorEvent.Code, errorEvent.Message, errorEvent.RawJSON()))
+				yield(StreamChunk{Err: mapResponsesErrorEvent(errorEvent.Code, errorEvent.Message, errorEvent.RawJSON())})
 				return
 			}
 		}
 
 		if streamErr := stream.Err(); streamErr != nil {
 			if mapped := mapResponsesStreamError(streamErr); mapped != nil {
-				yield(StreamChunk{}, mapped)
+				yield(StreamChunk{Err: mapped})
 			} else if mapped := mapOpenAISDKError(ProviderResponses, streamErr); mapped != nil {
-				yield(StreamChunk{}, mapped)
+				yield(StreamChunk{Err: mapped})
 			} else {
-				yield(StreamChunk{}, streamErr)
+				yield(StreamChunk{Err: streamErr})
 			}
 		}
 	}

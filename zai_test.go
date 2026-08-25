@@ -39,14 +39,18 @@ func requireBlockType(t *testing.T, resp Response, blockType string) Block {
 func TestZaiGenerator(t *testing.T) {
 	t.Run("Generate", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, "glm-5.1", "You are a helpful assistant.", apiKey)
+		gen := NewZaiGenerator(nil, apiKey)
 		dialog := Dialog{
 			{
 				Role:   User,
 				Blocks: []Block{TextBlock("Hello!")},
 			},
 		}
-		resp, err := gen.Generate(context.Background(), dialog, nil)
+		resp, err := gen.Generate(context.Background(), GenerationRequest{
+			Model:        "glm-5.1",
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+			Dialog:       dialog,
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -62,18 +66,18 @@ func TestZaiGenerator(t *testing.T) {
 
 	t.Run("GenerateThinking", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(
-			nil, "glm-5.1",
-			"You are a helpful assistant that explains your reasoning step by step.",
-			apiKey,
-		)
+		gen := NewZaiGenerator(nil, apiKey)
 		dialog := Dialog{
 			{
 				Role:   User,
 				Blocks: []Block{TextBlock("What is the square root of 144?")},
 			},
 		}
-		resp, err := gen.Generate(context.Background(), dialog, nil)
+		resp, err := gen.Generate(context.Background(), GenerationRequest{
+			Model:        "glm-5.1",
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant that explains your reasoning step by step.")),
+			Dialog:       dialog,
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -107,13 +111,8 @@ func TestZaiGenerator(t *testing.T) {
 
 	t.Run("GenerateInterleavedThinking", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		// Create generator with preserved thinking (clearThinking=false)
-		gen := NewZaiGenerator(
-			nil, "glm-5.1",
-			"You are a helpful assistant.",
-			apiKey,
-			WithZaiClearThinking(false), // Enable preserved thinking
-		)
+		// Preserve thinking across tool turns through a request option.
+		gen := NewZaiGenerator(nil, apiKey)
 		// Register a weather tool
 		weatherTool := Tool{
 			Name:        "get_weather",
@@ -128,9 +127,6 @@ func TestZaiGenerator(t *testing.T) {
 				return schema
 			}(),
 		}
-		if err := gen.Register(weatherTool); err != nil {
-			t.Fatalf("register tool: %v", err)
-		}
 		// First turn: ask about weather
 		dialog := Dialog{
 			{
@@ -138,7 +134,14 @@ func TestZaiGenerator(t *testing.T) {
 				Blocks: []Block{TextBlock("What's the weather like in Beijing?")},
 			},
 		}
-		resp, err := gen.Generate(context.Background(), dialog, nil)
+		request := GenerationRequest{
+			Model:        "glm-5.1",
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+			Dialog:       dialog,
+			Tools:        []Tool{weatherTool},
+			Options:      NewGenerationOptions(WithZaiClearThinking(false)),
+		}
+		resp, err := gen.Generate(context.Background(), request)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -171,7 +174,8 @@ func TestZaiGenerator(t *testing.T) {
 			},
 		})
 		// Second turn: model reasons about the tool result
-		resp, err = gen.Generate(context.Background(), dialog, nil)
+		request.Dialog = dialog
+		resp, err = gen.Generate(context.Background(), request)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -180,7 +184,7 @@ func TestZaiGenerator(t *testing.T) {
 
 	t.Run("GenerateMultiTurn", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, "glm-5.1", "You are a helpful math tutor.", apiKey)
+		gen := NewZaiGenerator(nil, apiKey)
 		// First turn
 		dialog := Dialog{
 			{
@@ -188,7 +192,12 @@ func TestZaiGenerator(t *testing.T) {
 				Blocks: []Block{TextBlock("What is 5 + 3?")},
 			},
 		}
-		resp, err := gen.Generate(context.Background(), dialog, nil)
+		request := GenerationRequest{
+			Model:        "glm-5.1",
+			Instructions: SystemMessage(TextBlock("You are a helpful math tutor.")),
+			Dialog:       dialog,
+		}
+		resp, err := gen.Generate(context.Background(), request)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -208,7 +217,8 @@ func TestZaiGenerator(t *testing.T) {
 			Role:   User,
 			Blocks: []Block{TextBlock("Now multiply that result by 2")},
 		})
-		resp, err = gen.Generate(context.Background(), dialog, nil)
+		request.Dialog = dialog
+		resp, err = gen.Generate(context.Background(), request)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -228,7 +238,8 @@ func TestZaiGenerator(t *testing.T) {
 			Role:   User,
 			Blocks: []Block{TextBlock("Divide that by 4")},
 		})
-		resp, err = gen.Generate(context.Background(), dialog, nil)
+		request.Dialog = dialog
+		resp, err = gen.Generate(context.Background(), request)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -245,13 +256,14 @@ func TestZaiGenerator(t *testing.T) {
 		}
 	})
 
-	t.Run("Register", func(t *testing.T) {
+	t.Run("RequestTools", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, "glm-5.1", `You are a helpful assistant that returns the price of a stock and nothing else.
+		gen := NewZaiGenerator(nil, apiKey)
+		instructions := `You are a helpful assistant that returns the price of a stock and nothing else.
 Only output the price, like:
 <example>
 435.56
-</example>`, apiKey)
+</example>`
 		// Register a stock price tool
 		tickerTool := Tool{
 			Name:        "get_stock_price",
@@ -266,14 +278,18 @@ Only output the price, like:
 				return schema
 			}(),
 		}
-		if err := gen.Register(tickerTool); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
 		dialog := Dialog{
 			{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}},
 		}
+		request := GenerationRequest{
+			Model:        "glm-5.1",
+			Instructions: SystemMessage(TextBlock(instructions)),
+			Dialog:       dialog,
+			Tools:        []Tool{tickerTool},
+			Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
+		}
 		// Force the tool call
-		resp, err := gen.Generate(context.Background(), dialog, &GenOpts{ToolChoice: "get_stock_price"})
+		resp, err := gen.Generate(context.Background(), request)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -307,8 +323,10 @@ Only output the price, like:
 				{ID: toolCall.ID, BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str("189.45")},
 			},
 		})
+		request.Dialog = dialog
+		request.Options = NewGenerationOptions(WithToolChoice("none"))
 		// Get final answer without calling tools
-		resp, err = gen.Generate(context.Background(), dialog, &GenOpts{ToolChoice: "none"})
+		resp, err = gen.Generate(context.Background(), request)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -326,8 +344,9 @@ Only output the price, like:
 
 	t.Run("GenerateParallelToolCalls", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, "glm-5.1", `You are a tool-calling assistant.
-When the user asks for weather and stock information together, call both tools in the same assistant response before answering.`, apiKey)
+		gen := NewZaiGenerator(nil, apiKey)
+		instructions := `You are a tool-calling assistant.
+When the user asks for weather and stock information together, call both tools in the same assistant response before answering.`
 		weatherTool := Tool{
 			Name:        "get_weather",
 			Description: "Get the current weather for a city.",
@@ -354,14 +373,14 @@ When the user asks for weather and stock information together, call both tools i
 				return schema
 			}(),
 		}
-		if err := gen.Register(weatherTool); err != nil {
-			t.Fatalf("register weather tool: %v", err)
-		}
-		if err := gen.Register(stockTool); err != nil {
-			t.Fatalf("register stock tool: %v", err)
-		}
 		dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Call get_weather for Beijing and get_stock_price for AAPL now. Do not answer with prose until both tool calls have been made.")}}}
-		resp, err := gen.Generate(t.Context(), dialog, &GenOpts{ToolChoice: ToolChoiceToolsRequired})
+		resp, err := gen.Generate(t.Context(), GenerationRequest{
+			Model:        "glm-5.1",
+			Instructions: SystemMessage(TextBlock(instructions)),
+			Dialog:       dialog,
+			Tools:        []Tool{weatherTool, stockTool},
+			Options:      NewGenerationOptions(WithToolChoice(ToolChoiceToolsRequired)),
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -385,7 +404,7 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("Stream", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, "glm-5.1", "You are a helpful assistant.", apiKey)
+		gen := NewZaiGenerator(nil, apiKey)
 		dialog := Dialog{
 			{
 				Role:   User,
@@ -394,9 +413,13 @@ When the user asks for weather and stock information together, call both tools i
 		}
 		var contentChunks int
 		var thinkingChunks int
-		for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
-			if err != nil {
-				t.Fatalf("stream returned error: %v", err)
+		for chunk := range gen.Stream(context.Background(), GenerationRequest{
+			Model:        "glm-5.1",
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+			Dialog:       dialog,
+		}) {
+			if chunk.Err != nil {
+				t.Fatalf("stream returned error: %v", chunk.Err)
 			}
 			switch chunk.Block.BlockType {
 			case Content:
@@ -419,12 +442,17 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("StreamDisableThinking", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, "glm-5.1", "You are concise.", apiKey, WithZaiThinking(false))
+		gen := NewZaiGenerator(nil, apiKey)
 		dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Count from 1 to 3")}}}
 		var contentChunks int
-		for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
-			if err != nil {
-				t.Fatalf("stream returned error: %v", err)
+		for chunk := range gen.Stream(context.Background(), GenerationRequest{
+			Model:        "glm-5.1",
+			Instructions: SystemMessage(TextBlock("You are concise.")),
+			Dialog:       dialog,
+			Options:      NewGenerationOptions(WithZaiThinking(false)),
+		}) {
+			if chunk.Err != nil {
+				t.Fatalf("stream returned error: %v", chunk.Err)
 			}
 			switch chunk.Block.BlockType {
 			case Thinking:
@@ -440,7 +468,7 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("StreamToolCalling", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, "glm-5.1", "You are a helpful assistant.", apiKey)
+		gen := NewZaiGenerator(nil, apiKey)
 		// Register a calculator tool
 		calcTool := Tool{
 			Name:        "calculate",
@@ -455,9 +483,6 @@ When the user asks for weather and stock information together, call both tools i
 				return schema
 			}(),
 		}
-		if err := gen.Register(calcTool); err != nil {
-			t.Fatalf("register tool: %v", err)
-		}
 		dialog := Dialog{
 			{
 				Role:   User,
@@ -465,9 +490,15 @@ When the user asks for weather and stock information together, call both tools i
 			},
 		}
 		var toolChunks []string
-		for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{ToolChoice: ToolChoiceToolsRequired}) {
-			if err != nil {
-				t.Fatalf("stream returned error: %v", err)
+		for chunk := range gen.Stream(context.Background(), GenerationRequest{
+			Model:        "glm-5.1",
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+			Dialog:       dialog,
+			Tools:        []Tool{calcTool},
+			Options:      NewGenerationOptions(WithToolChoice(ToolChoiceToolsRequired)),
+		}) {
+			if chunk.Err != nil {
+				t.Fatalf("stream returned error: %v", chunk.Err)
 			}
 			if chunk.Block.BlockType == ToolCall {
 				toolChunks = append(toolChunks, chunk.Block.Content.String())
@@ -485,13 +516,20 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("GenerateVisionImageURL", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, "glm-5v-turbo", "Answer briefly.", apiKey, WithZaiThinking(false))
+		gen := NewZaiGenerator(nil, apiKey)
 		dialog := Dialog{{Role: User, Blocks: []Block{
 			{BlockType: Content, ModalityType: Image, MimeType: "image/png", Content: Str("https://cdn.bigmodel.cn/static/logo/register.png")},
 			TextBlock("Describe this image in one short sentence."),
 		}}}
-		maxTokens := 512
-		resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: &maxTokens})
+		resp, err := gen.Generate(context.Background(), GenerationRequest{
+			Model:        "glm-5v-turbo",
+			Instructions: SystemMessage(TextBlock("Answer briefly.")),
+			Dialog:       dialog,
+			Options: NewGenerationOptions(
+				WithMaxGenerationTokens(512),
+				WithZaiThinking(false),
+			),
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -500,13 +538,20 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("GenerateVisionVideoURL", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, "glm-5v-turbo", "Answer briefly.", apiKey, WithZaiThinking(false))
+		gen := NewZaiGenerator(nil, apiKey)
 		dialog := Dialog{{Role: User, Blocks: []Block{
 			{BlockType: Content, ModalityType: Video, MimeType: "video/quicktime", Content: Str("https://cdn.bigmodel.cn/agent-demos/lark/113123.mov")},
 			TextBlock("Describe what happens in this video in one short sentence."),
 		}}}
-		maxTokens := 512
-		resp, err := gen.Generate(t.Context(), dialog, &GenOpts{MaxGenerationTokens: &maxTokens})
+		resp, err := gen.Generate(t.Context(), GenerationRequest{
+			Model:        "glm-5v-turbo",
+			Instructions: SystemMessage(TextBlock("Answer briefly.")),
+			Dialog:       dialog,
+			Options: NewGenerationOptions(
+				WithMaxGenerationTokens(512),
+				WithZaiThinking(false),
+			),
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -515,15 +560,22 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("GenerateVisionPDFURL", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, "glm-5v-turbo", "Answer briefly.", apiKey, WithZaiThinking(false))
+		gen := NewZaiGenerator(nil, apiKey)
 		pdf := PDFBlock([]byte("placeholder"), "demo1.pdf")
 		pdf.ExtraFields[ZaiExtraFieldURL] = "https://cdn.bigmodel.cn/static/demo/demo1.pdf"
 		dialog := Dialog{{Role: User, Blocks: []Block{
 			pdf,
 			TextBlock("What type of document is this? Answer in one sentence."),
 		}}}
-		maxTokens := 512
-		resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: &maxTokens})
+		resp, err := gen.Generate(context.Background(), GenerationRequest{
+			Model:        "glm-5v-turbo",
+			Instructions: SystemMessage(TextBlock("Answer briefly.")),
+			Dialog:       dialog,
+			Options: NewGenerationOptions(
+				WithMaxGenerationTokens(512),
+				WithZaiThinking(false),
+			),
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -532,20 +584,19 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("DisableThinking", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		// Create generator with thinking disabled
-		gen := NewZaiGenerator(
-			nil, "glm-5.1",
-			"You are a helpful assistant. Be concise.",
-			apiKey,
-			WithZaiThinking(false),
-		)
+		gen := NewZaiGenerator(nil, apiKey)
 		dialog := Dialog{
 			{
 				Role:   User,
 				Blocks: []Block{TextBlock("What is 2 + 2?")},
 			},
 		}
-		resp, err := gen.Generate(context.Background(), dialog, nil)
+		resp, err := gen.Generate(context.Background(), GenerationRequest{
+			Model:        "glm-5.1",
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant. Be concise.")),
+			Dialog:       dialog,
+			Options:      NewGenerationOptions(WithZaiThinking(false)),
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

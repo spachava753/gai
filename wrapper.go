@@ -27,7 +27,7 @@ import (
 //	//     B.Generate (after) ←
 //	//   A.Generate (after) ←
 //
-// Each interface method (Generate, Count, Stream, Register) flows through the stack
+// Each interface method (Generate, Count, Stream) flows through the stack
 // independently. If a wrapper doesn't override a method, GeneratorWrapper passes
 // the call straight through to Inner.
 //
@@ -47,10 +47,9 @@ import (
 // GeneratorWrapper implements all standard generator interfaces:
 //   - [Generator]: Generate() delegates to Inner.Generate()
 //   - [TokenCounter]: Count() delegates to Inner if it implements TokenCounter
-//   - [ToolCallingGenerator]: Register() delegates to Inner if it implements ToolCallingGenerator
 //   - [StreamingGenerator]: Stream() delegates to Inner if it implements StreamingGenerator
 //
-// If Inner doesn't implement an optional interface (TokenCounter, ToolCallingGenerator,
+// If Inner doesn't implement an optional interface (TokenCounter or
 // StreamingGenerator), the corresponding method returns an appropriate error.
 //
 // # Example: Creating a Wrapper
@@ -62,17 +61,17 @@ import (
 //	}
 //
 //	// Override Generate to add timing
-//	func (t *TimingGenerator) Generate(ctx context.Context, d Dialog, o *GenOpts) (Response, error) {
+//	func (t *TimingGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 //	    start := time.Now()
-//	    resp, err := t.GeneratorWrapper.Generate(ctx, d, o)  // Delegate to next in chain
+//	    resp, err := t.GeneratorWrapper.Generate(ctx, request)  // Delegate to next in chain
 //	    t.Observer("Generate", time.Since(start))
 //	    return resp, err
 //	}
 //
 //	// Override Count to add timing
-//	func (t *TimingGenerator) Count(ctx context.Context, d Dialog) (uint, error) {
+//	func (t *TimingGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 //	    start := time.Now()
-//	    count, err := t.GeneratorWrapper.Count(ctx, d)  // Delegate to next in chain
+//	    count, err := t.GeneratorWrapper.Count(ctx, request)  // Delegate to next in chain
 //	    t.Observer("Count", time.Since(start))
 //	    return count, err
 //	}
@@ -105,48 +104,37 @@ type GeneratorWrapper struct {
 
 // Generate delegates to Inner.Generate.
 // Override this method in your wrapper to intercept Generate calls.
-func (w *GeneratorWrapper) Generate(ctx context.Context, dialog Dialog, opts *GenOpts) (Response, error) {
-	return w.Inner.Generate(ctx, dialog, opts)
+func (w *GeneratorWrapper) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
+	return w.Inner.Generate(ctx, request)
 }
 
 // Count delegates to Inner.Count if Inner implements [TokenCounter].
 // Override this method in your wrapper to intercept Count calls.
 // Returns an error if Inner does not implement TokenCounter.
-func (w *GeneratorWrapper) Count(ctx context.Context, dialog Dialog) (uint, error) {
+func (w *GeneratorWrapper) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	if tc, ok := w.Inner.(TokenCounter); ok {
-		return tc.Count(ctx, dialog)
+		return tc.Count(ctx, request)
 	}
 	return 0, fmt.Errorf("inner generator of type %T does not implement TokenCounter", w.Inner)
-}
-
-// Register delegates to Inner.Register if Inner implements [ToolCallingGenerator].
-// Override this method in your wrapper to intercept Register calls.
-// Returns an error if Inner does not implement ToolCallingGenerator.
-func (w *GeneratorWrapper) Register(tool Tool) error {
-	if tcg, ok := w.Inner.(ToolCallingGenerator); ok {
-		return tcg.Register(tool)
-	}
-	return fmt.Errorf("inner generator of type %T does not implement ToolCallingGenerator", w.Inner)
 }
 
 // Stream delegates to Inner.Stream if Inner implements [StreamingGenerator].
 // Override this method in your wrapper to intercept Stream calls.
 // Returns an error-yielding iterator if Inner does not implement StreamingGenerator.
-func (w *GeneratorWrapper) Stream(ctx context.Context, dialog Dialog, opts *GenOpts) iter.Seq2[StreamChunk, error] {
+func (w *GeneratorWrapper) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	if sg, ok := w.Inner.(StreamingGenerator); ok {
-		return sg.Stream(ctx, dialog, opts)
+		return sg.Stream(ctx, request)
 	}
-	return func(yield func(StreamChunk, error) bool) {
-		yield(StreamChunk{}, fmt.Errorf("inner generator of type %T does not implement StreamingGenerator", w.Inner))
+	return func(yield func(StreamChunk) bool) {
+		yield(StreamChunk{Err: fmt.Errorf("inner generator of type %T does not implement StreamingGenerator", w.Inner)})
 	}
 }
 
 // Compile-time interface assertions
 var (
-	_ Generator            = (*GeneratorWrapper)(nil)
-	_ TokenCounter         = (*GeneratorWrapper)(nil)
-	_ ToolCallingGenerator = (*GeneratorWrapper)(nil)
-	_ StreamingGenerator   = (*GeneratorWrapper)(nil)
+	_ Generator          = (*GeneratorWrapper)(nil)
+	_ TokenCounter       = (*GeneratorWrapper)(nil)
+	_ StreamingGenerator = (*GeneratorWrapper)(nil)
 )
 
 // WrapperFunc is a function that wraps a [Generator], returning a new Generator.

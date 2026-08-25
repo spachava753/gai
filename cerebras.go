@@ -15,12 +15,9 @@ import (
 // Endpoint: POST {baseURL}/v1/chat/completions
 // No streaming and no token counting support.
 type CerebrasGenerator struct {
-	client             *http.Client
-	baseURL            string
-	apiKey             string
-	model              string
-	systemInstructions string
-	tools              []cerebrasTool
+	client  *http.Client
+	baseURL string
+	apiKey  string
 }
 
 type cerebrasMessage struct {
@@ -104,11 +101,11 @@ type cerebrasChatResponse struct {
 	} `json:"usage"`
 }
 
-// NewCerebrasGenerator creates a new Cerebras generator.
+// NewCerebrasGenerator creates a stateless Cerebras generator.
 // If httpClient is nil, http.DefaultClient is used.
 // If baseURL is empty, "https://api.cerebras.ai" is used.
 // apiKey is read from CEREBRAS_API_KEY if empty.
-func NewCerebrasGenerator(httpClient *http.Client, baseURL, model, systemInstructions string, apiKey string) *CerebrasGenerator {
+func NewCerebrasGenerator(httpClient *http.Client, baseURL, apiKey string) *CerebrasGenerator {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -119,71 +116,111 @@ func NewCerebrasGenerator(httpClient *http.Client, baseURL, model, systemInstruc
 		apiKey = os.Getenv("CEREBRAS_API_KEY")
 	}
 	return &CerebrasGenerator{
-		client:             httpClient,
-		baseURL:            strings.TrimRight(baseURL, "/"),
-		apiKey:             apiKey,
-		model:              model,
-		systemInstructions: systemInstructions,
-		tools:              nil,
+		client:  httpClient,
+		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
 	}
 }
 
-// Register implements ToolRegister
-func (g *CerebrasGenerator) Register(tool Tool) error {
-	if tool.Name == "" {
-		return &ToolRegistrationErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be empty")}
-	}
-	if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
-		return &ToolRegistrationErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be %s", tool.Name)}
-	}
-	// Check duplicates
-	for _, t := range g.tools {
-		if t.Function.Name == tool.Name {
-			return &ToolRegistrationErr{Tool: tool.Name, Cause: fmt.Errorf("tool already registered")}
+func convertToolsToCerebras(tools []Tool) ([]cerebrasTool, error) {
+	converted := make([]cerebrasTool, 0, len(tools))
+	seen := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		if tool.Name == "" {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be empty")}
 		}
-	}
+		if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be %s", tool.Name)}
+		}
+		if _, exists := seen[tool.Name]; exists {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool already provided")}
+		}
+		seen[tool.Name] = struct{}{}
 
-	params := map[string]interface{}{}
-	if tool.InputSchema != nil {
-		// Marshal to generic map for JSON Schema
-		b, err := json.Marshal(tool.InputSchema)
-		if err != nil {
-			return &ToolRegistrationErr{Tool: tool.Name, Cause: err}
-		}
-		if err := json.Unmarshal(b, &params); err != nil {
-			return &ToolRegistrationErr{Tool: tool.Name, Cause: err}
-		}
-		// Treat {"type":"object"} as empty parameter list (omit parameters)
-		if len(params) == 1 {
-			if t, ok := params["type"].(string); ok && t == "object" {
+		params := map[string]interface{}{}
+		if tool.InputSchema != nil {
+			data, err := json.Marshal(tool.InputSchema)
+			if err != nil {
+				return nil, &InvalidToolErr{Tool: tool.Name, Cause: err}
+			}
+			if err := json.Unmarshal(data, &params); err != nil {
+				return nil, &InvalidToolErr{Tool: tool.Name, Cause: err}
+			}
+			if len(params) == 1 && params["type"] == "object" {
 				params = map[string]interface{}{}
 			}
 		}
-	}
 
-	fn := cerebrasFunctionDef{
-		Name:        tool.Name,
-		Description: tool.Description,
+		function := cerebrasFunctionDef{Name: tool.Name, Description: tool.Description}
+		if len(params) > 0 {
+			function.Parameters = params
+		}
+		converted = append(converted, cerebrasTool{Type: "function", Function: function})
 	}
-	if len(params) > 0 {
-		fn.Parameters = params
-	}
-	g.tools = append(g.tools, cerebrasTool{
-		Type:     "function",
-		Function: fn,
-	})
-	return nil
+	return converted, nil
 }
 
-func (g *CerebrasGenerator) buildMessages(dialog Dialog) ([]cerebrasMessage, error) {
+type cerebrasGenerationOptions struct {
+	Temperature         *float64
+	TopP                *float64
+	MaxGenerationTokens *int
+	ToolChoice          string
+	StopSequences       []string
+	OutputModalities    []Modality
+	ThinkingBudget      string
+}
+
+func parseCerebrasGenerationOptions(values GenerationOptions) (*cerebrasGenerationOptions, error) {
+	options := &cerebrasGenerationOptions{}
+
+	temperature, ok, err := generationOption[float64](values, GenerationOptionTemperature)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.Temperature = &temperature
+	}
+	topP, ok, err := generationOption[float64](values, GenerationOptionTopP)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.TopP = &topP
+	}
+	maxTokens, ok, err := generationOption[int](values, GenerationOptionMaxGenerationTokens)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.MaxGenerationTokens = &maxTokens
+	}
+	if options.ToolChoice, _, err = generationOption[string](values, GenerationOptionToolChoice); err != nil {
+		return nil, err
+	}
+	if options.StopSequences, _, err = generationOption[[]string](values, GenerationOptionStopSequences); err != nil {
+		return nil, err
+	}
+	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
+		return nil, err
+	}
+	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+		return nil, err
+	}
+	return options, nil
+}
+
+func (g *CerebrasGenerator) buildMessages(request GenerationRequest) ([]cerebrasMessage, error) {
 	var msgs []cerebrasMessage
 
-	// Add system instructions first if present
-	if g.systemInstructions != "" {
-		msgs = append(msgs, cerebrasMessage{Role: "system", Content: g.systemInstructions})
+	instructions, err := joinedTextInstructions(request.Instructions)
+	if err != nil {
+		return nil, err
+	}
+	if instructions != "" {
+		msgs = append(msgs, cerebrasMessage{Role: "system", Content: instructions})
 	}
 
-	for i, msg := range dialog {
+	for i, msg := range request.Dialog {
 		switch msg.Role {
 		case User:
 			// Concatenate all text content blocks; error on non-text modalities
@@ -273,28 +310,37 @@ func (g *CerebrasGenerator) buildMessages(dialog Dialog) ([]cerebrasMessage, err
 }
 
 // Generate implements Generator
-func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (g *CerebrasGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("cerebras: client not initialized")
 	}
 	if g.apiKey == "" {
 		return Response{}, fmt.Errorf("cerebras: missing API key")
 	}
-	if len(dialog) == 0 {
+	if len(request.Dialog) == 0 {
 		return Response{}, ErrEmptyDialog
 	}
+	options, err := parseCerebrasGenerationOptions(request.Options)
+	if err != nil {
+		return Response{}, err
+	}
+	tools, err := convertToolsToCerebras(request.Tools)
+	if err != nil {
+		return Response{}, err
+	}
 
-	msgs, err := g.buildMessages(dialog)
+	msgs, err := g.buildMessages(request)
 	if err != nil {
 		return Response{}, err
 	}
 
 	req := cerebrasChatRequest{
-		Model:    g.model,
+		Model:    request.Model,
 		Messages: msgs,
+		Tools:    tools,
 	}
 
-	// Map GenOpts subset supported by Cerebras
+	// Map the options supported by Cerebras.
 	if options != nil {
 		if options.Temperature != nil {
 			req.Temperature = options.Temperature
@@ -302,20 +348,8 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 		if options.TopP != nil {
 			req.TopP = options.TopP
 		}
-		if options.FrequencyPenalty != nil {
-			return Response{}, fmt.Errorf("frequency penalty is invalid")
-		}
-		if options.PresencePenalty != nil {
-			return Response{}, fmt.Errorf("presence penalty is invalid")
-		}
-		if options.TopK != nil {
-			return Response{}, fmt.Errorf("top_k is invalid")
-		}
 		if options.MaxGenerationTokens != nil {
 			req.MaxCompletionTokens = options.MaxGenerationTokens
-		}
-		if options.N != nil {
-			return Response{}, fmt.Errorf("n is invalid")
 		}
 		if len(options.StopSequences) > 0 {
 			if len(options.StopSequences) == 1 {
@@ -342,14 +376,14 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 		// ThinkingBudget: handle reasoning parameters based on model
 		if options.ThinkingBudget != "" {
 			// For gpt-oss-120b model: use reasoning_effort with low/medium/high
-			if g.model == "gpt-oss-120b" {
+			if request.Model == "gpt-oss-120b" {
 				switch options.ThinkingBudget {
 				case "low", "medium", "high":
 					req.ReasoningEffort = options.ThinkingBudget
 				default:
 					return Response{}, &InvalidParameterErr{Parameter: "thinking budget", Reason: fmt.Sprintf("invalid value for gpt-oss-120b: %s (must be low, medium, or high)", options.ThinkingBudget)}
 				}
-			} else if g.model == "zai-glm-4.6" {
+			} else if request.Model == "zai-glm-4.6" {
 				// For zai-glm-4.6 model: if value is false, use disable_reasoning
 				if options.ThinkingBudget == "false" {
 					disable := false
@@ -365,10 +399,6 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 				}
 			}
 		}
-	}
-
-	if len(g.tools) > 0 {
-		req.Tools = g.tools
 	}
 
 	body, err := json.Marshal(req)
@@ -478,4 +508,3 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, dialog Dialog, options
 }
 
 var _ Generator = (*CerebrasGenerator)(nil)
-var _ ToolRegister = (*CerebrasGenerator)(nil)

@@ -9,9 +9,7 @@ import (
 
 func TestOpenAiGenerator_calculateImageTokens(t *testing.T) {
 	// Create an OpenAI generator
-	g := OpenAiGenerator{
-		model: "gpt-4o",
-	}
+	g := OpenAiGenerator{}
 
 	// Create a test image block with dimensions in ExtraFields
 	block := Block{
@@ -26,7 +24,7 @@ func TestOpenAiGenerator_calculateImageTokens(t *testing.T) {
 	}
 
 	// Test high detail image
-	tokens, err := g.calculateImageTokens(block)
+	tokens, err := g.calculateImageTokens(block, "gpt-4o")
 	if err != nil {
 		t.Errorf("Error calculating image tokens: %v", err)
 	}
@@ -37,7 +35,7 @@ func TestOpenAiGenerator_calculateImageTokens(t *testing.T) {
 
 	// Test low detail image
 	block.ExtraFields["detail"] = "low"
-	tokens, err = g.calculateImageTokens(block)
+	tokens, err = g.calculateImageTokens(block, "gpt-4o")
 	if err != nil {
 		t.Errorf("Error calculating image tokens: %v", err)
 	}
@@ -47,9 +45,8 @@ func TestOpenAiGenerator_calculateImageTokens(t *testing.T) {
 	}
 
 	// Test minimal model
-	g.model = "gpt-4.1-mini"
 	block.ExtraFields["detail"] = "high" // Reset to high detail
-	tokens, err = g.calculateImageTokens(block)
+	tokens, err = g.calculateImageTokens(block, "gpt-4.1-mini")
 	if err != nil {
 		t.Errorf("Error calculating image tokens: %v", err)
 	}
@@ -79,7 +76,7 @@ func TestOpenAiGenerator_calculateImageTokens(t *testing.T) {
 		Content:      Str(miniJpegBase64),
 	}
 
-	tokens, err = g.calculateImageTokens(block)
+	tokens, err = g.calculateImageTokens(block, "gpt-4.1-mini")
 	if err != nil {
 		t.Errorf("Error calculating image tokens from actual image data: %v", err)
 	}
@@ -96,7 +93,7 @@ func TestOpenAiGenerator_calculateImageTokens(t *testing.T) {
 	}
 
 	// This should now return an error
-	_, err = g.calculateImageTokens(blockWithoutDimensions)
+	_, err = g.calculateImageTokens(blockWithoutDimensions, "gpt-4.1-mini")
 	if err == nil {
 		t.Errorf("Expected error when calculating tokens for image without dimensions, but got none")
 	}
@@ -104,10 +101,7 @@ func TestOpenAiGenerator_calculateImageTokens(t *testing.T) {
 
 func TestOpenAiGenerator_Count(t *testing.T) {
 	// Mock the tokenizer with a simple generator
-	g := OpenAiGenerator{
-		model:              "gpt-4o",
-		systemInstructions: "You are a helpful assistant.",
-	}
+	g := OpenAiGenerator{}
 
 	// Create a simple dialog with text and image
 	dialog := Dialog{
@@ -135,7 +129,11 @@ func TestOpenAiGenerator_Count(t *testing.T) {
 
 	// This is more of an integration test, as it relies on the tiktoken library
 	// We're just checking that it runs without errors
-	_, err := g.Count(context.Background(), dialog)
+	_, err := g.Count(context.Background(), GenerationRequest{
+		Model:        "gpt-4o",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+	})
 	if err != nil {
 		t.Errorf("Error counting tokens: %v", err)
 	}

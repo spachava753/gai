@@ -122,11 +122,7 @@ func (svc AnthropicServiceWrapper) CountTokens(ctx context.Context, params a.Mes
 //	)
 //
 //	// Use the wrapped client with AnthropicGenerator
-//	generator := NewAnthropicGenerator(
-//	    wrappedClient,
-//	    "claude-3-opus-20240229",
-//	    "You are a helpful assistant.",
-//	)
+//	generator := NewAnthropicGenerator(wrappedClient)
 func NewAnthropicServiceWrapper(wrapped AnthropicSvc, funcs ...AnthropicServiceParamModifierFunc) *AnthropicServiceWrapper {
 	return &AnthropicServiceWrapper{
 		wrapped: wrapped,
@@ -158,11 +154,7 @@ func isOpus45OrLater(model string) bool {
 //	)
 //
 //	// Use the wrapped client with your generator
-//	generator := NewAnthropicGenerator(
-//	    wrappedClient,
-//	    "claude-3-opus-20240229",
-//	    "You are a helpful assistant.",
-//	)
+//	generator := NewAnthropicGenerator(wrappedClient)
 //
 // Note: This has no effect if the request doesn't include system instructions.
 // System prompts remain cached even with extended thinking enabled.
@@ -192,11 +184,7 @@ func EnableSystemCaching(_ context.Context, params *a.MessageNewParams) error {
 //	)
 //
 //	// Use the wrapped client with your generator
-//	generator := NewAnthropicGenerator(
-//	    wrappedClient,
-//	    "claude-3-opus-20240229",
-//	    "You are a helpful assistant.",
-//	)
+//	generator := NewAnthropicGenerator(wrappedClient)
 //
 // Note: This has no effect if the request doesn't include any messages.
 // For models prior to Claude Opus 4.5, caching is skipped when extended thinking is enabled

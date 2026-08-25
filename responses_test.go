@@ -13,13 +13,13 @@ import (
 )
 
 func TestResponsesGeneratorBuildParamsServiceTier(t *testing.T) {
-	withServiceTier := func(value any) *GenOpts {
-		return &GenOpts{ExtraArgs: map[string]any{ResponsesServiceTierParam: value}}
+	withServiceTier := func(value any) GenerationOptions {
+		return GenerationOptions{ResponsesServiceTierParam: value}
 	}
 
 	tests := []struct {
 		name    string
-		options *GenOpts
+		options GenerationOptions
 		want    responses.ResponseNewParamsServiceTier
 		wantErr string
 	}{
@@ -38,10 +38,10 @@ func TestResponsesGeneratorBuildParamsServiceTier(t *testing.T) {
 		{name: "invalid type", options: withServiceTier(1), wantErr: "must be a string"},
 	}
 
-	generator := NewResponsesGenerator(nil, "gpt-5", "")
+	generator := NewResponsesGenerator(nil)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			params, err := generator.buildParams(nil, tt.options)
+			params, err := generator.buildParams(nil, GenerationRequest{Model: "gpt-5", Options: tt.options})
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Fatalf("buildParams() error = nil, want error containing %q", tt.wantErr)
@@ -69,7 +69,7 @@ func TestResponsesGenerator_Generate_pdf(t *testing.T) {
 		return
 	}
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, "You are a helpful assistant.")
+	gen := NewResponsesGenerator(&client.Responses)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -79,7 +79,12 @@ func TestResponsesGenerator_Generate_pdf(t *testing.T) {
 			},
 		},
 	}
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{ThinkingBudget: "low"})
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:        openai.ChatModelGPT5Mini,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+		Options:      NewGenerationOptions(WithThinkingBudget("low")),
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -102,7 +107,7 @@ func TestResponsesGenerator_Generate_image(t *testing.T) {
 	}
 	imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, "You are a helpful assistant.")
+	gen := NewResponsesGenerator(&client.Responses)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -121,7 +126,15 @@ func TestResponsesGenerator_Generate_image(t *testing.T) {
 			},
 		},
 	}
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(512), ThinkingBudget: "high"})
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:        openai.ChatModelGPT5Mini,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+		Options: NewGenerationOptions(
+			WithMaxGenerationTokens(512),
+			WithThinkingBudget("high"),
+		),
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,9 +157,13 @@ func TestResponsesGenerator_Generate_image(t *testing.T) {
 func TestResponsesGenerator_Generate(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, "You are a helpful assistant")
+	gen := NewResponsesGenerator(&client.Responses)
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Hi!")}}}
-	resp, err := gen.Generate(context.Background(), dialog, nil)
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:        openai.ChatModelGPT5Mini,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -157,13 +174,21 @@ func TestResponsesGenerator_Generate(t *testing.T) {
 func TestResponsesGenerator_Generate_thinking(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5, "You are a helpful assistant")
+	gen := NewResponsesGenerator(&client.Responses)
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Are LLMs conscious? Think it through and give a comprehensive answer")}}}
-	opts := GenOpts{ThinkingBudget: "medium", Temperature: Ptr(1.0), ExtraArgs: map[string]any{
-		ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
-		ResponsesPromptCacheKeyParam:       "responses-thinking-example:v1",
-	}}
-	resp, err := gen.Generate(context.Background(), dialog, &opts)
+	options := NewGenerationOptions(
+		WithThinkingBudget("medium"),
+		WithTemperature(1.0),
+	)
+	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
+	options[ResponsesPromptCacheKeyParam] = "responses-thinking-example:v1"
+	request := GenerationRequest{
+		Model:        openai.ChatModelGPT5,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+		Options:      options,
+	}
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +198,8 @@ func TestResponsesGenerator_Generate_thinking(t *testing.T) {
 	// Reasoning blocks with encrypted content are automatically reconstructed as
 	// input reasoning items on the next call.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("What can you do?")}})
-	resp, err = gen.Generate(context.Background(), dialog, &opts)
+	request.Dialog = dialog
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -181,18 +207,10 @@ func TestResponsesGenerator_Generate_thinking(t *testing.T) {
 		t.Fatal("expected at least one item")
 	}
 }
-func TestResponsesGenerator_Register(t *testing.T) {
+func TestResponsesGenerator_RequestTools(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that returns the price of a stock and nothing else.
-Only output the price, like
-<example>
-435.56
-</example>
-<example>
-3235.55
-</example>
-`)
+	gen := NewResponsesGenerator(&client.Responses)
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -206,12 +224,15 @@ Only output the price, like
 			return schema
 		}(),
 	}
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}}}
-	opts := GenOpts{ToolChoice: "get_stock_price"}
-	resp, err := gen.Generate(context.Background(), dialog, &opts)
+	request := GenerationRequest{
+		Model:        openai.ChatModelGPT5Mini,
+		Instructions: SystemMessage(TextBlock(openAIStockInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+		Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
+	}
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -229,7 +250,9 @@ Only output the price, like
 	// Append the assistant's response and the tool result. The generator is stateless
 	// and manages conversation context through the dialog.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlock.ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}})
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	request.Options = nil
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,19 +266,10 @@ Only output the price, like
 		}
 	}
 }
-func TestResponsesGenerator_Register_parallelToolUse(t *testing.T) {
+func TestResponsesGenerator_RequestTools_parallelToolUse(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater.
-Only mentioned the ticker and nothing else.
-Only output the price, like
-<example>
-User: Which one is more expensive? Apple or NVidia?
-Assistant: calls get_stock_price for both Apple and Nvidia
-Tool Result: Apple: 123.45; Nvidia: 345.65
-Assistant: Nvidia
-</example>
-`)
+	gen := NewResponsesGenerator(&client.Responses)
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.\nYou can call this tool in parallel",
@@ -269,11 +283,15 @@ Assistant: Nvidia
 			return schema
 		}(),
 	}
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Which stock, Apple vs. Microsoft, is more expensive?")}}}
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{ThinkingBudget: "medium"})
+	request := GenerationRequest{
+		Model:        openai.ChatModelGPT5Mini,
+		Instructions: SystemMessage(TextBlock(openAIStockComparisonInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+		Options:      NewGenerationOptions(WithThinkingBudget("medium")),
+	}
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -293,7 +311,9 @@ Assistant: Nvidia
 	// Append the assistant's response and tool results. The generator is stateless
 	// and manages conversation context through the dialog.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[0].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")}}}, Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[1].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("678.45")}}})
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	request.Options = nil
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -318,17 +338,23 @@ func TestStreamingAdapter_responses(t *testing.T) {
 	// Create the generator and wrap it with StreamingAdapter.
 	// StreamingAdapter.Generate streams internally, then compresses chunks into
 	// a standard Response — identical to what ResponsesGenerator.Generate returns.
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
-	adapter := &StreamingAdapter{S: &gen}
+	gen := NewResponsesGenerator(&client.Responses)
+	adapter := &StreamingAdapter{S: gen}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Hi!")}}}
-	resp, err := adapter.Generate(context.Background(), dialog, nil)
+	request := GenerationRequest{
+		Model:        openai.ChatModelGPT5Nano,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+	}
+	resp, err := adapter.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// The adapter produces a complete Response with Candidates, just like Generate.
 	// Append the assistant's message and continue the conversation statelessly.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("What can you help me with?")}})
-	resp, err = adapter.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	resp, err = adapter.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -345,15 +371,7 @@ func TestStreamingAdapter_responses(t *testing.T) {
 func TestStreamingAdapter_responses_toolUse(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that returns the price of a stock and nothing else.
-Only output the price, like
-<example>
-435.56
-</example>
-<example>
-3235.55
-</example>
-`)
+	gen := NewResponsesGenerator(&client.Responses)
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.\nYou can call this tool in parallel",
@@ -367,15 +385,18 @@ Only output the price, like
 			return schema
 		}(),
 	}
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	// StreamingAdapter wraps the generator so we get compressed Response objects
 	// instead of raw streaming chunks.
-	adapter := &StreamingAdapter{S: &gen}
+	adapter := &StreamingAdapter{S: gen}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Which stock, Apple vs. Microsoft, is more expensive?")}}}
+	request := GenerationRequest{
+		Model:        openai.ChatModelGPT5Mini,
+		Instructions: SystemMessage(TextBlock(openAIStockInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+	}
 	// Turn 1: the model should call get_stock_price for both tickers.
-	resp, err := adapter.Generate(context.Background(), dialog, nil)
+	resp, err := adapter.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -400,7 +421,8 @@ Only output the price, like
 		Message{Role: ToolResult, Blocks: []Block{{ID: toolCallBlocks[1].ID, ModalityType: Text, MimeType: "text/plain", Content: Str("678.45")}}},
 	)
 	// Turn 2: the model responds with the answer.
-	resp, err = adapter.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	resp, err = adapter.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -423,19 +445,21 @@ Only output the price, like
 func TestResponsesGenerator_Stream_thinking(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
+	gen := NewResponsesGenerator(&client.Responses)
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the capital of France? Reply with just the city name.")}}}
-	opts := &GenOpts{
-		ThinkingBudget: "low",
-		ExtraArgs: map[string]any{
-			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
-		},
+	options := NewGenerationOptions(WithThinkingBudget("low"))
+	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
+	request := GenerationRequest{
+		Model:        openai.ChatModelGPT5Nano,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+		Options:      options,
 	}
 	// Use StreamingAdapter so the streamed output is automatically compressed
 	// into a proper Response with Thinking blocks carrying ExtraFields (including
 	// encrypted reasoning content for stateless multi-turn conversations).
-	adapter := &StreamingAdapter{S: &gen}
-	resp, err := adapter.Generate(context.Background(), dialog, opts)
+	adapter := &StreamingAdapter{S: gen}
+	resp, err := adapter.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -454,7 +478,8 @@ func TestResponsesGenerator_Stream_thinking(t *testing.T) {
 	// encrypted content are included, so the next call can reconstruct reasoning
 	// input items automatically.
 	dialog = append(dialog, resp.Candidates[0], Message{Role: User, Blocks: []Block{TextBlock("And what country is that in?")}})
-	resp, err = adapter.Generate(context.Background(), dialog, opts)
+	request.Dialog = dialog
+	resp, err = adapter.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

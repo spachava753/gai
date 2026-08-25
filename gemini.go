@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"maps"
-	"slices"
 	"strings"
 	"time"
 
@@ -150,43 +148,6 @@ func MarshalJSONToolUseInput(t ToolCallInput) ([]byte, error) {
 	return data, nil
 }
 
-// Register implements gai.ToolRegister for GeminiGenerator
-func (g *GeminiGenerator) Register(tool Tool) error {
-	// Validate tool name
-	if tool.Name == "" {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool name cannot be empty"),
-		}
-	}
-	if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool name cannot be %s", tool.Name),
-		}
-	}
-
-	if g.tools == nil {
-		g.tools = make(map[string]*genai.FunctionDeclaration)
-	}
-	if _, exists := g.tools[tool.Name]; exists {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool already registered"),
-		}
-	}
-
-	geminiTool, err := convertToolToGemini(tool)
-	if err != nil {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: err,
-		}
-	}
-	g.tools[tool.Name] = geminiTool
-	return nil
-}
-
 // convertToolToGemini converts gai.Tool to *[genai.FunctionDeclaration]
 func convertToolToGemini(tool Tool) (*genai.FunctionDeclaration, error) {
 	if tool.InputSchema != nil && tool.InputSchema.Type != "object" && tool.InputSchema.Type != "" {
@@ -226,23 +187,100 @@ func convertJSONSchemaToGemini(schema *jsonschema.Schema) (*genai.Schema, error)
 	return &genSchema, nil
 }
 
-var _ ToolRegister = (*GeminiGenerator)(nil)
+func convertToolsToGemini(tools []Tool) ([]*genai.FunctionDeclaration, error) {
+	converted := make([]*genai.FunctionDeclaration, 0, len(tools))
+	seen := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		if tool.Name == "" {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be empty")}
+		}
+		if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be %s", tool.Name)}
+		}
+		if _, exists := seen[tool.Name]; exists {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool already provided")}
+		}
+		seen[tool.Name] = struct{}{}
 
-type GeminiGenerator struct {
-	client             *genai.Client
-	modelName          string
-	systemInstructions string
-	tools              map[string]*genai.FunctionDeclaration
+		providerTool, err := convertToolToGemini(tool)
+		if err != nil {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: err}
+		}
+		converted = append(converted, providerTool)
+	}
+	return converted, nil
 }
 
-// NewGeminiGenerator creates a new Gemini generator with the specified API key, model name, and system instructions.
-// Returns a ToolCallingGenerator that preprocesses dialog for parallel tool use compatibility.
-// The returned generator also implements the TokenCounter interface for token counting.
+type geminiGenerationOptions struct {
+	Temperature         *float64
+	TopP                *float64
+	TopK                *uint
+	CandidateCount      *uint
+	MaxGenerationTokens *int
+	ToolChoice          string
+	StopSequences       []string
+	ThinkingBudget      string
+}
+
+func parseGeminiGenerationOptions(values GenerationOptions) (*geminiGenerationOptions, error) {
+	options := &geminiGenerationOptions{}
+
+	temperature, ok, err := generationOption[float64](values, GenerationOptionTemperature)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.Temperature = &temperature
+	}
+	topP, ok, err := generationOption[float64](values, GenerationOptionTopP)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.TopP = &topP
+	}
+	topK, ok, err := generationOption[uint](values, GenerationOptionTopK)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.TopK = &topK
+	}
+	candidateCount, ok, err := generationOption[uint](values, GenerationOptionCandidateCount)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.CandidateCount = &candidateCount
+	}
+	maxTokens, ok, err := generationOption[int](values, GenerationOptionMaxGenerationTokens)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.MaxGenerationTokens = &maxTokens
+	}
+	if options.ToolChoice, _, err = generationOption[string](values, GenerationOptionToolChoice); err != nil {
+		return nil, err
+	}
+	if options.StopSequences, _, err = generationOption[[]string](values, GenerationOptionStopSequences); err != nil {
+		return nil, err
+	}
+	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+		return nil, err
+	}
+	return options, nil
+}
+
+type GeminiGenerator struct {
+	client *genai.Client
+}
+
+// NewGeminiGenerator creates a stateless Gemini generator.
+// It preprocesses parallel tool results for Gemini compatibility.
 //
 // Parameters:
 //   - client: A properly initialized genai.Client instance with API key configured
-//   - modelName: The Gemini model to use (e.g., "gemini-1.5-pro", "gemini-1.5-flash")
-//   - systemInstructions: Optional system instructions that set the model's behavior
 //
 // Supported modalities:
 //   - Text: Both input and output
@@ -261,28 +299,36 @@ type GeminiGenerator struct {
 //   - For maximum compatibility across all generators, restrict usage of anyOf to the nullable pattern:
 //     e.g., "anyOf": [{"type": "string"}, {"type": "null"}]
 //
-// Returns a ToolCallingGenerator that also implements TokenCounter, or an error if initialization fails.
-func NewGeminiGenerator(client *genai.Client, modelName, systemInstructions string) (interface {
-	ToolCallingGenerator
+// Returns a generator that also implements StreamingGenerator and TokenCounter.
+func NewGeminiGenerator(client *genai.Client) interface {
+	Generator
 	StreamingGenerator
 	TokenCounter
-}, error) {
-	inner := &GeminiGenerator{
-		client:             client,
-		modelName:          modelName,
-		systemInstructions: systemInstructions,
-	}
-
-	return &PreprocessingGenerator{GeneratorWrapper: GeneratorWrapper{Inner: inner}}, nil
+} {
+	inner := &GeminiGenerator{client: client}
+	return &PreprocessingGenerator{GeneratorWrapper: GeneratorWrapper{Inner: inner}}
 }
 
 // Generate implements gai.Generator
-func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (g *GeminiGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("gemini: client not initialized")
 	}
+	dialog := request.Dialog
 	if len(dialog) == 0 {
 		return Response{}, ErrEmptyDialog
+	}
+	options, err := parseGeminiGenerationOptions(request.Options)
+	if err != nil {
+		return Response{}, err
+	}
+	tools, err := convertToolsToGemini(request.Tools)
+	if err != nil {
+		return Response{}, err
+	}
+	instructions, err := textInstructions(request.Instructions)
+	if err != nil {
+		return Response{}, err
 	}
 
 	// We'll keep a mapping of toolCallID -> functionName for this call.
@@ -294,23 +340,15 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 			IncludeThoughts: true,
 		},
 	}
-	// Set system prompt if provided
-	if g.systemInstructions != "" {
-		genContentConfig.SystemInstruction = &genai.Content{
-			Parts: []*genai.Part{genai.NewPartFromText(g.systemInstructions)},
+	if len(instructions) > 0 {
+		parts := make([]*genai.Part, 0, len(instructions))
+		for _, instruction := range instructions {
+			parts = append(parts, genai.NewPartFromText(instruction))
 		}
+		genContentConfig.SystemInstruction = &genai.Content{Parts: parts}
 	}
-	// If tools are registered, attach them
-	if len(g.tools) > 0 {
-		toolList := make([]*genai.FunctionDeclaration, 0, len(g.tools))
-		for _, t := range g.tools {
-			toolList = append(toolList, t)
-		}
-		genContentConfig.Tools = []*genai.Tool{
-			{
-				FunctionDeclarations: toolList,
-			},
-		}
+	if len(tools) > 0 {
+		genContentConfig.Tools = []*genai.Tool{{FunctionDeclarations: tools}}
 	}
 
 	// generation parameters
@@ -339,8 +377,8 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		if options.MaxGenerationTokens != nil {
 			genContentConfig.MaxOutputTokens = int32(*options.MaxGenerationTokens)
 		}
-		if options.N != nil && *options.N > 1 {
-			genContentConfig.CandidateCount = int32(*options.N)
+		if options.CandidateCount != nil && *options.CandidateCount > 1 {
+			genContentConfig.CandidateCount = int32(*options.CandidateCount)
 		}
 		if options.StopSequences != nil {
 			genContentConfig.StopSequences = options.StopSequences
@@ -366,7 +404,7 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		return Response{}, err
 	}
 
-	resp, err := g.client.Models.GenerateContent(ctx, g.modelName, allContents, genContentConfig)
+	resp, err := g.client.Models.GenerateContent(ctx, request.Model, allContents, genContentConfig)
 	if err != nil {
 		if mapped := mapGeminiError(err); mapped != nil {
 			return Response{}, mapped
@@ -512,15 +550,31 @@ func (g *GeminiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	return result, nil
 }
 
-func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
-	return func(yield func(StreamChunk, error) bool) {
+func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
+	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {
-			yield(StreamChunk{}, fmt.Errorf("gemini: client not initialized"))
+			yield(StreamChunk{Err: fmt.Errorf("gemini: client not initialized")})
 			return
 		}
 
+		dialog := request.Dialog
 		if len(dialog) == 0 {
-			yield(StreamChunk{}, ErrEmptyDialog)
+			yield(StreamChunk{Err: ErrEmptyDialog})
+			return
+		}
+		options, err := parseGeminiGenerationOptions(request.Options)
+		if err != nil {
+			yield(StreamChunk{Err: err})
+			return
+		}
+		tools, err := convertToolsToGemini(request.Tools)
+		if err != nil {
+			yield(StreamChunk{Err: err})
+			return
+		}
+		instructions, err := textInstructions(request.Instructions)
+		if err != nil {
+			yield(StreamChunk{Err: err})
 			return
 		}
 
@@ -528,24 +582,18 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		toolCallIDToFunc := make(map[string]string)
 		toolCallCount := 0
 
-		genContentConfig := &genai.GenerateContentConfig{}
-		// Set system prompt if provided
-		if g.systemInstructions != "" {
-			genContentConfig.SystemInstruction = &genai.Content{
-				Parts: []*genai.Part{genai.NewPartFromText(g.systemInstructions)},
-			}
+		genContentConfig := &genai.GenerateContentConfig{
+			ThinkingConfig: &genai.ThinkingConfig{IncludeThoughts: true},
 		}
-		// If tools are registered, attach them
-		if len(g.tools) > 0 {
-			toolList := make([]*genai.FunctionDeclaration, 0, len(g.tools))
-			for _, t := range g.tools {
-				toolList = append(toolList, t)
+		if len(instructions) > 0 {
+			parts := make([]*genai.Part, 0, len(instructions))
+			for _, instruction := range instructions {
+				parts = append(parts, genai.NewPartFromText(instruction))
 			}
-			genContentConfig.Tools = []*genai.Tool{
-				{
-					FunctionDeclarations: toolList,
-				},
-			}
+			genContentConfig.SystemInstruction = &genai.Content{Parts: parts}
+		}
+		if len(tools) > 0 {
+			genContentConfig.Tools = []*genai.Tool{{FunctionDeclarations: tools}}
 		}
 
 		// generation parameters
@@ -574,8 +622,8 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			if options.MaxGenerationTokens != nil {
 				genContentConfig.MaxOutputTokens = int32(*options.MaxGenerationTokens)
 			}
-			if options.N != nil && *options.N > 1 {
-				genContentConfig.CandidateCount = int32(*options.N)
+			if options.CandidateCount != nil && *options.CandidateCount > 1 {
+				genContentConfig.CandidateCount = int32(*options.CandidateCount)
 			}
 			if options.StopSequences != nil {
 				genContentConfig.StopSequences = options.StopSequences
@@ -586,29 +634,38 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			if options.TopK != nil {
 				genContentConfig.TopK = genai.Ptr(float32(*options.TopK))
 			}
+			if options.ThinkingBudget != "" {
+				switch options.ThinkingBudget {
+				case "low", "medium", "high":
+					genContentConfig.ThinkingConfig.ThinkingLevel = genai.ThinkingLevel(options.ThinkingBudget)
+				default:
+					yield(StreamChunk{Err: InvalidParameterErr{Parameter: "thinking budget", Reason: fmt.Sprintf("invalid thinking budget: %s", options.ThinkingBudget)}})
+					return
+				}
+			}
 		}
 
 		allContents, err := prepareGeminiChatHistory(dialog, toolCallIDToFunc)
 		if err != nil {
-			yield(StreamChunk{}, err)
+			yield(StreamChunk{Err: err})
 			return
 		}
 
 		// Track cumulative usage
 		var totalInputTokens, totalOutputTokens, totalCacheReadTokens int32
 
-		for resp, err := range g.client.Models.GenerateContentStream(ctx, g.modelName, allContents, genContentConfig) {
+		for resp, err := range g.client.Models.GenerateContentStream(ctx, request.Model, allContents, genContentConfig) {
 			if err != nil {
 				if mapped := mapGeminiError(err); mapped != nil {
-					yield(StreamChunk{}, mapped)
+					yield(StreamChunk{Err: mapped})
 				} else {
-					yield(StreamChunk{}, fmt.Errorf("gemini: generation failed: %w", err))
+					yield(StreamChunk{Err: fmt.Errorf("gemini: generation failed: %w", err)})
 				}
 				return
 			}
 
 			if err := geminiResponseError(resp); err != nil {
-				yield(StreamChunk{}, err)
+				yield(StreamChunk{Err: err})
 				return
 			}
 
@@ -631,7 +688,7 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 				if !yield(StreamChunk{
 					Block:           TextBlock(""),
 					CandidatesIndex: 0,
-				}, nil) {
+				}) {
 					return
 				}
 			}
@@ -653,13 +710,13 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 								},
 							},
 							CandidatesIndex: 0,
-						}, nil) {
+						}) {
 							return
 						}
 					} else {
 						if !yield(StreamChunk{
 							Block: TextBlock(part.Text),
-						}, nil) {
+						}) {
 							return
 						}
 					}
@@ -690,7 +747,7 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 									Content:      Str(part.FunctionCall.Name),
 								},
 								CandidatesIndex: 0,
-							}, nil) {
+							}) {
 								return
 							}
 						}
@@ -707,7 +764,7 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 									Content:      Str(contentJson),
 								},
 								CandidatesIndex: 0,
-							}, nil) {
+							}) {
 								return
 							}
 						}
@@ -737,7 +794,7 @@ func (g *GeminiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			yield(StreamChunk{
 				Block:           MetadataBlock(metadata),
 				CandidatesIndex: 0,
-			}, nil)
+			})
 		}
 	}
 }
@@ -890,39 +947,24 @@ func prepareGeminiChatHistory(dialog Dialog, toolCallIDToFuncName map[string]str
 	return history, nil
 }
 
-// Count implements the TokenCounter interface for GeminiGenerator.
-// It converts the dialog to Gemini's format and uses Google's official CountTokens API.
-//
-// Like the Anthropic implementation, this method makes an API call to obtain accurate
-// token counts directly from Google's tokenizer. This ensures the count matches exactly
-// what would be used in actual generation.
-//
-// The method accounts for:
-//   - System instructions (if set during generator initialization)
-//   - All messages in the dialog with their respective blocks
-//   - Multi-modal content including text and images
-//   - Tool definitions registered with the generator
-//
-// Special considerations:
-//   - For multi-turn conversations, all dialog turns are included in the count
-//   - The system instructions are prepended to the dialog for accurate counting
-//   - Image tokens are counted based on Google's own token calculation
-//
-// The context parameter allows for cancellation of the API call.
-//
-// Returns:
-//   - The total token count as uint, representing the combined input tokens
-//   - An error if the API call fails or if dialog conversion fails
-//
-// Note: Gemini's CountTokens API returns the total tokens for the entire dialog,
-// including system instructions, unlike some other providers that break this down
-// into more detailed metrics.
-func (g *GeminiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error) {
+// Count sends the request's model, instructions, dialog, and tools to Gemini's
+// CountTokens API. It includes multimodal input and all conversation turns. The
+// context can cancel the remote call.
+func (g *GeminiGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	if g.client == nil {
 		return 0, fmt.Errorf("gemini: client not initialized")
 	}
+	dialog := request.Dialog
 	if len(dialog) == 0 {
 		return 0, ErrEmptyDialog
+	}
+	tools, err := convertToolsToGemini(request.Tools)
+	if err != nil {
+		return 0, err
+	}
+	instructions, err := textInstructions(request.Instructions)
+	if err != nil {
+		return 0, err
 	}
 
 	// We'll need a map to track tool call IDs to function names, even though we are not executing tools.
@@ -936,30 +978,21 @@ func (g *GeminiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 
 	var countTokenConfig genai.CountTokensConfig
 
-	// Add system prompt if provided, as it would be part of the context for the model
-	if g.systemInstructions != "" {
-		// When using the below config, get error "Error counting tokens: gemini: token counting failed: systemInstruction parameter is not supported in Gemini API"
-		//countTokenConfig.SystemInstruction = &genai.Content{
-		//	Parts: []*genai.Part{genai.NewPartFromText(g.systemInstructions)},
-		//}
-		allContents = append([]*genai.Content{
-			{
-				Parts: []*genai.Part{genai.NewPartFromText(g.systemInstructions)},
-				Role:  "model",
-			},
-		}, allContents...)
-	}
-
-	// If tools are registered, attach them
-	if len(g.tools) > 0 {
-		countTokenConfig.Tools = []*genai.Tool{
-			{
-				FunctionDeclarations: slices.Collect(maps.Values(g.tools)),
-			},
+	if len(instructions) > 0 {
+		parts := make([]*genai.Part, 0, len(instructions))
+		for _, instruction := range instructions {
+			parts = append(parts, genai.NewPartFromText(instruction))
 		}
+		// CountTokens does not accept SystemInstruction, so include the same text in
+		// the counted contents.
+		allContents = append([]*genai.Content{{Parts: parts, Role: "model"}}, allContents...)
 	}
 
-	resp, err := g.client.Models.CountTokens(ctx, g.modelName, allContents, &countTokenConfig)
+	if len(tools) > 0 {
+		countTokenConfig.Tools = []*genai.Tool{{FunctionDeclarations: tools}}
+	}
+
+	resp, err := g.client.Models.CountTokens(ctx, request.Model, allContents, &countTokenConfig)
 	if err != nil {
 		if mapped := mapGeminiError(err); mapped != nil {
 			return 0, mapped
@@ -971,4 +1004,5 @@ func (g *GeminiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 }
 
 var _ Generator = (*GeminiGenerator)(nil)
+var _ StreamingGenerator = (*GeminiGenerator)(nil)
 var _ TokenCounter = (*GeminiGenerator)(nil)

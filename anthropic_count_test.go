@@ -59,9 +59,12 @@ func TestAnthropicGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 			Explanation: "Request violates policy.",
 		},
 	}}
-	generator := NewAnthropicGenerator(service, "claude", "")
+	generator := NewAnthropicGenerator(service)
 
-	response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	response, err := generator.Generate(context.Background(), GenerationRequest{
+		Model:  "claude",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}},
+	})
 	if response.FinishReason != ContentPolicyViolation {
 		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
 	}
@@ -73,12 +76,15 @@ func TestAnthropicStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
 		Type: "message_delta",
 		Data: []byte(`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"general_harms","explanation":"Request violates policy."}},"usage":{"output_tokens":1}}`),
 	}}}
-	generator := NewAnthropicGenerator(service, "claude", "")
+	generator := NewAnthropicGenerator(service)
 
 	var gotErr error
-	for _, err := range generator.Stream(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil) {
-		if err != nil {
-			gotErr = err
+	for chunk := range generator.Stream(context.Background(), GenerationRequest{
+		Model:  "claude",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}},
+	}) {
+		if chunk.Err != nil {
+			gotErr = chunk.Err
 			break
 		}
 	}
@@ -105,7 +111,7 @@ func TestAnthropicGeneratorStreamRetriesOverloadedSSEError(t *testing.T) {
 		}
 		return newStream("")
 	}
-	generator := NewAnthropicGenerator(service, "claude", "")
+	generator := NewAnthropicGenerator(service)
 
 	var notified error
 	retryingGenerator := NewRetryGenerator(generator, RetryConfig{
@@ -116,12 +122,15 @@ func TestAnthropicGeneratorStreamRetriesOverloadedSSEError(t *testing.T) {
 		},
 	})
 
-	for _, err := range retryingGenerator.Stream(t.Context(), Dialog{{
-		Role:   User,
-		Blocks: []Block{TextBlock("Hello")},
-	}}, nil) {
-		if err != nil {
-			t.Fatalf("Stream() error = %v, want retry to succeed", err)
+	for chunk := range retryingGenerator.Stream(t.Context(), GenerationRequest{
+		Model: "claude",
+		Dialog: Dialog{{
+			Role:   User,
+			Blocks: []Block{TextBlock("Hello")},
+		}},
+	}) {
+		if chunk.Err != nil {
+			t.Fatalf("Stream() error = %v, want retry to succeed", chunk.Err)
 		}
 	}
 
@@ -190,21 +199,13 @@ func TestAnthropicGenerator_Count_IncludesTools(t *testing.T) {
 	// Create a mock Anthropic service
 	mockSvc := &mockAnthropicSvc{}
 
-	// Create a generator with the mock service
-	gen := AnthropicGenerator{
-		client:             mockSvc,
-		model:              "claude-3-haiku-20240307",
-		systemInstructions: "You are a helpful assistant",
-		tools:              make(map[string]a.ToolParam),
-	}
+	// Create a generator with the mock service.
+	gen := AnthropicGenerator{client: mockSvc}
 
-	// Register a tool
 	tool := Tool{
 		Name:        "test_tool",
 		Description: "A test tool",
 	}
-	gen.Register(tool)
-
 	// Create a simple dialog
 	dialog := Dialog{
 		{
@@ -219,8 +220,13 @@ func TestAnthropicGenerator_Count_IncludesTools(t *testing.T) {
 		},
 	}
 
-	// Call Count
-	_, err := gen.Count(context.Background(), dialog)
+	// Call Count with the same request fields used for generation.
+	_, err := gen.Count(context.Background(), GenerationRequest{
+		Model:        "claude-3-haiku-20240307",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+		Tools:        []Tool{tool},
+	})
 	if err != nil {
 		t.Errorf("Count returned error: %v", err)
 	}

@@ -70,10 +70,13 @@ func TestResponsesStreamingAdapterPreservesReasoningSummaryParts(t *testing.T) {
 		responseSSEvent("response.reasoning_summary_part.done", `{"type":"response.reasoning_summary_part.done","sequence_number":9,"item_id":"rs_123","output_index":0,"summary_index":1,"part":{"type":"summary_text","text":"second summary"}}`),
 		responseSSEvent("response.output_item.done", `{"type":"response.output_item.done","sequence_number":10,"output_index":0,"item":{"id":"rs_123","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"first summary"},{"type":"summary_text","text":"second summary"}],"encrypted_content":"encrypted-reasoning"}}`),
 	}}
-	gen := NewResponsesGenerator(svc, "gpt-5", "")
-	adapter := StreamingAdapter{S: &gen}
+	gen := NewResponsesGenerator(svc)
+	adapter := StreamingAdapter{S: gen}
 
-	resp, err := adapter.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("hard question")}}}, nil)
+	resp, err := adapter.Generate(context.Background(), GenerationRequest{
+		Model:  "gpt-5",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hard question")}}},
+	})
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -114,10 +117,10 @@ func TestResponsesGeneratorStreamRetriesServerOverloadSSEError(t *testing.T) {
 		{responseSSEvent("error", `{"error":`+overloadPayload+`}`)},
 		{},
 	}}
-	generator := NewResponsesGenerator(svc, "gpt-5", "")
+	generator := NewResponsesGenerator(svc)
 
 	var notified error
-	retryingGenerator := NewRetryGenerator(&generator, RetryConfig{
+	retryingGenerator := NewRetryGenerator(generator, RetryConfig{
 		Backoff:     func(uint) (time.Duration, bool) { return time.Millisecond, true },
 		MaxAttempts: 2,
 		Notify: func(err error, _ time.Duration) {
@@ -125,12 +128,15 @@ func TestResponsesGeneratorStreamRetriesServerOverloadSSEError(t *testing.T) {
 		},
 	})
 
-	for _, err := range retryingGenerator.Stream(t.Context(), Dialog{{
-		Role:   User,
-		Blocks: []Block{TextBlock("Hello")},
-	}}, nil) {
-		if err != nil {
-			t.Fatalf("Stream() error = %v, want retry to succeed", err)
+	for chunk := range retryingGenerator.Stream(t.Context(), GenerationRequest{
+		Model: "gpt-5",
+		Dialog: Dialog{{
+			Role:   User,
+			Blocks: []Block{TextBlock("Hello")},
+		}},
+	}) {
+		if chunk.Err != nil {
+			t.Fatalf("Stream() error = %v, want retry to succeed", chunk.Err)
 		}
 	}
 

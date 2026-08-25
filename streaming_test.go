@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"strings"
@@ -166,21 +167,36 @@ func TestStreamingAdapterBlockCompression(t *testing.T) {
 	})
 }
 
+func TestStreamChunkErrorIsNotSerialized(t *testing.T) {
+	chunk := StreamChunk{
+		Block: TextBlock("partial"),
+		Err:   errors.New("sensitive failure"),
+	}
+
+	encoded, err := json.Marshal(chunk)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if strings.Contains(string(encoded), "sensitive failure") || strings.Contains(string(encoded), `"Err"`) || strings.Contains(string(encoded), `"err"`) {
+		t.Fatalf("serialized chunk contains runtime error: %s", encoded)
+	}
+}
+
 // mockStreamingGenerator is a test helper that yields pre-defined chunks
 type mockStreamingGenerator struct {
 	chunks []StreamChunk
 	err    error
 }
 
-func (m *mockStreamingGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
-	return func(yield func(StreamChunk, error) bool) {
+func (m *mockStreamingGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
+	return func(yield func(StreamChunk) bool) {
 		for _, chunk := range m.chunks {
-			if !yield(chunk, nil) {
+			if !yield(chunk) {
 				return
 			}
 		}
 		if m.err != nil {
-			yield(StreamChunk{}, m.err)
+			yield(StreamChunk{Err: m.err})
 		}
 	}
 }

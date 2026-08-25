@@ -13,7 +13,7 @@ type mockGenerator struct {
 }
 
 // Generate implements the Generator interface for testing
-func (m *mockGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (m *mockGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	return m.response, m.err
 }
 
@@ -117,17 +117,14 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 		},
 	}
 
-	// Create test options
-	testOptions := &GenOpts{
-		Temperature: Ptr(0.7),
-	}
+	testOptions := NewGenerationOptions(WithTemperature(0.7))
 
 	tests := []struct {
 		name       string
 		generators []Generator
 		config     *FallbackConfig
 		dialog     Dialog
-		options    *GenOpts
+		options    GenerationOptions
 		want       Response
 		wantErr    bool
 	}{
@@ -256,7 +253,10 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 				t.Fatalf("Failed to create fallback generator: %v", err)
 			}
 
-			got, err := fallbackGen.Generate(context.Background(), tt.dialog, tt.options)
+			got, err := fallbackGen.Generate(context.Background(), GenerationRequest{
+				Dialog:  tt.dialog,
+				Options: tt.options,
+			})
 
 			// Check error cases
 			if (err != nil) != tt.wantErr {
@@ -352,7 +352,7 @@ func TestFallbackGenerator(t *testing.T) {
 	}
 
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Tell me about AI fallback strategies")}}}
-	resp, err := fallbackGen.Generate(context.Background(), dialog, nil)
+	resp, err := fallbackGen.Generate(context.Background(), GenerationRequest{Dialog: dialog})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}

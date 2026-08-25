@@ -23,6 +23,10 @@ const (
 	// was called during generation. This allows tool results to support
 	// multiple Blocks of different Modalities
 	ToolResult
+
+	// System represents model instructions supplied through GenerationRequest.
+	// System messages belong in GenerationRequest.Instructions, not Dialog.
+	System
 )
 
 // String returns the string representation of the role
@@ -34,6 +38,8 @@ func (r Role) String() string {
 		return "assistant"
 	case ToolResult:
 		return "tool result"
+	case System:
+		return "system"
 	default:
 		return fmt.Sprintf("unknown role %d", r)
 	}
@@ -219,6 +225,11 @@ type Str string
 
 func (s Str) String() string {
 	return string(s)
+}
+
+// SystemMessage creates system instructions from ordered content blocks.
+func SystemMessage(blocks ...Block) Message {
+	return Message{Role: System, Blocks: append([]Block(nil), blocks...)}
 }
 
 // TextBlock creates a simple text content block.

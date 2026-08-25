@@ -33,16 +33,16 @@ type AlphaMiddleware struct {
 	tracker *CallTracker
 }
 
-func (a *AlphaMiddleware) Generate(ctx context.Context, dialog Dialog, opts *GenOpts) (Response, error) {
+func (a *AlphaMiddleware) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	a.tracker.Record("alpha:generate:before")
-	resp, err := a.GeneratorWrapper.Generate(ctx, dialog, opts)
+	resp, err := a.GeneratorWrapper.Generate(ctx, request)
 	a.tracker.Record("alpha:generate:after")
 	return resp, err
 }
 
-func (a *AlphaMiddleware) Count(ctx context.Context, dialog Dialog) (uint, error) {
+func (a *AlphaMiddleware) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	a.tracker.Record("alpha:count:before")
-	count, err := a.GeneratorWrapper.Count(ctx, dialog)
+	count, err := a.GeneratorWrapper.Count(ctx, request)
 	a.tracker.Record("alpha:count:after")
 	return count, err
 }
@@ -62,16 +62,16 @@ type BetaMiddleware struct {
 	tracker *CallTracker
 }
 
-func (b *BetaMiddleware) Generate(ctx context.Context, dialog Dialog, opts *GenOpts) (Response, error) {
+func (b *BetaMiddleware) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	b.tracker.Record("beta:generate:before")
-	resp, err := b.GeneratorWrapper.Generate(ctx, dialog, opts)
+	resp, err := b.GeneratorWrapper.Generate(ctx, request)
 	b.tracker.Record("beta:generate:after")
 	return resp, err
 }
 
-func (b *BetaMiddleware) Count(ctx context.Context, dialog Dialog) (uint, error) {
+func (b *BetaMiddleware) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	b.tracker.Record("beta:count:before")
-	count, err := b.GeneratorWrapper.Count(ctx, dialog)
+	count, err := b.GeneratorWrapper.Count(ctx, request)
 	b.tracker.Record("beta:count:after")
 	return count, err
 }
@@ -91,9 +91,9 @@ type GammaMiddleware struct {
 	tracker *CallTracker
 }
 
-func (g *GammaMiddleware) Generate(ctx context.Context, dialog Dialog, opts *GenOpts) (Response, error) {
+func (g *GammaMiddleware) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	g.tracker.Record("gamma:generate:before")
-	resp, err := g.GeneratorWrapper.Generate(ctx, dialog, opts)
+	resp, err := g.GeneratorWrapper.Generate(ctx, request)
 	g.tracker.Record("gamma:generate:after")
 	return resp, err
 }
@@ -115,7 +115,7 @@ type MockBaseGenerator struct {
 	tokenCount uint
 }
 
-func (m *MockBaseGenerator) Generate(ctx context.Context, dialog Dialog, opts *GenOpts) (Response, error) {
+func (m *MockBaseGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	m.tracker.Record("base:generate")
 	return Response{
 		Candidates:   []Message{{Role: Assistant, Blocks: []Block{{Content: Str("hello")}}}},
@@ -123,7 +123,7 @@ func (m *MockBaseGenerator) Generate(ctx context.Context, dialog Dialog, opts *G
 	}, nil
 }
 
-func (m *MockBaseGenerator) Count(ctx context.Context, dialog Dialog) (uint, error) {
+func (m *MockBaseGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	m.tracker.Record("base:count")
 	return m.tokenCount, nil
 }
@@ -142,7 +142,7 @@ func TestMiddlewareStack_Generate(t *testing.T) {
 	)
 
 	// Call Generate
-	_, err := gen.Generate(context.Background(), Dialog{}, nil)
+	_, err := gen.Generate(context.Background(), GenerationRequest{})
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestMiddlewareStack_Count(t *testing.T) {
 	)
 
 	// Call Count
-	count, err := gen.(TokenCounter).Count(context.Background(), Dialog{})
+	count, err := gen.(TokenCounter).Count(context.Background(), GenerationRequest{})
 	if err != nil {
 		t.Fatalf("Count failed: %v", err)
 	}
@@ -228,10 +228,10 @@ func TestMiddlewareStack_BothMethods(t *testing.T) {
 	)
 
 	// Call Generate first
-	_, _ = gen.Generate(context.Background(), Dialog{}, nil)
+	_, _ = gen.Generate(context.Background(), GenerationRequest{})
 
 	// Then call Count
-	_, _ = gen.(TokenCounter).Count(context.Background(), Dialog{})
+	_, _ = gen.(TokenCounter).Count(context.Background(), GenerationRequest{})
 
 	calls := tracker.Calls()
 	t.Logf("All calls in order:\n")

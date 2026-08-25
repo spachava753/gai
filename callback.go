@@ -83,13 +83,13 @@ func (c CallbackExecErr) Error() string {
 //	    return fmt.Sprintf("Weather in %s: 72°F", params.Location), nil
 //	}
 //
-//	// Register the tool
+//	// Include the tool and callback in application-owned tool dispatch.
 //	weatherTool := Tool{
 //	    Name: "get_weather",
 //	    Description: "Get the current weather for a location",
 //	    // InputSchema definition...
 //	}
-//	toolGen.Register(weatherTool, ToolCallBackFunc(getWeather))
+//	weatherCallback := ToolCallBackFunc[WeatherParams](getWeather)
 type ToolCallBackFunc[T any] func(ctx context.Context, t T) (string, error)
 
 // Call implements the ToolCallback interface, handling parameter conversion and

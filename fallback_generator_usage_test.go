@@ -43,7 +43,7 @@ func TestFallbackGenerator_Generate_Example(t *testing.T) {
 	// Generate a response
 	// The fallback generator will try the primary generator first, and if that fails with a rate limit or 5xx error,
 	// it will automatically try the secondary generator instead.
-	response, err := fallbackGen.Generate(context.Background(), dialog, nil)
+	response, err := fallbackGen.Generate(context.Background(), gai.GenerationRequest{Dialog: dialog})
 	if err != nil {
 		t.Fatalf("generate response: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestFallbackGenerator_Generate_customFallbackConfig(t *testing.T) {
 		},
 	}
 
-	response, err := fallbackGen.Generate(context.Background(), dialog, nil)
+	response, err := fallbackGen.Generate(context.Background(), gai.GenerationRequest{Dialog: dialog})
 	if err != nil {
 		t.Fatalf("generate response: %v", err)
 	}
@@ -108,7 +108,7 @@ type MockGenerator struct {
 	name string
 }
 
-func (m *MockGenerator) Generate(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+func (m *MockGenerator) Generate(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 	return gai.Response{
 		Candidates: []gai.Message{
 			{

@@ -220,39 +220,6 @@ type ToolCallback interface {
 	Call(ctx context.Context, parameters map[string]any) (Message, error)
 }
 
-type ToolRegister interface {
-	// Register adds a tool to the Generator's available tools.
-	//
-	// Some Generator implementations may have built-in tools. In such cases, only
-	// the Tool.Name needs to match a built-in tool's name to enable its use. The rest
-	// of the Tool fields (Description, InputSchema) will be ignored in favor of the
-	// built-in tool's definition. The callback behavior remains the same - you can
-	// optionally provide a callback for automatic execution.
-	//
-	// JSON Schema compatibility note:
-	// Different generators have different levels of support for the anyOf JSON Schema feature:
-	// - OpenAI and Anthropic: Full support for anyOf properties
-	// - Gemini: Limited support for anyOf - only supports [Type, null] pattern for nullable fields.
-	//   Will error on multiple non-null types in anyOf or null-only anyOf.
-	//
-	// When using the anyOf property, the most portable approach is to restrict its usage to
-	// nullable fields following the pattern: anyOf: [{type: "string"}, {type: "null"}]
-	//
-	// Returns an error if:
-	//  - Tool name is empty
-	//  - Tool name conflicts with an already registered tool
-	//  - Tool name conflicts with a built-in tool that's already registered
-	//  - Tool name matches special values ToolChoiceAuto or ToolChoiceToolsRequired
-	//  - Tool schema is invalid (e.g., Array type without Items field)
-	//  - Tool schema uses unsupported JSON Schema features for the specific generator
-	Register(tool Tool) error
-}
-
-type ToolCallingGenerator interface {
-	Generator
-	ToolRegister
-}
-
 // ToolCallInput represents a standardized format for tool use in all generators.
 // It contains the name of the tool to use and the parameters to pass to it.
 type ToolCallInput struct {

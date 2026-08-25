@@ -40,8 +40,11 @@ func TestResponsesGeneratorGenerateReturnsContentPolicyFinishReason(t *testing.T
 		t.Fatalf("failed to decode mock response: %v", err)
 	}
 
-	gen := NewResponsesGenerator(&mockResponsesService{response: &apiResp}, "gpt-5", "")
-	response, err := gen.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	gen := NewResponsesGenerator(&mockResponsesService{response: &apiResp})
+	response, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:  "gpt-5",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}},
+	})
 	if response.FinishReason != ContentPolicyViolation {
 		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
 	}
@@ -64,11 +67,14 @@ func TestResponsesGeneratorGenerateReturnsFailedResponseError(t *testing.T) {
 		t.Fatalf("failed to decode mock response: %v", err)
 	}
 
-	gen := NewResponsesGenerator(&mockResponsesService{response: &apiResp}, "gpt-5", "")
-	_, err := gen.Generate(context.Background(), Dialog{{
-		Role:   User,
-		Blocks: []Block{TextBlock("Hello")},
-	}}, nil)
+	gen := NewResponsesGenerator(&mockResponsesService{response: &apiResp})
+	_, err := gen.Generate(context.Background(), GenerationRequest{
+		Model: "gpt-5",
+		Dialog: Dialog{{
+			Role:   User,
+			Blocks: []Block{TextBlock("Hello")},
+		}},
+	})
 
 	var apiErr *ApiErr
 	if !errors.As(err, &apiErr) {
@@ -92,7 +98,7 @@ func TestResponsesGeneratorGenerateReturnsFailedResponseError(t *testing.T) {
 }
 
 func TestResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase(t *testing.T) {
-	gen := NewResponsesGenerator(nil, "gpt-5", "")
+	gen := NewResponsesGenerator(nil)
 	dialog := Dialog{{
 		Role: Assistant,
 		Blocks: []Block{
@@ -119,7 +125,7 @@ func TestResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase(t *test
 }
 
 func TestResponsesGeneratorBuildInputItemsRejectsInvalidAssistantMessagePhase(t *testing.T) {
-	gen := NewResponsesGenerator(nil, "gpt-5", "")
+	gen := NewResponsesGenerator(nil)
 	dialog := Dialog{{
 		Role: Assistant,
 		Blocks: []Block{
@@ -137,7 +143,7 @@ func TestResponsesGeneratorBuildInputItemsRejectsInvalidAssistantMessagePhase(t 
 }
 
 func TestResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhaseWithoutTextContent(t *testing.T) {
-	gen := NewResponsesGenerator(nil, "gpt-5", "")
+	gen := NewResponsesGenerator(nil)
 
 	t.Run("tool-call-only assistant", func(t *testing.T) {
 		toolCallJSON, err := json.Marshal(ToolCallInput{
@@ -255,12 +261,15 @@ func TestResponsesGeneratorGeneratePreservesAssistantMessagePhase(t *testing.T) 
 	}
 
 	svc := &mockResponsesService{response: &apiResp}
-	gen := NewResponsesGenerator(svc, "gpt-5", "")
+	gen := NewResponsesGenerator(svc)
 
-	resp, err := gen.Generate(context.Background(), Dialog{{
-		Role:   User,
-		Blocks: []Block{TextBlock("Say done")},
-	}}, nil)
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model: "gpt-5",
+		Dialog: Dialog{{
+			Role:   User,
+			Blocks: []Block{TextBlock("Say done")},
+		}},
+	})
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -310,12 +319,15 @@ func TestResponsesGeneratorGeneratePreservesAssistantToolOnlyPhaseRoundTrip(t *t
 	}
 
 	svc := &mockResponsesService{response: &apiResp}
-	gen := NewResponsesGenerator(svc, "gpt-5", "")
+	gen := NewResponsesGenerator(svc)
 
-	resp, err := gen.Generate(context.Background(), Dialog{{
-		Role:   User,
-		Blocks: []Block{TextBlock("Look up Paris")},
-	}}, nil)
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model: "gpt-5",
+		Dialog: Dialog{{
+			Role:   User,
+			Blocks: []Block{TextBlock("Look up Paris")},
+		}},
+	})
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -370,10 +382,10 @@ func TestStreamingAdapterGeneratePreservesMessageExtraFields(t *testing.T) {
 		},
 	}}}
 
-	resp, err := adapter.Generate(context.Background(), Dialog{{
+	resp, err := adapter.Generate(context.Background(), GenerationRequest{Dialog: Dialog{{
 		Role:   User,
 		Blocks: []Block{TextBlock("hello")},
-	}}, nil)
+	}}})
 	if err != nil {
 		t.Fatalf("StreamingAdapter.Generate failed: %v", err)
 	}
@@ -419,10 +431,10 @@ func TestStreamingAdapterGeneratePreservesToolOnlyMessageExtraFieldsForReplay(t 
 		},
 	}}}
 
-	resp, err := adapter.Generate(context.Background(), Dialog{{
+	resp, err := adapter.Generate(context.Background(), GenerationRequest{Dialog: Dialog{{
 		Role:   User,
 		Blocks: []Block{TextBlock("hello")},
-	}}, nil)
+	}}})
 	if err != nil {
 		t.Fatalf("StreamingAdapter.Generate failed: %v", err)
 	}
@@ -446,7 +458,7 @@ func TestStreamingAdapterGeneratePreservesToolOnlyMessageExtraFieldsForReplay(t 
 		t.Fatalf("expected compressed tool call topic %q, got %+v", "population", gotToolCall.Parameters)
 	}
 
-	gen := NewResponsesGenerator(nil, "gpt-5", "")
+	gen := NewResponsesGenerator(nil)
 	items, err := gen.buildInputItems(Dialog{candidate})
 	if err != nil {
 		t.Fatalf("buildInputItems failed: %v", err)

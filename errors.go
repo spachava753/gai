@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-// ErrMaxGenerationLimit is returned when a Generator has generated the maximum number of tokens
-// specified by GenOpts.MaxGenerationTokens. This error indicates that the generation was terminated
-// due to reaching the token limit rather than natural completion.
+// ErrMaxGenerationLimit is returned when a Generator reaches the token limit set by
+// GenerationOptionMaxGenerationTokens. Generation stopped because of the limit rather
+// than a natural completion.
 var ErrMaxGenerationLimit = errors.New("maximum generation limit reached")
 
 // UnsupportedInputModalityErr is returned when a Generator encounters an input Message
@@ -23,9 +23,8 @@ func (u UnsupportedInputModalityErr) Error() string {
 	return fmt.Sprintf("unsupported input modality: %s", string(u))
 }
 
-// UnsupportedOutputModalityErr is returned when a Generator is requested to generate
-// a response in a Modality that it does not support via GenOpts.OutputModalities.
-// The string value of this error contains the name of the unsupported modality.
+// UnsupportedOutputModalityErr is returned when GenerationOptionOutputModalities
+// requests a modality that a Generator does not support.
 //
 // For example, if a Generator only supports text output but is asked to generate
 // audio content, it will return this error with details about the unsupported
@@ -36,10 +35,9 @@ func (u UnsupportedOutputModalityErr) Error() string {
 	return fmt.Sprintf("unsupported output modality: %s", string(u))
 }
 
-// InvalidToolChoiceErr is returned when an invalid tool choice is specified in
-// GenOpts.ToolChoice. This can occur in several scenarios:
-//   - When a specific tool is requested but doesn't exist
-//   - When tools are required (ToolChoiceToolsRequired) but no tools are provided
+// InvalidToolChoiceErr is returned when GenerationOptionToolChoice is invalid.
+// This can occur when a named tool is absent from GenerationRequest.Tools or tools
+// are required but the request provides none.
 //
 // The string value of this error contains details about why the tool choice was invalid.
 type InvalidToolChoiceErr string
@@ -48,12 +46,9 @@ func (i InvalidToolChoiceErr) Error() string {
 	return fmt.Sprintf("invalid tool choice: %s", string(i))
 }
 
-// InvalidParameterErr is returned when a generation parameter in GenOpts is invalid.
-// This can occur in several scenarios:
-//   - [GenOpts.Temperature], [GenOpts.TopP], or [GenOpts.TopK] values are out of valid range
-//   - [GenOpts.FrequencyPenalty] or [GenOpts.PresencePenalty] are out of valid range
-//   - [GenOpts.MaxGenerationTokens] is negative or zero
-//   - Invalid combination of parameters (e.g., both [GenOpts.Temperature] and [GenOpts.TopP] set)
+// InvalidParameterErr is returned when a recognized GenerationOptions value has
+// the wrong type, is outside the provider's valid range, or conflicts with another
+// option.
 type InvalidParameterErr struct {
 	// Parameter is the name of the invalid parameter
 	Parameter string `json:"parameter" yaml:"parameter"`
@@ -83,26 +78,22 @@ func (c ContentPolicyErr) Error() string {
 	return fmt.Sprintf("content policy violation: %s", string(c))
 }
 
-// ToolRegistrationErr is returned when registering a tool fails. This can occur in several scenarios:
-//   - Empty tool name
-//   - Tool name conflicts with an existing or built-in tool
-//   - Tool name matches special values (ToolChoiceAuto, ToolChoiceToolsRequired)
-//   - Invalid tool schema (e.g., Array type without Items field)
-//
-// The Cause field contains the underlying error that caused the registration to fail.
-type ToolRegistrationErr struct {
-	// Tool is the name of the tool that failed to register
+// InvalidToolErr is returned when a tool in GenerationRequest.Tools is invalid.
+// Empty and reserved names, duplicate names, and unsupported schemas are rejected.
+// Cause contains the provider conversion or validation error.
+type InvalidToolErr struct {
+	// Tool is the invalid tool's name.
 	Tool string `json:"tool" yaml:"tool"`
-	// Cause is the underlying error that caused the registration to fail
+	// Cause is the underlying validation or conversion error.
 	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
 }
 
-func (t ToolRegistrationErr) Error() string {
-	return fmt.Sprintf("failed to register tool %q: %v", t.Tool, t.Cause)
+func (t InvalidToolErr) Error() string {
+	return fmt.Sprintf("invalid tool %q: %v", t.Tool, t.Cause)
 }
 
-// Unwrap returns the underlying cause of the tool registration failure
-func (t ToolRegistrationErr) Unwrap() error {
+// Unwrap returns the underlying validation or conversion error.
+func (t InvalidToolErr) Unwrap() error {
 	return t.Cause
 }
 

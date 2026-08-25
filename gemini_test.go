@@ -21,14 +21,15 @@ func TestGeminiGenerator_Generate(t *testing.T) {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant. You respond to the user with plain text format.")
-	if err != nil {
-		t.Fatalf("create Gemini generator: %v", err)
-	}
+	g := NewGeminiGenerator(client)
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("What is the blooms taxonomy, and how does it related to the psychology of child development?")}}},
 	}
-	response, err := g.Generate(context.Background(), dialog, nil)
+	response, err := g.Generate(context.Background(), GenerationRequest{
+		Model:        "models/gemini-3-pro-preview",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant. You respond to the user with plain text format.")),
+		Dialog:       dialog,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,17 +46,21 @@ func TestGeminiGenerator_Stream(t *testing.T) {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant. You respond to the user with plain text format.")
 	if err != nil {
-		t.Fatalf("create Gemini generator: %v", err)
+		t.Fatalf("create Gemini client: %v", err)
 	}
+	g := NewGeminiGenerator(client)
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("What is the capital of France?")}}},
 	}
 	var content strings.Builder
-	for chunk, err := range g.Stream(context.Background(), dialog, nil) {
-		if err != nil {
-			t.Fatalf("stream returned error: %v", err)
+	for chunk := range g.Stream(context.Background(), GenerationRequest{
+		Model:        "models/gemini-3-pro-preview",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant. You respond to the user with plain text format.")),
+		Dialog:       dialog,
+	}) {
+		if chunk.Err != nil {
+			t.Fatalf("stream returned error: %v", chunk.Err)
 		}
 		if chunk.Block.BlockType == MetadataBlockType {
 			continue
@@ -64,7 +69,7 @@ func TestGeminiGenerator_Stream(t *testing.T) {
 	}
 	requireTextContains(t, content.String(), "Paris")
 }
-func TestGeminiGenerator_Register(t *testing.T) {
+func TestGeminiGenerator_RequestTools(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
@@ -74,15 +79,9 @@ func TestGeminiGenerator_Register(t *testing.T) {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-	g, err := NewGeminiGenerator(
-		client,
-		"models/gemini-3-pro-preview",
-		`You are a helpful assistant. You can call tools in parallel.
-When a user asks for the server time, always call the server time tool, don't use previously returned results`,
-	)
-	if err != nil {
-		t.Fatalf("create Gemini generator: %v", err)
-	}
+	g := NewGeminiGenerator(client)
+	instructions := `You are a helpful assistant. You can call tools in parallel.
+When a user asks for the server time, always call the server time tool, don't use previously returned results`
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -100,14 +99,6 @@ When a user asks for the server time, always call the server time tool, don't us
 		Name:        "get_server_time",
 		Description: "Get the current server time in UTC.",
 	}
-	err = g.Register(stockTool)
-	if err != nil {
-		t.Fatalf("register tool: %v", err)
-	}
-	err = g.Register(getServerTimeTool)
-	if err != nil {
-		t.Fatalf("register tool: %v", err)
-	}
 	dialog := Dialog{
 		{
 			Role: User,
@@ -118,8 +109,14 @@ When a user asks for the server time, always call the server time tool, don't us
 			}},
 		},
 	}
+	request := GenerationRequest{
+		Model:        "models/gemini-3-pro-preview",
+		Instructions: SystemMessage(TextBlock(instructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{stockTool, getServerTimeTool},
+	}
 	// Expect tool call for both tools
-	response, err := g.Generate(context.Background(), dialog, nil)
+	response, err := g.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,7 +149,8 @@ When a user asks for the server time, always call the server time tool, don't us
 			}},
 		},
 	)
-	response, err = g.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	response, err = g.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -166,7 +164,8 @@ When a user asks for the server time, always call the server time tool, don't us
 			Content:      Str("What is the stock price for MSFT, and also tell me the server time again?"),
 		}},
 	})
-	response, err = g.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	response, err = g.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -199,7 +198,8 @@ When a user asks for the server time, always call the server time tool, don't us
 			}},
 		},
 	)
-	response, err = g.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	response, err = g.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -231,10 +231,7 @@ func TestGeminiGenerator_Generate_image(t *testing.T) {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
-	if err != nil {
-		t.Fatalf("create Gemini generator: %v", err)
-	}
+	g := NewGeminiGenerator(client)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -253,7 +250,11 @@ func TestGeminiGenerator_Generate_image(t *testing.T) {
 			},
 		},
 	}
-	response, err := g.Generate(context.Background(), dialog, nil)
+	response, err := g.Generate(context.Background(), GenerationRequest{
+		Model:        "gemini-2.5-pro",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -284,10 +285,7 @@ func TestGeminiGenerator_Generate_audio(t *testing.T) {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
-	if err != nil {
-		t.Fatalf("create Gemini generator: %v", err)
-	}
+	g := NewGeminiGenerator(client)
 	// Using inline audio data
 	dialog := Dialog{
 		{
@@ -307,7 +305,11 @@ func TestGeminiGenerator_Generate_audio(t *testing.T) {
 			},
 		},
 	}
-	response, err := g.Generate(context.Background(), dialog, nil)
+	response, err := g.Generate(context.Background(), GenerationRequest{
+		Model:        "gemini-2.5-pro",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -317,7 +319,7 @@ func TestGeminiGenerator_Generate_audio(t *testing.T) {
 		}
 	}
 }
-func TestGeminiGenerator_Register_parallelToolUse(t *testing.T) {
+func TestGeminiGenerator_RequestTools_parallelToolUse(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
@@ -327,11 +329,8 @@ func TestGeminiGenerator_Register_parallelToolUse(t *testing.T) {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant.")
-	if err != nil {
-		t.Fatalf("create Gemini generator: %v", err)
-	}
-	// Register the get_stock_price tool
+	g := NewGeminiGenerator(client)
+	// Define the request tool
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -345,14 +344,15 @@ func TestGeminiGenerator_Register_parallelToolUse(t *testing.T) {
 			return schema
 		}(),
 	}
-	err = g.Register(stockTool)
-	if err != nil {
-		t.Fatalf("register tool: %v", err)
-	}
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Give me the current prices for AAPL, MSFT, and TSLA.")}}},
 	}
-	response, err := g.Generate(context.Background(), dialog, nil)
+	response, err := g.Generate(context.Background(), GenerationRequest{
+		Model:        "models/gemini-3-pro-preview",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+		Tools:        []Tool{stockTool},
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -374,11 +374,11 @@ func TestGeminiGenerator_Stream_parallelToolUse(t *testing.T) {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant.")
 	if err != nil {
-		t.Fatalf("create Gemini generator: %v", err)
+		t.Fatalf("create Gemini client: %v", err)
 	}
-	// Register the get_stock_price tool
+	g := NewGeminiGenerator(client)
+	// Define the request tool
 	stockTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -392,17 +392,18 @@ func TestGeminiGenerator_Stream_parallelToolUse(t *testing.T) {
 			return schema
 		}(),
 	}
-	err = g.Register(stockTool)
-	if err != nil {
-		t.Fatalf("register tool: %v", err)
-	}
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Give me the current prices for AAPL, MSFT, and TSLA.")}}},
 	}
 	var toolCallCount int
-	for chunk, err := range g.Stream(context.Background(), dialog, nil) {
-		if err != nil {
-			t.Fatalf("stream returned error: %v", err)
+	for chunk := range g.Stream(context.Background(), GenerationRequest{
+		Model:        "models/gemini-3-pro-preview",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+		Tools:        []Tool{stockTool},
+	}) {
+		if chunk.Err != nil {
+			t.Fatalf("stream returned error: %v", chunk.Err)
 		}
 		if chunk.Block.BlockType == MetadataBlockType {
 			continue
@@ -426,10 +427,7 @@ func TestGeminiGenerator_Count(t *testing.T) {
 		},
 	)
 	// Create a generator
-	g, err := NewGeminiGenerator(client, "gemini-2.5-pro", "You are a helpful assistant.")
-	if err != nil {
-		t.Fatalf("create Gemini generator: %v", err)
-	}
+	g := NewGeminiGenerator(client)
 	// Create a dialog with a user message
 	dialog := Dialog{
 		{
@@ -443,8 +441,13 @@ func TestGeminiGenerator_Count(t *testing.T) {
 			},
 		},
 	}
+	request := GenerationRequest{
+		Model:        "gemini-2.5-pro",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+	}
 	// Count tokens in the dialog
-	tokenCount, err := g.Count(context.Background(), dialog)
+	tokenCount, err := g.Count(context.Background(), request)
 	if err != nil {
 		t.Fatalf("count tokens: %v", err)
 	}
@@ -477,8 +480,9 @@ func TestGeminiGenerator_Count(t *testing.T) {
 			},
 		},
 	}
+	request.Dialog = dialog
 	// Count tokens with the image included
-	tokenCount, err = g.Count(context.Background(), dialog)
+	tokenCount, err = g.Count(context.Background(), request)
 	if err != nil {
 		t.Fatalf("count tokens: %v", err)
 	}
@@ -496,10 +500,7 @@ func TestGeminiGenerator_Generate_pdf(t *testing.T) {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant.")
-	if err != nil {
-		t.Fatalf("create Gemini generator: %v", err)
-	}
+	g := NewGeminiGenerator(client)
 	// This example assumes that sample.pdf is present in the current directory.
 	pdfBytes, err := os.ReadFile("sample.pdf")
 	if err != nil {
@@ -517,7 +518,12 @@ func TestGeminiGenerator_Generate_pdf(t *testing.T) {
 		},
 	}
 	// Generate a response
-	response, err := g.Generate(ctx, dialog, &GenOpts{MaxGenerationTokens: Ptr(1024)})
+	response, err := g.Generate(ctx, GenerationRequest{
+		Model:        "models/gemini-3-pro-preview",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+		Options:      NewGenerationOptions(WithMaxGenerationTokens(1024)),
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -528,7 +534,7 @@ func TestGeminiGenerator_Generate_pdf(t *testing.T) {
 		}
 	}
 }
-func TestGeminiGenerator_Register_parallelToolUse_multimedia(t *testing.T) {
+func TestGeminiGenerator_RequestTools_parallelToolUse_multimedia(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
@@ -538,11 +544,8 @@ func TestGeminiGenerator_Register_parallelToolUse_multimedia(t *testing.T) {
 			Backend: genai.BackendGeminiAPI,
 		},
 	)
-	g, err := NewGeminiGenerator(client, "models/gemini-3-pro-preview", "You are a helpful assistant that can view files.")
-	if err != nil {
-		t.Fatalf("create Gemini generator: %v", err)
-	}
-	// Register a tool to view files
+	g := NewGeminiGenerator(client)
+	// Define a request tool to view files
 	viewFileTool := Tool{
 		Name:        "view_file",
 		Description: "View the contents of a file. Can handle text files, images, and other media types.",
@@ -556,16 +559,18 @@ func TestGeminiGenerator_Register_parallelToolUse_multimedia(t *testing.T) {
 			return schema
 		}(),
 	}
-	err = g.Register(viewFileTool)
-	if err != nil {
-		t.Fatalf("register tool: %v", err)
-	}
 	// User asks to view multiple files
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{{BlockType: Content, ModalityType: Text, Content: Str("Please view sample.jpg and README.md, and tell me what character is in the image, and what is gai from the README")}}},
 	}
+	request := GenerationRequest{
+		Model:        "models/gemini-3-pro-preview",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant that can view files.")),
+		Dialog:       dialog,
+		Tools:        []Tool{viewFileTool},
+	}
 	// Model makes parallel tool calls
-	response, err := g.Generate(context.Background(), dialog, nil)
+	response, err := g.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -621,8 +626,9 @@ func TestGeminiGenerator_Register_parallelToolUse_multimedia(t *testing.T) {
 			}},
 		},
 	)
+	request.Dialog = dialog
 	// Get final response with tool results
-	response, err = g.Generate(context.Background(), dialog, nil)
+	response, err = g.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

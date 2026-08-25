@@ -14,50 +14,39 @@ import (
 	"github.com/spachava753/gai"
 )
 
-// mockGenerator is a mock implementation of the gai.Generator, gai.TokenCounter,
-// gai.ToolCallingGenerator, and gai.StreamingGenerator interfaces for testing.
+// mockGenerator implements generation, token counting, and streaming for tests.
 type mockGenerator struct {
-	GenerateFunc func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error)
-	StreamFunc   func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) iter.Seq2[gai.StreamChunk, error]
-	CountFunc    func(ctx context.Context, dialog gai.Dialog) (uint, error)
-	RegisterFunc func(tool gai.Tool) error
+	GenerateFunc func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error)
+	StreamFunc   func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk]
+	CountFunc    func(ctx context.Context, request gai.GenerationRequest) (uint, error)
 
 	generateCallCount int
 	streamCallCount   int
 }
 
-func (m *mockGenerator) Generate(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+func (m *mockGenerator) Generate(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 	m.generateCallCount++
 	if m.GenerateFunc != nil {
-		return m.GenerateFunc(ctx, dialog, options)
+		return m.GenerateFunc(ctx, request)
 	}
 	return gai.Response{}, errors.New("GenerateFunc not implemented")
 }
 
-func (m *mockGenerator) Stream(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) iter.Seq2[gai.StreamChunk, error] {
+func (m *mockGenerator) Stream(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
 	m.streamCallCount++
 	if m.StreamFunc != nil {
-		return m.StreamFunc(ctx, dialog, options)
+		return m.StreamFunc(ctx, request)
 	}
-	return func(yield func(gai.StreamChunk, error) bool) {
-		yield(gai.StreamChunk{}, errors.New("StreamFunc not implemented"))
+	return func(yield func(gai.StreamChunk) bool) {
+		yield(gai.StreamChunk{Err: errors.New("StreamFunc not implemented")})
 	}
 }
 
-func (m *mockGenerator) Count(ctx context.Context, dialog gai.Dialog) (uint, error) {
+func (m *mockGenerator) Count(ctx context.Context, request gai.GenerationRequest) (uint, error) {
 	if m.CountFunc != nil {
-		return m.CountFunc(ctx, dialog)
+		return m.CountFunc(ctx, request)
 	}
 	return 0, errors.New("CountFunc not implemented")
-}
-
-// Register implements the gai.ToolRegister interface for the mock.
-func (m *mockGenerator) Register(tool gai.Tool) error {
-	if m.RegisterFunc != nil {
-		return m.RegisterFunc(tool)
-	}
-	// This default error helps catch tests where Register is called unexpectedly.
-	return errors.New("mockGenerator.RegisterFunc was not set")
 }
 
 func (m *mockGenerator) ResetCallCount() {
@@ -65,21 +54,21 @@ func (m *mockGenerator) ResetCallCount() {
 	m.streamCallCount = 0
 }
 
-func collectStream(seq iter.Seq2[gai.StreamChunk, error]) ([]gai.StreamChunk, error) {
+func collectStream(seq iter.Seq[gai.StreamChunk]) ([]gai.StreamChunk, error) {
 	var chunks []gai.StreamChunk
-	for chunk, err := range seq {
-		if err != nil {
-			return chunks, err
+	for chunk := range seq {
+		if chunk.Err != nil {
+			return chunks, chunk.Err
 		}
 		chunks = append(chunks, chunk)
 	}
 	return chunks, nil
 }
 
-type generatorFunc func(context.Context, gai.Dialog, *gai.GenOpts) (gai.Response, error)
+type generatorFunc func(context.Context, gai.GenerationRequest) (gai.Response, error)
 
-func (f generatorFunc) Generate(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
-	return f(ctx, dialog, options)
+func (f generatorFunc) Generate(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
+	return f(ctx, request)
 }
 
 type retryAttemptsContextKey struct{}
@@ -98,13 +87,13 @@ func stoppingRetryConfig() gai.RetryConfig {
 
 func TestRetryGenerator_Generate_SuccessFirstAttempt(t *testing.T) {
 	m := &mockGenerator{
-		GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+		GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 			return gai.Response{Candidates: []gai.Message{{Role: gai.Assistant, Blocks: []gai.Block{gai.TextBlock("Hello")}}}}, nil
 		},
 	}
 	rg := gai.NewRetryGenerator(m, gai.RetryConfig{})
 
-	resp, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	resp, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if err != nil {
 		t.Fatalf("Generate() error = %v, wantErr %v", err, false)
 	}
@@ -122,7 +111,7 @@ func TestRetryGenerator_Generate_UsesIndependentBackoffStatePerCall(t *testing.T
 		Kind:       gai.APIErrorKindRateLimit,
 		StatusCode: http.StatusTooManyRequests,
 	}
-	generator := generatorFunc(func(ctx context.Context, _ gai.Dialog, _ *gai.GenOpts) (gai.Response, error) {
+	generator := generatorFunc(func(ctx context.Context, _ gai.GenerationRequest) (gai.Response, error) {
 		attempts := ctx.Value(retryAttemptsContextKey{}).(*atomic.Int32)
 		if attempts.Add(1) == 1 {
 			return gai.Response{}, retryableErr
@@ -154,7 +143,7 @@ func TestRetryGenerator_Generate_UsesIndependentBackoffStatePerCall(t *testing.T
 
 			attempts := &atomic.Int32{}
 			ctx := context.WithValue(context.Background(), retryAttemptsContextKey{}, attempts)
-			if _, err := rg.Generate(ctx, gai.Dialog{}, nil); err != nil {
+			if _, err := rg.Generate(ctx, gai.GenerationRequest{}); err != nil {
 				errs <- err
 				return
 			}
@@ -215,7 +204,7 @@ func TestRetryGenerator_Generate_RetryAndSucceed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &mockGenerator{}
 			callCount := 0
-			m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+			m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 				callCount++
 				if callCount < tc.expectedCalls {
 					return gai.Response{}, tc.retriableErr
@@ -226,7 +215,7 @@ func TestRetryGenerator_Generate_RetryAndSucceed(t *testing.T) {
 			config := constantRetryConfig(1 * time.Millisecond)
 			rg := gai.NewRetryGenerator(m, config)
 
-			resp, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+			resp, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 			if err != nil {
 				t.Fatalf("Generate() error = %v, wantErr %v", err, false)
 			}
@@ -252,7 +241,7 @@ func TestRetryGenerator_Generate_HonorsRetryAfter(t *testing.T) {
 	}
 
 	m := &mockGenerator{}
-	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 		if m.generateCallCount == 1 {
 			return gai.Response{}, retryableErr
 		}
@@ -269,7 +258,7 @@ func TestRetryGenerator_Generate_HonorsRetryAfter(t *testing.T) {
 	}
 	rg := gai.NewRetryGenerator(m, config)
 
-	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -291,7 +280,7 @@ func TestRetryGenerator_Generate_RetryAfterDoesNotOverrideStoppingBackoff(t *tes
 		RetryAfterDuration: &retryAfter,
 	}
 	m := &mockGenerator{
-		GenerateFunc: func(context.Context, gai.Dialog, *gai.GenOpts) (gai.Response, error) {
+		GenerateFunc: func(context.Context, gai.GenerationRequest) (gai.Response, error) {
 			return gai.Response{}, retryableErr
 		},
 	}
@@ -304,7 +293,7 @@ func TestRetryGenerator_Generate_RetryAfterDoesNotOverrideStoppingBackoff(t *tes
 	}
 	rg := gai.NewRetryGenerator(m, config)
 
-	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if err != retryableErr {
 		t.Fatalf("Generate() error = %T %v, want original ApiErr", err, err)
 	}
@@ -326,13 +315,13 @@ func TestRetryGenerator_Generate_BackoffCanStopRetries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			expectedErr := &gai.ApiErr{Kind: gai.APIErrorKindRateLimit}
 			m := &mockGenerator{
-				GenerateFunc: func(context.Context, gai.Dialog, *gai.GenOpts) (gai.Response, error) {
+				GenerateFunc: func(context.Context, gai.GenerationRequest) (gai.Response, error) {
 					return gai.Response{}, expectedErr
 				},
 			}
 			rg := gai.NewRetryGenerator(m, tt.config)
 
-			_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+			_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 			if err != expectedErr {
 				t.Fatalf("Generate() error = %T %v, want original ApiErr", err, err)
 			}
@@ -353,7 +342,7 @@ func TestRetryGenerator_Generate_UsesBackoffWithoutRetryAfter(t *testing.T) {
 	}
 
 	m := &mockGenerator{}
-	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 		if m.generateCallCount == 1 {
 			return gai.Response{}, retryableErr
 		}
@@ -368,7 +357,7 @@ func TestRetryGenerator_Generate_UsesBackoffWithoutRetryAfter(t *testing.T) {
 	}
 	rg := gai.NewRetryGenerator(m, config)
 
-	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -385,7 +374,7 @@ func TestRetryGenerator_Generate_BackoffSequenceContinuesAcrossRetryAfter(t *tes
 		RetryAfterDuration: &retryAfter,
 	}
 	m := &mockGenerator{}
-	m.GenerateFunc = func(context.Context, gai.Dialog, *gai.GenOpts) (gai.Response, error) {
+	m.GenerateFunc = func(context.Context, gai.GenerationRequest) (gai.Response, error) {
 		switch m.generateCallCount {
 		case 1, 3:
 			return gai.Response{}, fallbackErr
@@ -406,7 +395,7 @@ func TestRetryGenerator_Generate_BackoffSequenceContinuesAcrossRetryAfter(t *tes
 	}
 	rg := gai.NewRetryGenerator(m, config)
 
-	if _, err := rg.Generate(context.Background(), gai.Dialog{}, nil); err != nil {
+	if _, err := rg.Generate(context.Background(), gai.GenerationRequest{}); err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
 	if len(retries) != 3 || retries[0] != 1 || retries[1] != 2 || retries[2] != 3 {
@@ -422,13 +411,13 @@ func TestRetryGenerator_Generate_RetryAfterReturnsOriginalError(t *testing.T) {
 		RetryAfterDuration: &retryAfter,
 	}
 	m := &mockGenerator{
-		GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+		GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 			return gai.Response{}, expectedErr
 		},
 	}
 	rg := gai.NewRetryGenerator(m, gai.RetryConfig{MaxAttempts: 1})
 
-	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if err != expectedErr {
 		t.Fatalf("Generate() error = %T %v, want original ApiErr", err, err)
 	}
@@ -442,7 +431,7 @@ func TestRetryGenerator_Generate_RetryAfterRespectsMaxElapsedTime(t *testing.T) 
 		RetryAfterDuration: &retryAfter,
 	}
 	m := &mockGenerator{
-		GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+		GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 			return gai.Response{}, expectedErr
 		},
 	}
@@ -454,7 +443,7 @@ func TestRetryGenerator_Generate_RetryAfterRespectsMaxElapsedTime(t *testing.T) 
 	}
 	rg := gai.NewRetryGenerator(m, config)
 
-	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if err != expectedErr {
 		t.Fatalf("Generate() error = %T %v, want original ApiErr", err, err)
 	}
@@ -474,7 +463,7 @@ func TestRetryGenerator_Generate_ZeroMaxElapsedTimeHasNoLimit(t *testing.T) {
 		RetryAfterDuration: &retryAfter,
 	}
 	m := &mockGenerator{
-		GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+		GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 			return gai.Response{}, expectedErr
 		},
 	}
@@ -489,7 +478,7 @@ func TestRetryGenerator_Generate_ZeroMaxElapsedTimeHasNoLimit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err := rg.Generate(ctx, gai.Dialog{}, nil)
+	_, err := rg.Generate(ctx, gai.GenerationRequest{})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Generate() error = %T %v, want context deadline", err, err)
 	}
@@ -504,7 +493,7 @@ func TestRetryGenerator_Generate_ZeroMaxElapsedTimeHasNoLimit(t *testing.T) {
 func TestRetryGenerator_Generate_PermanentError(t *testing.T) {
 	permanentErr := errors.New("permanent error")
 	m := &mockGenerator{
-		GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+		GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 			return gai.Response{}, permanentErr
 		},
 	}
@@ -512,7 +501,7 @@ func TestRetryGenerator_Generate_PermanentError(t *testing.T) {
 	config := constantRetryConfig(1 * time.Millisecond)
 	rg := gai.NewRetryGenerator(m, config)
 
-	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if !errors.Is(err, permanentErr) {
 		t.Fatalf("Generate() error = %v, want %v", err, permanentErr)
 	}
@@ -547,7 +536,7 @@ func TestRetryGenerator_Generate_DoesNotRetryCanceledOrNonRetryableAPIErrors(t *
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := &mockGenerator{
-				GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+				GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 					return gai.Response{}, tt.err
 				},
 			}
@@ -555,7 +544,7 @@ func TestRetryGenerator_Generate_DoesNotRetryCanceledOrNonRetryableAPIErrors(t *
 			config.MaxAttempts = 2
 			rg := gai.NewRetryGenerator(m, config)
 
-			_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+			_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 			if err != tt.err {
 				t.Fatalf("Generate() error = %T %v, want original ApiErr", err, err)
 			}
@@ -568,7 +557,7 @@ func TestRetryGenerator_Generate_DoesNotRetryCanceledOrNonRetryableAPIErrors(t *
 
 func TestRetryGenerator_Generate_ContextCancelled_DuringBackoff(t *testing.T) {
 	m := &mockGenerator{}
-	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 		return gai.Response{}, &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "rate limited"}
 	}
 
@@ -582,7 +571,7 @@ func TestRetryGenerator_Generate_ContextCancelled_DuringBackoff(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := rg.Generate(ctx, gai.Dialog{}, nil)
+	_, err := rg.Generate(ctx, gai.GenerationRequest{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Generate() error = %v, want %v", err, context.Canceled)
 	}
@@ -593,7 +582,7 @@ func TestRetryGenerator_Generate_ContextCancelled_DuringBackoff(t *testing.T) {
 
 func TestRetryGenerator_Generate_ContextCancelled_BeforeFirstCall(t *testing.T) {
 	m := &mockGenerator{}
-	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 		t.Error("Generate should not have been called")
 		return gai.Response{}, nil
 	}
@@ -602,7 +591,7 @@ func TestRetryGenerator_Generate_ContextCancelled_BeforeFirstCall(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := rg.Generate(ctx, gai.Dialog{}, nil)
+	_, err := rg.Generate(ctx, gai.GenerationRequest{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Generate() error = %v, want %v", err, context.Canceled)
 	}
@@ -614,7 +603,7 @@ func TestRetryGenerator_Generate_ContextCancelled_BeforeFirstCall(t *testing.T) 
 func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxElapsedTime(t *testing.T) {
 	expectedErr := &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "persistent rate limit"}
 	m := &mockGenerator{}
-	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 		return gai.Response{}, expectedErr
 	}
 
@@ -630,7 +619,7 @@ func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxElapsedTime(t *testin
 
 	rg := gai.NewRetryGenerator(m, config)
 
-	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if !errors.Is(err, expectedErr) {
 		t.Fatalf("Generate() error = %v, want %v", err, expectedErr)
 	}
@@ -643,7 +632,7 @@ func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxTries(t *testing.T) {
 	expectedErr := &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "persistent rate limit again"}
 	m := &mockGenerator{}
 	var attempts uint
-	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 		attempts++
 		return gai.Response{}, expectedErr
 	}
@@ -654,7 +643,7 @@ func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxTries(t *testing.T) {
 	config.MaxElapsedTime = time.Second
 	rg := gai.NewRetryGenerator(m, config)
 
-	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if !errors.Is(err, expectedErr) {
 		t.Fatalf("Generate() error = %v, want %v", err, expectedErr)
 	}
@@ -668,13 +657,13 @@ func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxTries(t *testing.T) {
 
 func TestRetryGenerator_Stream_SuccessFirstAttempt(t *testing.T) {
 	m := &mockGenerator{
-		StreamFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) iter.Seq2[gai.StreamChunk, error] {
-			return func(yield func(gai.StreamChunk, error) bool) {
-				yield(gai.StreamChunk{Block: gai.TextBlock("Hello")}, nil)
+		StreamFunc: func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
+			return func(yield func(gai.StreamChunk) bool) {
+				yield(gai.StreamChunk{Block: gai.TextBlock("Hello")})
 			}
 		},
 	}
-	chunks, err := collectStream(gai.NewRetryGenerator(m, gai.RetryConfig{}).Stream(context.Background(), gai.Dialog{}, nil))
+	chunks, err := collectStream(gai.NewRetryGenerator(m, gai.RetryConfig{}).Stream(context.Background(), gai.GenerationRequest{}))
 	if err != nil {
 		t.Fatalf("Stream() error = %v, want nil", err)
 	}
@@ -696,21 +685,21 @@ func TestRetryGenerator_Stream_RetryAndSucceedBeforeFirstChunk(t *testing.T) {
 		RetryAfterDuration: &retryAfter,
 	}
 	m := &mockGenerator{}
-	m.StreamFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) iter.Seq2[gai.StreamChunk, error] {
+	m.StreamFunc = func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
 		attempt := m.streamCallCount
-		return func(yield func(gai.StreamChunk, error) bool) {
+		return func(yield func(gai.StreamChunk) bool) {
 			if attempt == 1 {
-				yield(gai.StreamChunk{}, retriableErr)
+				yield(gai.StreamChunk{Err: retriableErr})
 				return
 			}
-			yield(gai.StreamChunk{Block: gai.TextBlock("Success")}, nil)
+			yield(gai.StreamChunk{Block: gai.TextBlock("Success")})
 		}
 	}
 
 	config := constantRetryConfig(time.Minute)
 	config.MaxAttempts = 2
 	rg := gai.NewRetryGenerator(m, config)
-	chunks, err := collectStream(rg.Stream(context.Background(), gai.Dialog{}, nil))
+	chunks, err := collectStream(rg.Stream(context.Background(), gai.GenerationRequest{}))
 	if err != nil {
 		t.Fatalf("Stream() error = %v, want nil", err)
 	}
@@ -725,17 +714,17 @@ func TestRetryGenerator_Stream_RetryAndSucceedBeforeFirstChunk(t *testing.T) {
 func TestRetryGenerator_Stream_DoesNotRetryAfterFirstChunk(t *testing.T) {
 	retriableErr := &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindServer, StatusCode: http.StatusInternalServerError, Message: "temporary upstream failure"}
 	m := &mockGenerator{}
-	m.StreamFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) iter.Seq2[gai.StreamChunk, error] {
-		return func(yield func(gai.StreamChunk, error) bool) {
-			if !yield(gai.StreamChunk{Block: gai.TextBlock("partial")}, nil) {
+	m.StreamFunc = func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
+		return func(yield func(gai.StreamChunk) bool) {
+			if !yield(gai.StreamChunk{Block: gai.TextBlock("partial")}) {
 				return
 			}
-			yield(gai.StreamChunk{}, retriableErr)
+			yield(gai.StreamChunk{Err: retriableErr})
 		}
 	}
 
 	rg := gai.NewRetryGenerator(m, gai.RetryConfig{})
-	chunks, err := collectStream(rg.Stream(context.Background(), gai.Dialog{}, nil))
+	chunks, err := collectStream(rg.Stream(context.Background(), gai.GenerationRequest{}))
 	if !errors.Is(err, retriableErr) {
 		t.Fatalf("Stream() error = %v, want %v", err, retriableErr)
 	}
@@ -749,7 +738,7 @@ func TestRetryGenerator_Stream_DoesNotRetryAfterFirstChunk(t *testing.T) {
 
 func TestRetryGenerator_Stream_ContextCancelled_BeforeFirstAttempt(t *testing.T) {
 	m := &mockGenerator{}
-	m.StreamFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) iter.Seq2[gai.StreamChunk, error] {
+	m.StreamFunc = func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
 		t.Fatal("Stream should not have been called")
 		return nil
 	}
@@ -757,7 +746,7 @@ func TestRetryGenerator_Stream_ContextCancelled_BeforeFirstAttempt(t *testing.T)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	chunks, err := collectStream(gai.NewRetryGenerator(m, gai.RetryConfig{}).Stream(ctx, gai.Dialog{}, nil))
+	chunks, err := collectStream(gai.NewRetryGenerator(m, gai.RetryConfig{}).Stream(ctx, gai.GenerationRequest{}))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Stream() error = %v, want %v", err, context.Canceled)
 	}
@@ -774,7 +763,7 @@ func TestRetryGenerator_Stream_UnderlyingDoesNotImplementStreamingGenerator(t *t
 	underlying := &nonStreamingGenerator{Generator: &mockGenerator{}}
 	rg := gai.NewRetryGenerator(underlying, gai.RetryConfig{})
 
-	chunks, err := collectStream(rg.Stream(context.Background(), gai.Dialog{}, nil))
+	chunks, err := collectStream(rg.Stream(context.Background(), gai.GenerationRequest{}))
 	if err == nil {
 		t.Fatal("Stream() error = nil, want an error")
 	}
@@ -790,13 +779,13 @@ func TestRetryGenerator_Stream_UnderlyingDoesNotImplementStreamingGenerator(t *t
 func TestRetryGenerator_Count_UnderlyingImplementsTokenCounter(t *testing.T) {
 	expectedCount := uint(123)
 	m := &mockGenerator{
-		CountFunc: func(ctx context.Context, dialog gai.Dialog) (uint, error) {
+		CountFunc: func(ctx context.Context, request gai.GenerationRequest) (uint, error) {
 			return expectedCount, nil
 		},
 	}
 	rg := gai.NewRetryGenerator(m, gai.RetryConfig{})
 
-	count, err := rg.Count(context.Background(), gai.Dialog{})
+	count, err := rg.Count(context.Background(), gai.GenerationRequest{})
 	if err != nil {
 		t.Fatalf("Count() error = %v, wantErr false", err)
 	}
@@ -810,7 +799,7 @@ func TestRetryGenerator_Count_UnderlyingDoesNotImplementTokenCounter(t *testing.
 	underlying := &nonCountingGenerator{Generator: &mockGenerator{}}
 	rg := gai.NewRetryGenerator(underlying, gai.RetryConfig{})
 
-	_, err := rg.Count(context.Background(), gai.Dialog{})
+	_, err := rg.Count(context.Background(), gai.GenerationRequest{})
 	if err == nil {
 		t.Fatal("Count() error = nil, want an error")
 	}
@@ -823,7 +812,7 @@ func TestRetryGenerator_Count_UnderlyingDoesNotImplementTokenCounter(t *testing.
 func TestRetryGenerator_Generate_WithExplicitDefaultConfig(t *testing.T) {
 	m := &mockGenerator{}
 	callCount := 0
-	m.GenerateFunc = func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 		callCount++
 		if callCount < 2 {
 			return gai.Response{}, &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "transient error"}
@@ -832,7 +821,7 @@ func TestRetryGenerator_Generate_WithExplicitDefaultConfig(t *testing.T) {
 	}
 
 	rg := gai.NewRetryGenerator(m, gai.DefaultRetryConfig())
-	resp, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	resp, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if err != nil {
 		t.Fatalf("Generate() error = %v, wantErr %v", err, false)
 	}
@@ -849,7 +838,7 @@ func TestRetryGenerator_Generate_ContextCancelled_DuringOperation(t *testing.T) 
 	cancelDelay := 20 * time.Millisecond
 
 	m := &mockGenerator{
-		GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+		GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 			select {
 			case <-time.After(opDuration):
 				return gai.Response{}, errors.New("operation should have been cancelled")
@@ -863,7 +852,7 @@ func TestRetryGenerator_Generate_ContextCancelled_DuringOperation(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), cancelDelay)
 	defer cancel()
 
-	_, err := rg.Generate(ctx, gai.Dialog{}, nil)
+	_, err := rg.Generate(ctx, gai.GenerationRequest{})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Generate() error = %v, want %v", err, context.DeadlineExceeded)
 	}
@@ -875,13 +864,13 @@ func TestRetryGenerator_Generate_ContextCancelled_DuringOperation(t *testing.T) 
 func TestRetryGenerator_Generate_PermanentError_ContextCanceledByGenerator(t *testing.T) {
 	genErr := context.Canceled
 	m := &mockGenerator{
-		GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
+		GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 			return gai.Response{}, genErr
 		},
 	}
 	rg := gai.NewRetryGenerator(m, gai.RetryConfig{})
 
-	_, err := rg.Generate(context.Background(), gai.Dialog{}, nil)
+	_, err := rg.Generate(context.Background(), gai.GenerationRequest{})
 	if !errors.Is(err, genErr) {
 		t.Fatalf("Generate() error = %v, want %v", err, genErr)
 	}
@@ -890,73 +879,4 @@ func TestRetryGenerator_Generate_PermanentError_ContextCanceledByGenerator(t *te
 	}
 }
 
-// Ensure mockGenerator can satisfy the optional generator interfaces when its methods are implemented.
-var _ gai.ToolCallingGenerator = (*mockGenerator)(nil)
 var _ gai.StreamingGenerator = (*mockGenerator)(nil)
-
-func TestRetryGenerator_Register_UnderlyingImplementsToolCallingGenerator(t *testing.T) {
-	registeredTool := gai.Tool{Name: "test_tool"}
-	var receivedTool gai.Tool
-	var registerCalled bool
-
-	m := &mockGenerator{
-		RegisterFunc: func(tool gai.Tool) error {
-			registerCalled = true
-			receivedTool = tool
-			if tool.Name == "error_tool" {
-				return errors.New("registration failed")
-			}
-			return nil
-		},
-	}
-
-	rg := gai.NewRetryGenerator(m, gai.RetryConfig{})
-
-	err := rg.Register(registeredTool)
-	if err != nil {
-		t.Fatalf("Register() error = %v, wantErr false", err)
-	}
-	if !registerCalled {
-		t.Error("Expected underlying Register to be called")
-	}
-	if receivedTool.Name != registeredTool.Name {
-		t.Errorf("Register() tool.Name = %s, want %s", receivedTool.Name, registeredTool.Name)
-	}
-
-	registerCalled = false
-	errTool := gai.Tool{Name: "error_tool"}
-	err = rg.Register(errTool)
-	if err == nil {
-		t.Fatal("Register() error = nil, want an error")
-	}
-	if !registerCalled {
-		t.Error("Expected underlying Register to be called even on error")
-	}
-	if err.Error() != "registration failed" {
-		t.Errorf("Register() error = %q, want %q", err.Error(), "registration failed")
-	}
-}
-
-func TestRetryGenerator_Register_UnderlyingDoesNotImplementToolCallingGenerator(t *testing.T) {
-	type simpleGenerator struct{ gai.Generator }
-	underlyingGen := &simpleGenerator{
-		Generator: &mockGenerator{
-			GenerateFunc: func(ctx context.Context, dialog gai.Dialog, options *gai.GenOpts) (gai.Response, error) {
-				return gai.Response{}, nil
-			},
-		},
-	}
-
-	rg := gai.NewRetryGenerator(underlyingGen, gai.RetryConfig{})
-	toolToRegister := gai.Tool{Name: "test_tool"}
-
-	err := rg.Register(toolToRegister)
-	if err == nil {
-		t.Fatal("Register() error = nil, want an error for non-ToolCallingGenerator")
-	}
-
-	wantErrStr := fmt.Sprintf("inner generator of type %T does not implement ToolCallingGenerator", underlyingGen)
-	if err.Error() != wantErrStr {
-		t.Errorf("Register() error = %q, want %q", err.Error(), wantErrStr)
-	}
-}

@@ -44,7 +44,7 @@ const (
 // Reasoning Support:
 // OpenRouter supports reasoning tokens via the "reasoning" parameter with effort
 // levels ("low", "medium", "high") or max_tokens (as string). This generator:
-// 1. Sets reasoning config in requests via ThinkingBudget in GenOpts
+// 1. Sets reasoning config in requests via GenerationOptionThinkingBudget
 // 2. Extracts reasoning_details from responses as Thinking blocks with extra fields:
 //   - OpenRouterExtraFieldReasoningType
 //   - OpenRouterExtraFieldReasoningFormat
@@ -56,10 +56,7 @@ const (
 //
 // Note: Streaming is not yet implemented for this generator.
 type OpenRouterGenerator struct {
-	client             OpenAICompletionService
-	model              string
-	tools              map[string]oai.ChatCompletionToolUnionParam
-	systemInstructions string
+	client OpenAICompletionService
 }
 
 type openRouterErrorMetadata struct {
@@ -177,7 +174,76 @@ type openRouterReasoningDetail struct {
 	Index     int    `json:"index"`
 }
 
-// NewOpenRouterGenerator creates a new OpenRouter generator that uses the OpenAI SDK
+type openRouterGenerationOptions struct {
+	Temperature         *float64
+	TopP                *float64
+	FrequencyPenalty    *float64
+	PresencePenalty     *float64
+	CandidateCount      *uint
+	MaxGenerationTokens *int
+	ToolChoice          string
+	StopSequences       []string
+	ThinkingBudget      string
+}
+
+func parseOpenRouterGenerationOptions(values GenerationOptions) (*openRouterGenerationOptions, error) {
+	options := &openRouterGenerationOptions{}
+
+	temperature, ok, err := generationOption[float64](values, GenerationOptionTemperature)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.Temperature = &temperature
+	}
+	topP, ok, err := generationOption[float64](values, GenerationOptionTopP)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.TopP = &topP
+	}
+	frequencyPenalty, ok, err := generationOption[float64](values, GenerationOptionFrequencyPenalty)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.FrequencyPenalty = &frequencyPenalty
+	}
+	presencePenalty, ok, err := generationOption[float64](values, GenerationOptionPresencePenalty)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.PresencePenalty = &presencePenalty
+	}
+	candidateCount, ok, err := generationOption[uint](values, GenerationOptionCandidateCount)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.CandidateCount = &candidateCount
+	}
+	maxTokens, ok, err := generationOption[int](values, GenerationOptionMaxGenerationTokens)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.MaxGenerationTokens = &maxTokens
+	}
+	if options.ToolChoice, _, err = generationOption[string](values, GenerationOptionToolChoice); err != nil {
+		return nil, err
+	}
+	if options.StopSequences, _, err = generationOption[[]string](values, GenerationOptionStopSequences); err != nil {
+		return nil, err
+	}
+	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+		return nil, err
+	}
+	return options, nil
+}
+
+// NewOpenRouterGenerator creates a stateless OpenRouter generator that uses the OpenAI SDK
 // with OpenRouter-specific configuration. The baseURL should be "https://openrouter.ai/api/v1"
 // and the apiKey should be your OpenRouter API key.
 //
@@ -187,52 +253,9 @@ type openRouterReasoningDetail struct {
 //	    option.WithBaseURL("https://openrouter.ai/api/v1"),
 //	    option.WithAPIKey(os.Getenv("OPENROUTER_API_KEY")),
 //	)
-//	gen := NewOpenRouterGenerator(&client.Chat.Completions, "anthropic/claude-3.5-sonnet", "You are helpful")
-func NewOpenRouterGenerator(client OpenAICompletionService, model string, systemInstructions string) *OpenRouterGenerator {
-	return &OpenRouterGenerator{
-		client:             client,
-		model:              model,
-		systemInstructions: systemInstructions,
-		tools:              make(map[string]oai.ChatCompletionToolUnionParam),
-	}
-}
-
-// Register implements ToolRegister
-func (g *OpenRouterGenerator) Register(tool Tool) error {
-	// Validate tool name
-	if tool.Name == "" {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool name cannot be empty"),
-		}
-	}
-
-	// Check for special tool choice values
-	if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool name cannot be %s", tool.Name),
-		}
-	}
-
-	// Initialize tools map if needed
-	if g.tools == nil {
-		g.tools = make(map[string]oai.ChatCompletionToolUnionParam)
-	}
-
-	// Check for conflicts with existing tools
-	if _, exists := g.tools[tool.Name]; exists {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool already registered"),
-		}
-	}
-
-	// Convert our tool definition to OpenAI's format and store it
-	var err error
-	g.tools[tool.Name], err = convertToolToOpenAI(tool)
-
-	return err
+//	gen := NewOpenRouterGenerator(&client.Chat.Completions)
+func NewOpenRouterGenerator(client OpenAICompletionService) *OpenRouterGenerator {
+	return &OpenRouterGenerator{client: client}
 }
 
 // buildReasoningDetailsForRequest converts thinking blocks into OpenRouter's reasoning_details format
@@ -289,14 +312,26 @@ func buildReasoningDetailsForRequest(thinkingBlocks []Block) []openRouterReasoni
 }
 
 // Generate implements Generator
-func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (g *OpenRouterGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("openrouter: client not initialized")
 	}
 
-	// Check for empty dialog
+	dialog := request.Dialog
 	if len(dialog) == 0 {
 		return Response{}, ErrEmptyDialog
+	}
+	options, err := parseOpenRouterGenerationOptions(request.Options)
+	if err != nil {
+		return Response{}, err
+	}
+	tools, err := convertToolsToOpenAI(request.Tools)
+	if err != nil {
+		return Response{}, err
+	}
+	instructions, err := textInstructions(request.Instructions)
+	if err != nil {
+		return Response{}, err
 	}
 
 	// Convert each message to OpenAI format
@@ -337,14 +372,18 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 
 	// Create OpenAI chat completion params
 	params := oai.ChatCompletionNewParams{
-		Model:    g.model,
+		Model:    request.Model,
 		Messages: messages,
+		Tools:    tools,
 	}
 
-	// Add system instructions if present
-	if g.systemInstructions != "" {
+	if len(instructions) > 0 {
+		parts := make([]oai.ChatCompletionContentPartTextParam, 0, len(instructions))
+		for _, instruction := range instructions {
+			parts = append(parts, oai.ChatCompletionContentPartTextParam{Text: instruction})
+		}
 		params.Messages = append([]oai.ChatCompletionMessageParamUnion{
-			oai.SystemMessage(g.systemInstructions),
+			oai.SystemMessage(parts),
 		}, messages...)
 	}
 
@@ -376,8 +415,8 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 		}
 
 		// Set number of responses
-		if options.N != nil {
-			params.N = oai.Int(int64(*options.N))
+		if options.CandidateCount != nil {
+			params.N = oai.Int(int64(*options.CandidateCount))
 		}
 
 		// Set stop sequences if specified
@@ -403,13 +442,6 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, dialog Dialog, optio
 					Name: options.ToolChoice,
 				})
 			}
-		}
-	}
-
-	// Add tools if registered
-	if len(g.tools) > 0 {
-		for _, tool := range g.tools {
-			params.Tools = append(params.Tools, tool)
 		}
 	}
 

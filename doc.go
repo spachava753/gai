@@ -23,20 +23,29 @@
 //
 // # Core Concepts
 //
-// Generator: The core interface that all providers implement. It takes a Dialog and generates a Response.
+// Generator: The core interface that all providers implement. Each call receives a
+// self-contained GenerationRequest with its model, instructions, dialog, tools, and options.
 //
 //	type Generator interface {
-//		Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error)
+//		Generate(ctx context.Context, request GenerationRequest) (Response, error)
 //	}
 //
-// Each LLM provider (OpenAI, Anthropic, Gemini) has its own implementation of the Generator interface.
+//	type GenerationRequest struct {
+//		Model        string
+//		Instructions Message
+//		Dialog       Dialog
+//		Tools        []Tool
+//		Options      GenerationOptions
+//	}
+//
+// Provider generators store only execution dependencies such as clients and endpoints.
 //
 // Dialog: A conversation with a language model, represented as a slice of Message objects.
 //
 //	type Dialog []Message
 //
-// Message: A single exchange in the conversation, with a Role (User, Assistant, or ToolResult)
-// and a collection of Blocks.
+// Message: A single exchange or instruction, with a Role (User, Assistant,
+// ToolResult, or System) and a collection of Blocks.
 //
 //	type Message struct {
 //		Role   Role
@@ -108,12 +117,8 @@
 //		// Create an OpenAI client
 //		client := openai.NewClient()
 //
-//		// Create a generator with a specific model
-//		generator := gai.NewOpenAiGenerator(
-//			client.Chat.Completions,
-//			openai.ChatModelGPT4,
-//			"You are a helpful assistant.",
-//		)
+//		// Create a stateless generator. Model configuration belongs to each request.
+//		generator := gai.NewOpenAiGenerator(&client.Chat.Completions)
 //
 //		// Create a dialog with a user message
 //		dialog := gai.Dialog{
@@ -130,8 +135,11 @@
 //		}
 //
 //		// Generate a response
-//		response, err := generator.Generate(context.Background(), dialog, &gai.GenOpts{
-//			Temperature: Ptr(0.7),
+//		response, err := generator.Generate(context.Background(), gai.GenerationRequest{
+//			Model:        openai.ChatModelGPT4,
+//			Instructions: gai.SystemMessage(gai.TextBlock("You are a helpful assistant.")),
+//			Dialog:       dialog,
+//			Options:      gai.NewGenerationOptions(gai.WithTemperature(0.7)),
 //		})
 //		if err != nil {
 //			fmt.Printf("Error: %v\n", err)
@@ -155,21 +163,22 @@
 // # Prompt Caching with ResponsesGenerator
 //
 // The OpenAI Responses generator supports explicit prompt cache routing through
-// [GenOpts.ExtraArgs]. Set [ResponsesPromptCacheKeyParam] to a stable key for requests
+// GenerationOptions. Set [ResponsesPromptCacheKeyParam] to a stable key for requests
 // that share the same long static prompt prefix. Keep repeated instructions, schemas,
 // and tool definitions at the beginning of the prompt, and put request-specific content
 // near the end.
 //
 //	client := openai.NewClient()
-//	gen := gai.NewResponsesGenerator(
-//		&client.Responses,
-//		openai.ChatModelGPT5Mini,
-//		"You are a helpful assistant that summarizes support incidents.",
-//	)
-//	opts := &gai.GenOpts{ExtraArgs: map[string]any{
+//	gen := gai.NewResponsesGenerator(&client.Responses)
+//	options := gai.GenerationOptions{
 //		gai.ResponsesPromptCacheKeyParam: "support-incident-summary:v1",
-//	}}
-//	resp, err := gen.Generate(ctx, dialog, opts)
+//	}
+//	resp, err := gen.Generate(ctx, gai.GenerationRequest{
+//		Model:        openai.ChatModelGPT5Mini,
+//		Instructions: gai.SystemMessage(gai.TextBlock("You are a helpful assistant that summarizes support incidents.")),
+//		Dialog:       dialog,
+//		Options:      options,
+//	})
 //	if err != nil {
 //		fmt.Printf("Error: %v\n", err)
 //		return
@@ -180,15 +189,18 @@
 //
 // # Responses API Service Tiers
 //
-// Set [ResponsesServiceTierParam] in [GenOpts.ExtraArgs] to choose how OpenAI processes
+// Set [ResponsesServiceTierParam] in GenerationOptions to choose how OpenAI processes
 // a Responses API request. Supported values are "auto", "default", "flex", "scale",
 // and "priority". If omitted, OpenAI uses its default "auto" behavior. The option applies
 // to both Generate and Stream calls.
 //
-//	opts := &gai.GenOpts{ExtraArgs: map[string]any{
-//		gai.ResponsesServiceTierParam: "priority",
-//	}}
-//	resp, err := gen.Generate(ctx, dialog, opts)
+//	request := gai.GenerationRequest{
+//		Model:   openai.ChatModelGPT5Mini,
+//		Dialog:  dialog,
+//		Options: gai.GenerationOptions{},
+//	}
+//	request.Options[gai.ResponsesServiceTierParam] = "priority"
+//	resp, err := gen.Generate(ctx, request)
 //	if err != nil {
 //		fmt.Printf("Error: %v\n", err)
 //		return
@@ -196,29 +208,25 @@
 //
 // # Tool Usage Example
 //
-// Register tools directly on generators that implement [ToolCallingGenerator]. The
-// generator exposes tool calls in its response; applications own the execution loop so
-// they can apply authorization, validation, retries, tracing, and persistence policies
-// before appending tool results and asking the model to continue.
+// Tools are request data. The generator exposes tool calls in its response;
+// applications own execution so they can apply authorization, validation, retries,
+// tracing, and persistence before continuing the dialog.
 //
 //	client := openai.NewClient()
-//	gen := gai.NewOpenAiGenerator(
-//		client.Chat.Completions,
-//		openai.ChatModelGPT4,
-//		"You are a helpful assistant.",
-//	)
-//
-//	err := gen.Register(gai.Tool{
+//	gen := gai.NewOpenAiGenerator(&client.Chat.Completions)
+//	currentTimeTool := gai.Tool{
 //		Name:        "get_current_time",
 //		Description: "Get the current server time",
-//	})
-//	if err != nil {
-//		fmt.Printf("Error registering tool: %v\n", err)
-//		return
 //	}
-//
 //	dialog := gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("What time is it now?")}}}
-//	resp, err := gen.Generate(context.Background(), dialog, &gai.GenOpts{ToolChoice: gai.ToolChoiceAuto})
+//	request := gai.GenerationRequest{
+//		Model:        openai.ChatModelGPT4,
+//		Instructions: gai.SystemMessage(gai.TextBlock("You are a helpful assistant.")),
+//		Dialog:       dialog,
+//		Tools:        []gai.Tool{currentTimeTool},
+//		Options:      gai.NewGenerationOptions(gai.WithToolChoice(gai.ToolChoiceAuto)),
+//	}
+//	resp, err := gen.Generate(context.Background(), request)
 //	if err != nil {
 //		fmt.Printf("Error: %v\n", err)
 //		return
@@ -231,77 +239,38 @@
 //
 // # Fallback Strategy Example
 //
-// Implementing a fallback strategy between providers:
+// Fallback forwards one request unchanged, so every target must understand the
+// request's model identifier. This example uses two OpenAI-compatible endpoints:
 //
-//	package main
+//	primaryClient := openai.NewClient()
+//	backupClient := openai.NewClient() // Configure a separate endpoint or credential.
+//	primaryGen := gai.NewOpenAiGenerator(&primaryClient.Chat.Completions)
+//	backupGen := gai.NewOpenAiGenerator(&backupClient.Chat.Completions)
 //
-//	import (
-//		"context"
-//		"fmt"
-//		"github.com/anthropics/anthropic-sdk-go"
-//		"github.com/openai/openai-go/v3"
-//		"github.com/spachava753/gai"
+//	fallbackGen, err := gai.NewFallbackGenerator(
+//		[]gai.Generator{primaryGen, backupGen},
+//		nil,
 //	)
-//
-//	func main() {
-//		// Create clients for both providers
-//		openaiClient := openai.NewClient()
-//		anthropicClient := anthropic.NewClient()
-//
-//		// Create generators for each provider
-//		openaiGen := gai.NewOpenAiGenerator(
-//			openaiClient.Chat.Completions,
-//			openai.ChatModelGPT4,
-//			"You are a helpful assistant.",
-//		)
-//
-//		anthropicGen := gai.NewAnthropicGenerator(
-//			anthropicClient.Messages,
-//			"claude-3-opus-20240229",
-//			"You are a helpful assistant.",
-//		)
-//
-//		// Create a fallback generator that tries OpenAI first, then falls back to Anthropic
-//		fallbackGen, err := gai.NewFallbackGenerator(
-//			[]gai.Generator{&openaiGen, &anthropicGen},
-//			&gai.FallbackConfig{
-//				// Custom fallback condition: fall back on rate limits and 5xx errors
-//				ShouldFallback: gai.NewHTTPStatusFallbackConfig(429, 500, 502, 503, 504).ShouldFallback,
-//			},
-//		)
-//		if err != nil {
-//			fmt.Printf("Error creating fallback generator: %v\n", err)
-//			return
-//		}
-//
-//		// Create a dialog
-//		dialog := gai.Dialog{
-//			{
-//				Role: gai.User,
-//				Blocks: []gai.Block{
-//					{
-//						BlockType:    gai.Content,
-//						ModalityType: gai.Text,
-//						Content:      gai.Str("What is the meaning of life?"),
-//					},
-//				},
-//			},
-//		}
-//
-//		// Generate a response using the fallback strategy
-//		response, err := fallbackGen.Generate(context.Background(), dialog, &gai.GenOpts{
-//			Temperature: Ptr(0.7),
-//		})
-//		if err != nil {
-//			fmt.Printf("Error: %v\n", err)
-//			return
-//		}
-//
-//		// Print the response
-//		if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
-//			fmt.Println(response.Candidates[0].Blocks[0].Content)
-//		}
+//	if err != nil {
+//		fmt.Printf("Error creating fallback generator: %v\n", err)
+//		return
 //	}
+//
+//	request := gai.GenerationRequest{
+//		Model:        openai.ChatModelGPT4,
+//		Instructions: gai.SystemMessage(gai.TextBlock("You are a helpful assistant.")),
+//		Dialog: gai.Dialog{{
+//			Role:   gai.User,
+//			Blocks: []gai.Block{gai.TextBlock("What is the meaning of life?")},
+//		}},
+//		Options: gai.NewGenerationOptions(gai.WithTemperature(0.7)),
+//	}
+//	response, err := fallbackGen.Generate(context.Background(), request)
+//	if err != nil {
+//		fmt.Printf("Error: %v\n", err)
+//		return
+//	}
+//	fmt.Println(response.Candidates[0].Blocks[0].Content)
 //
 // # Retrying Transient Failures
 //
@@ -323,7 +292,7 @@
 //	retryingGenerator := gai.NewRetryGenerator(baseGenerator, config)
 //	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 //	defer cancel()
-//	response, err := retryingGenerator.Generate(ctx, dialog, nil)
+//	response, err := retryingGenerator.Generate(ctx, request)
 //
 // MaxElapsedTime is checked only between attempts; it cannot interrupt an in-flight provider
 // call. Use a context deadline, as above, for a hard wall-clock bound. Backoff and Notify can
@@ -410,11 +379,7 @@
 //
 //		// Create an OpenAI client and generator
 //		client := openai.NewClient()
-//		generator := gai.NewOpenAiGenerator(
-//			&client.Chat.Completions,
-//			openai.ChatModelGPT4o,
-//			"You are a helpful document analyst.",
-//		)
+//		generator := gai.NewOpenAiGenerator(&client.Chat.Completions)
 //
 //		// Create a dialog with PDF content
 //		dialog := gai.Dialog{
@@ -428,7 +393,11 @@
 //		}
 //
 //		// Generate a response
-//		response, err := generator.Generate(context.Background(), dialog, nil)
+//		response, err := generator.Generate(context.Background(), gai.GenerationRequest{
+//			Model:        openai.ChatModelGPT4o,
+//			Instructions: gai.SystemMessage(gai.TextBlock("You are a helpful document analyst.")),
+//			Dialog:       dialog,
+//		})
 //		if err != nil {
 //			fmt.Printf("Error: %v\n", err)
 //			return
@@ -458,11 +427,7 @@
 //	)
 //
 //	client := openai.NewClient()
-//	generator := gai.NewOpenAiGenerator(
-//		&client.Chat.Completions,
-//		openai.ChatModelGPT4,
-//		"System instructions here.",
-//	)
+//	generator := gai.NewOpenAiGenerator(&client.Chat.Completions)
 //
 // Anthropic: The Anthropic implementation supports text generation, image inputs
 // (including PDFs with special handling), and tool calling.
@@ -473,11 +438,7 @@
 //	)
 //
 //	client := anthropic.NewClient()
-//	generator := gai.NewAnthropicGenerator(
-//		&client.Messages,
-//		"claude-3-opus-20240229",
-//		"System instructions here.",
-//	)
+//	generator := gai.NewAnthropicGenerator(&client.Messages)
 //
 // Gemini: The Gemini implementation supports text generation, image inputs (including PDFs),
 // audio inputs, and tool calling.
@@ -490,11 +451,10 @@
 //	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 //		APIKey: "your-api-key",
 //	})
-//	generator, err := gai.NewGeminiGenerator(
-//		client,
-//		"gemini-1.5-pro",
-//		"System instructions here.",
-//	)
+//	generator := gai.NewGeminiGenerator(client)
+//
+// For every provider, set the model and system instructions on GenerationRequest.
+// Constructors retain only clients, credentials, endpoints, and other execution dependencies.
 //
 // # Error Handling
 //
@@ -512,7 +472,7 @@
 //
 // Example error handling:
 //
-//	response, err := generator.Generate(ctx, dialog, options)
+//	response, err := generator.Generate(ctx, request)
 //	if err != nil {
 //		switch {
 //		case errors.Is(err, gai.ErrMaxGenerationLimit):
@@ -537,31 +497,24 @@
 //
 // # Advanced Usage
 //
-// Tool Calling: Generators that implement [ToolCallingGenerator] can register tool
-// schemas and ask the provider to call those tools during generation. The library
-// keeps provider adapters focused on translating tool definitions and tool-call
-// blocks; applications remain responsible for executing tools and deciding how
-// results re-enter the dialog.
-//
-//	type ToolCallingGenerator interface {
-//		Generator
-//		ToolRegister
-//	}
+// Tool Calling: Put the complete set of tools available to one invocation in
+// GenerationRequest.Tools. Provider adapters validate and convert those definitions.
+// Applications execute approved calls and decide how results re-enter the dialog.
 //
 // Example:
 //
-//	// Create a base generator (OpenAI, Anthropic, or Gemini).
-//	gen := gai.NewOpenAiGenerator(...)
-//
-//	// Register tools with the provider adapter.
-//	gen.Register(weatherTool)
-//	gen.Register(stockPriceTool)
-//
-//	// Generate with tool support enabled.
-//	resp, err := gen.Generate(ctx, dialog, &gai.GenOpts{
-//		ToolChoice:  gai.ToolChoiceAuto,
-//		Temperature: Ptr(0.7),
-//	})
+//	gen := gai.NewOpenAiGenerator(&client.Chat.Completions)
+//	request := gai.GenerationRequest{
+//		Model:        openai.ChatModelGPT4,
+//		Instructions: gai.SystemMessage(gai.TextBlock("You are a helpful assistant.")),
+//		Dialog:       dialog,
+//		Tools:        []gai.Tool{weatherTool, stockPriceTool},
+//		Options: gai.NewGenerationOptions(
+//			gai.WithToolChoice(gai.ToolChoiceAuto),
+//			gai.WithTemperature(0.7),
+//		),
+//	}
+//	resp, err := gen.Generate(ctx, request)
 //
 //	// When resp.FinishReason is ToolUse, inspect ToolCall blocks, execute the
 //	// corresponding application callbacks, append ToolResultMessage values, and
@@ -583,9 +536,7 @@
 //
 // Example:
 //
-//	primaryGen := gai.NewOpenAiGenerator(...)
-//	backupGen := gai.NewAnthropicGenerator(...)
-//
+//	// primaryGen and backupGen must both understand request.Model.
 //	fallbackGen, err := gai.NewFallbackGenerator(
 //		[]gai.Generator{primaryGen, backupGen},
 //		&gai.FallbackConfig{

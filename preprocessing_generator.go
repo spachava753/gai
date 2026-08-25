@@ -2,7 +2,6 @@ package gai
 
 import (
 	"context"
-	"fmt"
 	"iter"
 )
 
@@ -101,8 +100,7 @@ func preprocessToolResults(dialog Dialog) Dialog {
 	return result
 }
 
-// PreprocessingGenerator is a transparent wrapper for any ToolCallingGenerator that
-// automatically preprocesses the dialog before every Generate call.
+// PreprocessingGenerator is a transparent wrapper that automatically preprocesses the dialog before every Generate call.
 //
 // Specifically, it consolidates parallel tool result messages into the format required by
 // LLM providers such as Anthropic and Gemini, which expect parallel tool results to be
@@ -116,32 +114,27 @@ type PreprocessingGenerator struct {
 	GeneratorWrapper
 }
 
-var _ ToolCallingGenerator = (*PreprocessingGenerator)(nil)
+var _ Generator = (*PreprocessingGenerator)(nil)
 var _ TokenCounter = (*PreprocessingGenerator)(nil)
 
-func (p *PreprocessingGenerator) Generate(ctx context.Context, dialog Dialog, opts *GenOpts) (Response, error) {
-	processed := preprocessToolResults(dialog)
-	return p.Inner.Generate(ctx, processed, opts)
+func (p *PreprocessingGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
+	request.Dialog = preprocessToolResults(request.Dialog)
+	return p.Inner.Generate(ctx, request)
 }
 
-func (p *PreprocessingGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
-	processed := preprocessToolResults(dialog)
+func (p *PreprocessingGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
+	request.Dialog = preprocessToolResults(request.Dialog)
 	if g, ok := p.Inner.(StreamingGenerator); ok {
-		return g.Stream(ctx, processed, options)
+		return g.Stream(ctx, request)
 	}
 	panic("inner generator does not implement StreamingGenerator")
 }
 
-// WithPreprocessing returns a WrapperFunc that wraps a ToolCallingGenerator
-// with preprocessing logic. Panics if the inner generator is not a ToolCallingGenerator.
+// WithPreprocessing returns a WrapperFunc that applies tool-result preprocessing.
 func WithPreprocessing() WrapperFunc {
 	return func(g Generator) Generator {
-		tcg, ok := g.(ToolCallingGenerator)
-		if !ok {
-			panic(fmt.Sprintf("WithPreprocessing requires ToolCallingGenerator, got %T", g))
-		}
 		return &PreprocessingGenerator{
-			GeneratorWrapper: GeneratorWrapper{Inner: tcg},
+			GeneratorWrapper: GeneratorWrapper{Inner: g},
 		}
 	}
 }

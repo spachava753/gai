@@ -231,10 +231,7 @@ func TestGeminiAPIErrorMapping(t *testing.T) {
 				t.Fatalf("Failed to create Gemini client: %v", err)
 			}
 
-			generator, err := NewGeminiGenerator(client, "test-model", "test instructions")
-			if err != nil {
-				t.Fatalf("Failed to create Gemini generator: %v", err)
-			}
+			generator := NewGeminiGenerator(client)
 
 			dialog := Dialog{{
 				Role: User,
@@ -246,7 +243,11 @@ func TestGeminiAPIErrorMapping(t *testing.T) {
 				}},
 			}}
 
-			_, err = generator.Generate(context.Background(), dialog, nil)
+			_, err = generator.Generate(context.Background(), GenerationRequest{
+				Model:        "test-model",
+				Instructions: SystemMessage(TextBlock("test instructions")),
+				Dialog:       dialog,
+			})
 
 			tc.errChecker(t, err)
 		})

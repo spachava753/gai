@@ -13,6 +13,27 @@ import (
 	"strings"
 )
 
+const openAIStockInstructions = `You are a helpful assistant that returns the price of a stock and nothing else.
+Only output the price, like
+<example>
+435.56
+</example>
+<example>
+3235.55
+</example>
+`
+
+const openAIStockComparisonInstructions = `You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater.
+Only mentioned the ticker and nothing else.
+Only output the price, like
+<example>
+User: Which one is more expensive? Apple or NVidia?
+Assistant: calls get_stock_price for both Apple and Nvidia
+Tool Result: Apple: 123.45; Nvidia: 345.65
+Assistant: Nvidia
+</example>
+`
+
 func TestToOpenAIMessage(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -377,11 +398,7 @@ func TestOpenAiGenerator_Generate_image(t *testing.T) {
 	client := oai.NewClient(
 		option.WithAPIKey(apiKey),
 	)
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		oai.ChatModelGPT4o,
-		"You are a helpful assistant.",
-	)
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -400,7 +417,12 @@ func TestOpenAiGenerator_Generate_image(t *testing.T) {
 			},
 		},
 	}
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(512)})
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:        oai.ChatModelGPT4o,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+		Options:      NewGenerationOptions(WithMaxGenerationTokens(512)),
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -426,11 +448,7 @@ func TestOpenAiGenerator_Generate_audio(t *testing.T) {
 	client := oai.NewClient(
 		option.WithAPIKey(apiKey),
 	)
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		oai.ChatModelGPT4oAudioPreview,
-		"You are a helpful assistant.",
-	)
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	// Using inline audio data
 	dialog := Dialog{
 		{
@@ -450,8 +468,11 @@ func TestOpenAiGenerator_Generate_audio(t *testing.T) {
 			},
 		},
 	}
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{
-		MaxGenerationTokens: Ptr(128),
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:        oai.ChatModelGPT4oAudioPreview,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+		Options:      NewGenerationOptions(WithMaxGenerationTokens(128)),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -469,7 +490,7 @@ func TestOpenAiGenerator_Generate(t *testing.T) {
 		option.WithAPIKey(apiKey),
 	)
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions, oai.ChatModelGPT4oMini, "You are a helpful assistant")
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -482,19 +503,24 @@ func TestOpenAiGenerator_Generate(t *testing.T) {
 			},
 		},
 	}
+	request := GenerationRequest{
+		Model:        oai.ChatModelGPT4oMini,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+	}
 	// Generate a response
-	resp, err := gen.Generate(context.Background(), dialog, nil)
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// The exact response text may vary, so we'll just print a placeholder
 	// Customize generation parameters
-	opts := GenOpts{
-		TopK:                Ptr[uint](10),
-		N:                   Ptr[uint](2), // Set N to a value higher than 1 to generate multiple responses in a single request
-		MaxGenerationTokens: Ptr(1024),
-	}
-	resp, err = gen.Generate(context.Background(), dialog, &opts)
+	request.Options = NewGenerationOptions(
+		WithTopK(10),
+		WithCandidateCount(2),
+		WithMaxGenerationTokens(1024),
+	)
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -509,7 +535,7 @@ func TestOpenAiGenerator_Stream(t *testing.T) {
 		option.WithAPIKey(apiKey),
 	)
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions, oai.ChatModelGPT4oMini, "You are a helpful assistant")
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -524,9 +550,14 @@ func TestOpenAiGenerator_Stream(t *testing.T) {
 	}
 	// Stream a response
 	blocks := make([][]Block, 2)
-	for chunk, err := range gen.Stream(context.Background(), dialog, &GenOpts{N: Ptr[uint](2)}) {
-		if err != nil {
-			t.Fatalf("stream returned error: %v", err)
+	for chunk := range gen.Stream(context.Background(), GenerationRequest{
+		Model:        oai.ChatModelGPT4oMini,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+		Options:      NewGenerationOptions(WithCandidateCount(2)),
+	}) {
+		if chunk.Err != nil {
+			t.Fatalf("stream returned error: %v", chunk.Err)
 		}
 		blocks[chunk.CandidatesIndex] = append(blocks[chunk.CandidatesIndex], chunk.Block)
 	}
@@ -540,11 +571,7 @@ func TestOpenAiGenerator_Generate_openRouter(t *testing.T) {
 		option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
 	)
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		"google/gemini-2.5-pro-preview-03-25",
-		"You are a helpful assistant",
-	)
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -557,12 +584,13 @@ func TestOpenAiGenerator_Generate_openRouter(t *testing.T) {
 			},
 		},
 	}
-	// Customize generation parameters
-	opts := GenOpts{
-		MaxGenerationTokens: Ptr(1024),
-	}
 	// Generate a response
-	resp, err := gen.Generate(context.Background(), dialog, &opts)
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:        "google/gemini-2.5-pro-preview-03-25",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+		Options:      NewGenerationOptions(WithMaxGenerationTokens(1024)),
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -572,10 +600,11 @@ func TestOpenAiGenerator_Generate_openRouter(t *testing.T) {
 	}
 }
 func TestOpenAiGenerator_Generate_thinking(t *testing.T) {
+	requireLiveAPIKey(t, "OPENAI_API_KEY")
 	// Create an OpenAI client
 	client := oai.NewClient()
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions, oai.ChatModelO3Mini, "You are a helpful assistant")
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -589,13 +618,18 @@ func TestOpenAiGenerator_Generate_thinking(t *testing.T) {
 		},
 	}
 	// Customize generation parameters
-	opts := GenOpts{
-		MaxGenerationTokens: Ptr(4096),
-		ThinkingBudget:      "low",
-		Temperature:         Ptr(1.0),
+	request := GenerationRequest{
+		Model:        oai.ChatModelO3Mini,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+		Options: NewGenerationOptions(
+			WithMaxGenerationTokens(4096),
+			WithThinkingBudget("low"),
+			WithTemperature(1.0),
+		),
 	}
 	// Generate a response
-	resp, err := gen.Generate(context.Background(), dialog, &opts)
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -610,7 +644,8 @@ func TestOpenAiGenerator_Generate_thinking(t *testing.T) {
 			},
 		},
 	})
-	resp, err = gen.Generate(context.Background(), dialog, &opts)
+	request.Dialog = dialog
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -618,24 +653,12 @@ func TestOpenAiGenerator_Generate_thinking(t *testing.T) {
 		t.Fatal("expected at least one item")
 	}
 }
-func TestOpenAiGenerator_Register(t *testing.T) {
+func TestOpenAiGenerator_RequestTools(t *testing.T) {
+	requireLiveAPIKey(t, "OPENAI_API_KEY")
 	// Create an OpenAI client
 	client := oai.NewClient(option.WithBaseURL("https://gateway.ai.cloudflare.com/v1/4eee6dd2fdc8cebc7802c5a638f460fe/cpe/openai/"))
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		oai.ChatModelGPT4oMini,
-		`You are a helpful assistant that returns the price of a stock and nothing else.
-Only output the price, like
-<example>
-435.56
-</example>
-<example>
-3235.55
-</example>
-`,
-	)
-	// Register tools
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -649,9 +672,6 @@ Only output the price, like
 			return schema
 		}(),
 	}
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	dialog := Dialog{
 		{
 			Role: User,
@@ -664,12 +684,15 @@ Only output the price, like
 			},
 		},
 	}
-	// Customize generation parameters
-	opts := GenOpts{
-		ToolChoice: "get_stock_price", // Can specify a specific tool to force invoke
+	request := GenerationRequest{
+		Model:        oai.ChatModelGPT4oMini,
+		Instructions: SystemMessage(TextBlock(openAIStockInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+		Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
 	}
 	// Generate a response
-	resp, err := gen.Generate(context.Background(), dialog, &opts)
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -686,7 +709,9 @@ Only output the price, like
 			},
 		},
 	})
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	request.Options = nil
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -700,7 +725,7 @@ func TestOpenAiGenerator_Stream_parallelToolUse(t *testing.T) {
 	client := oai.NewClient(
 		option.WithAPIKey(apiKey),
 	)
-	// Register tools
+	// Define request tools
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -715,12 +740,8 @@ func TestOpenAiGenerator_Stream_parallelToolUse(t *testing.T) {
 		}(),
 	}
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions, oai.ChatModelGPT4oMini, "You are a helpful assistant")
-	// Register tools
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	tickerTool.Description += "\nYou can call this tool in parallel"
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	dialog := Dialog{
 		{
 			Role: User,
@@ -733,11 +754,17 @@ func TestOpenAiGenerator_Stream_parallelToolUse(t *testing.T) {
 			},
 		},
 	}
+	request := GenerationRequest{
+		Model:        oai.ChatModelGPT4oMini,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+	}
 	// Stream a response
 	var blocks []Block
-	for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
-		if err != nil {
-			t.Fatalf("stream returned error: %v", err)
+	for chunk := range gen.Stream(context.Background(), request) {
+		if chunk.Err != nil {
+			t.Fatalf("stream returned error: %v", chunk.Err)
 		}
 		blocks = append(blocks, chunk.Block)
 	}
@@ -820,19 +847,21 @@ func TestOpenAiGenerator_Stream_parallelToolUse(t *testing.T) {
 	})
 	// Stream a response
 	blocks = nil
-	for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
-		if err != nil {
-			t.Fatalf("stream returned error: %v", err)
+	request.Dialog = dialog
+	for chunk := range gen.Stream(context.Background(), request) {
+		if chunk.Err != nil {
+			t.Fatalf("stream returned error: %v", chunk.Err)
 		}
 		blocks = append(blocks, chunk.Block)
 	}
 	if len(blocks) > 1 {
 	}
 }
-func TestOpenAiGenerator_Register_parallelToolUse(t *testing.T) {
+func TestOpenAiGenerator_RequestTools_parallelToolUse(t *testing.T) {
+	requireLiveAPIKey(t, "OPENAI_API_KEY")
 	// Create an OpenAI client
 	client := oai.NewClient()
-	// Register tools
+	// Define request tools
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -847,25 +876,8 @@ func TestOpenAiGenerator_Register_parallelToolUse(t *testing.T) {
 		}(),
 	}
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		oai.ChatModelGPT4oMini,
-		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater.
-Only mentioned the ticker and nothing else.
-Only output the price, like
-<example>
-User: Which one is more expensive? Apple or NVidia?
-Assistant: calls get_stock_price for both Apple and Nvidia
-Tool Result: Apple: 123.45; Nvidia: 345.65
-Assistant: Nvidia
-</example>
-`,
-	)
-	// Register tools
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	tickerTool.Description += "\nYou can call this tool in parallel"
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	dialog := Dialog{
 		{
 			Role: User,
@@ -878,8 +890,14 @@ Assistant: Nvidia
 			},
 		},
 	}
+	request := GenerationRequest{
+		Model:        oai.ChatModelGPT4oMini,
+		Instructions: SystemMessage(TextBlock(openAIStockComparisonInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+	}
 	// Generate a response
-	resp, err := gen.Generate(context.Background(), dialog, nil)
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -908,7 +926,9 @@ Assistant: Nvidia
 			},
 		},
 	})
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	request.Options = nil
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -916,8 +936,8 @@ Assistant: Nvidia
 		t.Fatal("expected non-empty content")
 	}
 }
-func TestOpenAiGenerator_Register_openRouter(t *testing.T) {
-	// Register tools
+func TestOpenAiGenerator_RequestTools_openRouter(t *testing.T) {
+	// Define request tools
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -937,22 +957,7 @@ func TestOpenAiGenerator_Register_openRouter(t *testing.T) {
 		option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
 	)
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		"google/gemini-2.5-pro-preview-03-25",
-		`You are a helpful assistant that returns the price of a stock and nothing else.
-Only output the price, like
-<example>
-435.56
-</example>
-<example>
-3235.55
-</example>
-`,
-	)
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -965,12 +970,15 @@ Only output the price, like
 			},
 		},
 	}
-	// Customize generation parameters
-	opts := GenOpts{
-		ToolChoice: "get_stock_price", // Can specify a specific tool to force invoke
+	request := GenerationRequest{
+		Model:        "google/gemini-2.5-pro-preview-03-25",
+		Instructions: SystemMessage(TextBlock(openAIStockInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+		Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
 	}
 	// Generate a response
-	resp, err := gen.Generate(context.Background(), dialog, &opts)
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -987,7 +995,9 @@ Only output the price, like
 			},
 		},
 	})
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	request.Options = nil
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -995,13 +1005,13 @@ Only output the price, like
 		t.Fatal("expected non-empty content")
 	}
 }
-func TestOpenAiGenerator_Register_openRouterParallelToolUse(t *testing.T) {
+func TestOpenAiGenerator_RequestTools_openRouterParallelToolUse(t *testing.T) {
 	// Create an OpenAI client
 	client := oai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1/"),
 		option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
 	)
-	// Register tools
+	// Define request tools
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -1016,24 +1026,7 @@ func TestOpenAiGenerator_Register_openRouterParallelToolUse(t *testing.T) {
 		}(),
 	}
 	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		"google/gemini-2.5-pro-preview-03-25",
-		`You are a helpful assistant that compares the price of two stocks and returns the ticker of whichever is greater.
-Only mentioned the ticker and nothing else.
-Only output the price, like
-<example>
-User: Which one is more expensive? Apple or NVidia?
-Assistant: calls get_stock_price for both Apple and Nvidia
-Tool Result: Apple: 123.45; Nvidia: 345.65
-Assistant: Nvidia
-</example>
-`,
-	)
-	// Register tools
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -1046,8 +1039,14 @@ Assistant: Nvidia
 			},
 		},
 	}
+	request := GenerationRequest{
+		Model:        "google/gemini-2.5-pro-preview-03-25",
+		Instructions: SystemMessage(TextBlock(openAIStockComparisonInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+	}
 	// Generate a response
-	resp, err := gen.Generate(context.Background(), dialog, nil)
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1076,7 +1075,9 @@ Assistant: Nvidia
 			},
 		},
 	})
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	request.Options = nil
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1088,11 +1089,7 @@ func TestOpenAiGenerator_Count_Example(t *testing.T) {
 	// Create an OpenAI client
 	client := oai.NewClient()
 	// Create a generator
-	generator := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		oai.ChatModelGPT4o,
-		"You are a helpful assistant.",
-	)
+	generator := NewOpenAiGenerator(&client.Chat.Completions)
 	// Create a dialog with a user message
 	dialog := Dialog{
 		{
@@ -1106,8 +1103,13 @@ func TestOpenAiGenerator_Count_Example(t *testing.T) {
 			},
 		},
 	}
+	request := GenerationRequest{
+		Model:        oai.ChatModelGPT4o,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+	}
 	// Count tokens in the dialog
-	tokenCount, err := generator.Count(context.Background(), dialog)
+	tokenCount, err := generator.Count(context.Background(), request)
 	if err != nil {
 		t.Fatalf("count tokens: %v", err)
 	}
@@ -1125,8 +1127,9 @@ func TestOpenAiGenerator_Count_Example(t *testing.T) {
 			},
 		},
 	})
+	request.Dialog = dialog
 	// Count tokens in the updated dialog
-	tokenCount, err = generator.Count(context.Background(), dialog)
+	tokenCount, err = generator.Count(context.Background(), request)
 	if err != nil {
 		t.Fatalf("count tokens: %v", err)
 	}
@@ -1144,11 +1147,7 @@ func TestOpenAiGenerator_Generate_pdf(t *testing.T) {
 	client := oai.NewClient(
 		option.WithAPIKey(apiKey),
 	)
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		oai.ChatModelGPT4_1,
-		"You are a helpful assistant.",
-	)
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	// Create a dialog with PDF content
 	dialog := Dialog{
 		{
@@ -1161,7 +1160,11 @@ func TestOpenAiGenerator_Generate_pdf(t *testing.T) {
 	}
 	// Generate a response
 	ctx := context.Background()
-	response, err := gen.Generate(ctx, dialog, nil)
+	response, err := gen.Generate(ctx, GenerationRequest{
+		Model:        oai.ChatModelGPT4_1,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

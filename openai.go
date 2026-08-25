@@ -94,10 +94,7 @@ func init() {
 
 // OpenAiGenerator implements the gai.Generator interface using OpenAI's API
 type OpenAiGenerator struct {
-	client             OpenAICompletionService
-	model              string
-	tools              map[string]oai.ChatCompletionToolUnionParam
-	systemInstructions string
+	client OpenAICompletionService
 }
 
 // convertToolToOpenAI converts our tool definition to OpenAI's format
@@ -127,6 +124,107 @@ func convertToolToOpenAI(tool Tool) (oai.ChatCompletionToolUnionParam, error) {
 		Description: oai.String(tool.Description),
 		Parameters:  parameters,
 	}), nil
+}
+
+func convertToolsToOpenAI(tools []Tool) ([]oai.ChatCompletionToolUnionParam, error) {
+	converted := make([]oai.ChatCompletionToolUnionParam, 0, len(tools))
+	seen := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		if tool.Name == "" {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be empty")}
+		}
+		if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be %s", tool.Name)}
+		}
+		if _, exists := seen[tool.Name]; exists {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool already provided")}
+		}
+		seen[tool.Name] = struct{}{}
+
+		providerTool, err := convertToolToOpenAI(tool)
+		if err != nil {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: err}
+		}
+		converted = append(converted, providerTool)
+	}
+	return converted, nil
+}
+
+type openAIGenerationOptions struct {
+	Temperature         *float64
+	TopP                *float64
+	FrequencyPenalty    *float64
+	PresencePenalty     *float64
+	CandidateCount      *uint
+	MaxGenerationTokens *int
+	ToolChoice          string
+	StopSequences       []string
+	OutputModalities    []Modality
+	AudioConfig         AudioConfig
+	ThinkingBudget      string
+}
+
+func parseOpenAIGenerationOptions(values GenerationOptions) (*openAIGenerationOptions, error) {
+	options := &openAIGenerationOptions{}
+
+	temperature, ok, err := generationOption[float64](values, GenerationOptionTemperature)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.Temperature = &temperature
+	}
+	topP, ok, err := generationOption[float64](values, GenerationOptionTopP)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.TopP = &topP
+	}
+	frequencyPenalty, ok, err := generationOption[float64](values, GenerationOptionFrequencyPenalty)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.FrequencyPenalty = &frequencyPenalty
+	}
+	presencePenalty, ok, err := generationOption[float64](values, GenerationOptionPresencePenalty)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.PresencePenalty = &presencePenalty
+	}
+	candidateCount, ok, err := generationOption[uint](values, GenerationOptionCandidateCount)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.CandidateCount = &candidateCount
+	}
+	maxTokens, ok, err := generationOption[int](values, GenerationOptionMaxGenerationTokens)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.MaxGenerationTokens = &maxTokens
+	}
+	if options.ToolChoice, _, err = generationOption[string](values, GenerationOptionToolChoice); err != nil {
+		return nil, err
+	}
+	if options.StopSequences, _, err = generationOption[[]string](values, GenerationOptionStopSequences); err != nil {
+		return nil, err
+	}
+	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
+		return nil, err
+	}
+	if options.AudioConfig, _, err = generationOption[AudioConfig](values, GenerationOptionAudioConfig); err != nil {
+		return nil, err
+	}
+	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+		return nil, err
+	}
+	return options, nil
 }
 
 // toOpenAIMessage converts a gai.Message to an OpenAI chat message.
@@ -346,53 +444,27 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 	}
 }
 
-// Register implements gai.ToolRegister
-func (g *OpenAiGenerator) Register(tool Tool) error {
-	// Validate tool name
-	if tool.Name == "" {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool name cannot be empty"),
-		}
-	}
-
-	// Check for special tool choice values
-	if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool name cannot be %s", tool.Name),
-		}
-	}
-
-	// Initialize tools map if needed
-	if g.tools == nil {
-		g.tools = make(map[string]oai.ChatCompletionToolUnionParam)
-	}
-
-	// Check for conflicts with existing tools
-	if _, exists := g.tools[tool.Name]; exists {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool already registered"),
-		}
-	}
-
-	// Convert our tool definition to OpenAI's format and store it
-	var err error
-	g.tools[tool.Name], err = convertToolToOpenAI(tool)
-
-	return err
-}
-
 // Generate implements gai.Generator
-func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("openai: client not initialized")
 	}
 
-	// Check for empty dialog
+	dialog := request.Dialog
 	if len(dialog) == 0 {
 		return Response{}, ErrEmptyDialog
+	}
+	options, err := parseOpenAIGenerationOptions(request.Options)
+	if err != nil {
+		return Response{}, err
+	}
+	tools, err := convertToolsToOpenAI(request.Tools)
+	if err != nil {
+		return Response{}, err
+	}
+	instructions, err := textInstructions(request.Instructions)
+	if err != nil {
+		return Response{}, err
 	}
 
 	// Convert each message to OpenAI format
@@ -407,14 +479,17 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 
 	// Create OpenAI chat completion params
 	params := oai.ChatCompletionNewParams{
-		Model:    g.model,
+		Model:    request.Model,
 		Messages: messages,
 	}
 
-	// Add system instructions if present
-	if g.systemInstructions != "" {
+	if len(instructions) > 0 {
+		parts := make([]oai.ChatCompletionContentPartTextParam, 0, len(instructions))
+		for _, instruction := range instructions {
+			parts = append(parts, oai.ChatCompletionContentPartTextParam{Text: instruction})
+		}
 		params.Messages = append([]oai.ChatCompletionMessageParamUnion{
-			oai.SystemMessage(g.systemInstructions),
+			oai.SystemMessage(parts),
 		}, messages...)
 	}
 
@@ -446,8 +521,8 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		}
 
 		// Set number of completions if specified
-		if options.N != nil {
-			params.N = oai.Int(int64(*options.N))
+		if options.CandidateCount != nil {
+			params.N = oai.Int(int64(*options.CandidateCount))
 		}
 
 		// Set stop sequences if specified
@@ -526,12 +601,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 		}
 	}
 
-	// Add tools if any are registered
-	if len(g.tools) > 0 {
-		var tools []oai.ChatCompletionToolUnionParam
-		for _, tool := range g.tools {
-			tools = append(tools, tool)
-		}
+	if len(tools) > 0 {
 		params.Tools = tools
 	}
 
@@ -674,16 +744,31 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, dialog Dialog, options *
 	return result, nil
 }
 
-func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
-	return func(yield func(StreamChunk, error) bool) {
+func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
+	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {
-			yield(StreamChunk{}, fmt.Errorf("openai: client not initialized"))
+			yield(StreamChunk{Err: fmt.Errorf("openai: client not initialized")})
 			return
 		}
 
-		// Check for empty dialog
+		dialog := request.Dialog
 		if len(dialog) == 0 {
-			yield(StreamChunk{}, ErrEmptyDialog)
+			yield(StreamChunk{Err: ErrEmptyDialog})
+			return
+		}
+		options, err := parseOpenAIGenerationOptions(request.Options)
+		if err != nil {
+			yield(StreamChunk{Err: err})
+			return
+		}
+		tools, err := convertToolsToOpenAI(request.Tools)
+		if err != nil {
+			yield(StreamChunk{Err: err})
+			return
+		}
+		instructions, err := textInstructions(request.Instructions)
+		if err != nil {
+			yield(StreamChunk{Err: err})
 			return
 		}
 
@@ -692,7 +777,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		for _, msg := range dialog {
 			oaiMsg, err := toOpenAIMessage(msg)
 			if err != nil {
-				yield(StreamChunk{}, fmt.Errorf("failed to convert message: %w", err))
+				yield(StreamChunk{Err: fmt.Errorf("failed to convert message: %w", err)})
 				return
 			}
 			messages = append(messages, oaiMsg)
@@ -700,14 +785,17 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 		// Create OpenAI chat completion params
 		params := oai.ChatCompletionNewParams{
-			Model:    g.model,
+			Model:    request.Model,
 			Messages: messages,
 		}
 
-		// Add system instructions if present
-		if g.systemInstructions != "" {
+		if len(instructions) > 0 {
+			parts := make([]oai.ChatCompletionContentPartTextParam, 0, len(instructions))
+			for _, instruction := range instructions {
+				parts = append(parts, oai.ChatCompletionContentPartTextParam{Text: instruction})
+			}
 			params.Messages = append([]oai.ChatCompletionMessageParamUnion{
-				oai.SystemMessage(g.systemInstructions),
+				oai.SystemMessage(parts),
 			}, messages...)
 		}
 
@@ -739,8 +827,8 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			}
 
 			// Set number of completions if specified
-			if options.N != nil {
-				params.N = oai.Int(int64(*options.N))
+			if options.CandidateCount != nil {
+				params.N = oai.Int(int64(*options.CandidateCount))
 			}
 
 			// Set stop sequences if specified
@@ -783,10 +871,10 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 						modalities = append(modalities, "audio")
 						hasAudio = true
 					case Image:
-						yield(StreamChunk{}, UnsupportedOutputModalityErr("image output not supported by model"))
+						yield(StreamChunk{Err: UnsupportedOutputModalityErr("image output not supported by model")})
 						return
 					case Video:
-						yield(StreamChunk{}, UnsupportedOutputModalityErr("video output not supported by model"))
+						yield(StreamChunk{Err: UnsupportedOutputModalityErr("video output not supported by model")})
 						return
 					}
 				}
@@ -795,17 +883,17 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 				// Set audio configuration if audio output is requested
 				if hasAudio {
 					if options.AudioConfig.VoiceName == "" {
-						yield(StreamChunk{}, InvalidParameterErr{
+						yield(StreamChunk{Err: InvalidParameterErr{
 							Parameter: "AudioConfig.VoiceName",
 							Reason:    "voice name is required for audio output",
-						})
+						}})
 						return
 					}
 					if options.AudioConfig.Format == "" {
-						yield(StreamChunk{}, InvalidParameterErr{
+						yield(StreamChunk{Err: InvalidParameterErr{
 							Parameter: "AudioConfig.Format",
 							Reason:    "format is required for audio output",
-						})
+						}})
 						return
 					}
 					params.Audio = oai.ChatCompletionAudioParam{
@@ -822,12 +910,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 			}
 		}
 
-		// Add tools if any are registered
-		if len(g.tools) > 0 {
-			var tools []oai.ChatCompletionToolUnionParam
-			for _, tool := range g.tools {
-				tools = append(tools, tool)
-			}
+		if len(tools) > 0 {
 			params.Tools = tools
 		}
 
@@ -861,15 +944,15 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 
 			switch chunk.Choices[0].FinishReason {
 			case "length":
-				yield(StreamChunk{}, ErrMaxGenerationLimit)
+				yield(StreamChunk{Err: ErrMaxGenerationLimit})
 				return
 			case "content_filter":
-				yield(StreamChunk{}, ContentPolicyErr("could not produce response"))
+				yield(StreamChunk{Err: ContentPolicyErr("could not produce response")})
 				return
 			}
 
 			if chunk.Choices[0].Delta.Refusal != "" {
-				yield(StreamChunk{}, ContentPolicyErr(chunk.Choices[0].Delta.Refusal))
+				yield(StreamChunk{Err: ContentPolicyErr(chunk.Choices[0].Delta.Refusal)})
 				return
 			}
 
@@ -882,7 +965,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 						Content:      Str(chunk.Choices[0].Delta.Content),
 					},
 					CandidatesIndex: int(chunk.Choices[0].Index),
-				}, nil) {
+				}) {
 					return
 				}
 			}
@@ -903,7 +986,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 							Content:      Str(toolCall.Function.Name),
 						},
 						CandidatesIndex: int(chunk.Choices[0].Index),
-					}, nil) {
+					}) {
 						return
 					}
 				}
@@ -916,7 +999,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 							Content:      Str(toolCall.Function.Arguments),
 						},
 						CandidatesIndex: int(chunk.Choices[0].Index),
-					}, nil) {
+					}) {
 						return
 					}
 				}
@@ -926,9 +1009,9 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 		// Check for stream errors
 		if stream.Err() != nil {
 			if mapped := mapOpenAISDKError(ProviderOpenAI, stream.Err()); mapped != nil {
-				yield(StreamChunk{}, mapped)
+				yield(StreamChunk{Err: mapped})
 			} else {
-				yield(StreamChunk{}, stream.Err())
+				yield(StreamChunk{Err: stream.Err()})
 			}
 			return
 		}
@@ -951,7 +1034,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, dialog Dialog, options *Ge
 				yield(StreamChunk{
 					Block:           MetadataBlock(metadata),
 					CandidatesIndex: 0,
-				}, nil)
+				})
 			}
 		}
 	}
@@ -962,13 +1045,11 @@ type OpenAICompletionService interface {
 	NewStreaming(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (stream *oaissestream.Stream[oai.ChatCompletionChunk])
 }
 
-// NewOpenAiGenerator creates a new OpenAI generator with the specified model.
-// The returned generator implements the Generator, ToolRegister, and TokenCounter interfaces.
+// NewOpenAiGenerator creates a stateless OpenAI generator.
+// The returned generator implements Generator, StreamingGenerator, and TokenCounter.
 //
 // Parameters:
 //   - client: An OpenAI completion service (typically &client.Chat.Completions)
-//   - model: The OpenAI model to use (e.g., "gpt-4o", "gpt-4o-audio-preview")
-//   - systemInstructions: Optional system instructions that set the model's behavior
 //
 // Supported modalities:
 //   - Text: Both input and output
@@ -983,17 +1064,12 @@ type OpenAICompletionService interface {
 // helper function to create PDF content blocks.
 //
 // This generator fully supports the anyOf JSON Schema feature.
-func NewOpenAiGenerator(client OpenAICompletionService, model, systemInstructions string) OpenAiGenerator {
-	return OpenAiGenerator{
-		client:             client,
-		systemInstructions: systemInstructions,
-		model:              model,
-		tools:              make(map[string]oai.ChatCompletionToolUnionParam),
-	}
+func NewOpenAiGenerator(client OpenAICompletionService) *OpenAiGenerator {
+	return &OpenAiGenerator{client: client}
 }
 
 var _ Generator = (*OpenAiGenerator)(nil)
-var _ ToolRegister = (*OpenAiGenerator)(nil)
+var _ StreamingGenerator = (*OpenAiGenerator)(nil)
 var _ TokenCounter = (*OpenAiGenerator)(nil)
 var _ OpenAICompletionService = (*oai.ChatCompletionService)(nil)
 
@@ -1020,7 +1096,7 @@ var _ OpenAICompletionService = (*oai.ChatCompletionService)(nil)
 // Returns:
 //   - The number of tokens as an integer
 //   - An error if dimensions cannot be determined or if calculation fails
-func (g *OpenAiGenerator) calculateImageTokens(block Block) (int, error) {
+func (g *OpenAiGenerator) calculateImageTokens(block Block, model string) (int, error) {
 	// PDFs are not supported for token counting
 	if block.MimeType == "application/pdf" {
 		return 0, fmt.Errorf("PDF token counting is not supported")
@@ -1067,10 +1143,10 @@ func (g *OpenAiGenerator) calculateImageTokens(block Block) (int, error) {
 	}
 
 	// Determine which calculation method to use based on model
-	if isMinimalModel(g.model) {
-		return calculateMinimalModelImageTokens(width, height, g.model)
+	if isMinimalModel(model) {
+		return calculateMinimalModelImageTokens(width, height, model)
 	} else {
-		return calculateStandardModelImageTokens(width, height, detail, g.model)
+		return calculateStandardModelImageTokens(width, height, detail, model)
 	}
 }
 
@@ -1232,31 +1308,13 @@ func getTokensForModel(model string) (baseTokens, tileTokens int) {
 	}
 }
 
-// Count implements the TokenCounter interface for OpenAiGenerator.
-// It uses the tiktoken-go library to count tokens based on the model without making an API call.
+// Count uses tiktoken-go to count the request's model, instructions, dialog,
+// and tools without making an API call.
 //
-// The method accounts for:
-//   - System instructions (if set during generator initialization)
-//   - All messages in the dialog with their respective blocks
-//   - Images in the dialog (with accurate token calculation based on dimensions)
-//   - Tool definitions registered with the generator
-//
-// For images, the token count depends on the model and follows OpenAI's token calculation rules:
-//   - For "minimal" models (gpt-4.1-mini, gpt-4.1-nano, o4-mini), tokens are calculated based on 32px patches
-//   - For other models (GPT-4o, GPT-4.1, etc.), tokens depend on image dimensions and detail level
-//
-// Image dimensions are extracted directly from the image data when possible, or from ExtraFields.
-// If dimensions cannot be determined, an error is returned.
-//
-// Note: PDF token counting is not supported and will return an error. This is because PDFs are
-// converted to images server-side and exact dimensions cannot be determined.
-//
-// The context parameter allows for cancellation of long-running counting operations.
-//
-// Returns:
-//   - The total token count as uint
-//   - An error if token counting fails (e.g., unsupported modality, image dimension extraction failure, PDF input)
-func (g *OpenAiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error) {
+// Image token counts use the request model and image dimensions. Dimensions come
+// from image data or ExtraFields. PDF counting is unsupported because providers
+// convert PDFs to images server-side and do not expose exact dimensions.
+func (g *OpenAiGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	// Check for context cancellation
 	select {
 	case <-ctx.Done():
@@ -1264,11 +1322,12 @@ func (g *OpenAiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 	default:
 	}
 
+	dialog := request.Dialog
 	if len(dialog) == 0 {
 		return 0, ErrEmptyDialog
 	}
 
-	tke, err := tiktoken.EncodingForModel(g.model)
+	tke, err := tiktoken.EncodingForModel(request.Model)
 	if err != nil {
 		tke, err = tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE) // Fallback
 		if err != nil {
@@ -1278,8 +1337,12 @@ func (g *OpenAiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 
 	var totalTokens int
 
-	if g.systemInstructions != "" {
-		totalTokens += len(tke.Encode(g.systemInstructions, nil, nil))
+	instructions, err := textInstructions(request.Instructions)
+	if err != nil {
+		return 0, err
+	}
+	for _, instruction := range instructions {
+		totalTokens += len(tke.Encode(instruction, nil, nil))
 	}
 
 	// See https://platform.openai.com/docs/guides/images-vision?api-mode=chat#calculating-costs
@@ -1291,7 +1354,7 @@ func (g *OpenAiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 				totalTokens += len(tke.Encode(contentToTokenize, nil, nil))
 			case Image:
 				// Extract dimensions from the image content
-				imageTokens, err := g.calculateImageTokens(block)
+				imageTokens, err := g.calculateImageTokens(block, request.Model)
 				if err != nil {
 					return 0, fmt.Errorf("failed to calculate image tokens: %w", err)
 				}
@@ -1302,7 +1365,11 @@ func (g *OpenAiGenerator) Count(ctx context.Context, dialog Dialog) (uint, error
 		}
 	}
 
-	for _, tool := range g.tools {
+	tools, err := convertToolsToOpenAI(request.Tools)
+	if err != nil {
+		return 0, err
+	}
+	for _, tool := range tools {
 		var toolDefStr string
 		toolDefStr += tool.OfFunction.Function.Name + "\n"
 		toolDefStr += tool.OfFunction.Function.Description.String() + "\n"

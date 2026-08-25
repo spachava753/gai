@@ -61,10 +61,7 @@ func mapAnthropicError(err error) *ApiErr {
 
 // AnthropicGenerator implements the gai.Generator interface using OpenAI's API
 type AnthropicGenerator struct {
-	client             AnthropicSvc
-	model              string
-	tools              map[string]a.ToolParam
-	systemInstructions string
+	client AnthropicSvc
 }
 
 // convertToolToAnthropic converts our tool definition to Anthropic's format
@@ -81,6 +78,74 @@ func convertToolToAnthropic(tool Tool) a.ToolParam {
 		Description: a.String(tool.Description),
 		InputSchema: inputSchema,
 	}
+}
+
+func convertToolsToAnthropic(tools []Tool) ([]a.ToolParam, error) {
+	converted := make([]a.ToolParam, 0, len(tools))
+	seen := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		if tool.Name == "" {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be empty")}
+		}
+		if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be %s", tool.Name)}
+		}
+		if _, exists := seen[tool.Name]; exists {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool already provided")}
+		}
+		seen[tool.Name] = struct{}{}
+		converted = append(converted, convertToolToAnthropic(tool))
+	}
+	return converted, nil
+}
+
+type anthropicGenerationOptions struct {
+	Temperature         *float64
+	TopP                *float64
+	MaxGenerationTokens *int
+	ToolChoice          string
+	StopSequences       []string
+	OutputModalities    []Modality
+	ThinkingBudget      string
+}
+
+func parseAnthropicGenerationOptions(values GenerationOptions) (*anthropicGenerationOptions, error) {
+	options := &anthropicGenerationOptions{}
+
+	temperature, ok, err := generationOption[float64](values, GenerationOptionTemperature)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.Temperature = &temperature
+	}
+	topP, ok, err := generationOption[float64](values, GenerationOptionTopP)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.TopP = &topP
+	}
+	maxTokens, ok, err := generationOption[int](values, GenerationOptionMaxGenerationTokens)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.MaxGenerationTokens = &maxTokens
+	}
+	if options.ToolChoice, _, err = generationOption[string](values, GenerationOptionToolChoice); err != nil {
+		return nil, err
+	}
+	if options.StopSequences, _, err = generationOption[[]string](values, GenerationOptionStopSequences); err != nil {
+		return nil, err
+	}
+	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
+		return nil, err
+	}
+	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+		return nil, err
+	}
+	return options, nil
 }
 
 const (
@@ -328,43 +393,6 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 	}
 }
 
-// Register implements gai.ToolRegister
-func (g *AnthropicGenerator) Register(tool Tool) error {
-	// Validate tool name
-	if tool.Name == "" {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool name cannot be empty"),
-		}
-	}
-
-	// Check for special tool choice values
-	if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool name cannot be %s", tool.Name),
-		}
-	}
-
-	// Initialize tools map if needed
-	if g.tools == nil {
-		g.tools = make(map[string]a.ToolParam)
-	}
-
-	// Check for conflicts with existing tools
-	if _, exists := g.tools[tool.Name]; exists {
-		return &ToolRegistrationErr{
-			Tool:  tool.Name,
-			Cause: fmt.Errorf("tool already registered"),
-		}
-	}
-
-	// Convert our tool definition to OpenAI's format and store it
-	g.tools[tool.Name] = convertToolToAnthropic(tool)
-
-	return nil
-}
-
 // Generate implements gai.Generator
 func anthropicStopError(reason a.StopReason, details a.RefusalStopDetails) error {
 	switch reason {
@@ -381,14 +409,26 @@ func anthropicStopError(reason a.StopReason, details a.RefusalStopDetails) error
 	}
 }
 
-func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, options *GenOpts) (Response, error) {
+func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("anthropic: client not initialized")
 	}
 
-	// Check for empty dialog
+	dialog := request.Dialog
 	if len(dialog) == 0 {
 		return Response{}, ErrEmptyDialog
+	}
+	options, err := parseAnthropicGenerationOptions(request.Options)
+	if err != nil {
+		return Response{}, err
+	}
+	tools, err := convertToolsToAnthropic(request.Tools)
+	if err != nil {
+		return Response{}, err
+	}
+	instructions, err := textInstructions(request.Instructions)
+	if err != nil {
+		return Response{}, err
 	}
 
 	// Convert each message to Anthropic format
@@ -403,16 +443,14 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 
 	// Create Anthropic message params
 	params := a.MessageNewParams{
-		Model:    a.Model(g.model),
+		Model:    a.Model(request.Model),
 		Messages: messages,
 	}
 
-	// Add system instructions if present
-	if g.systemInstructions != "" {
-		params.System = []a.TextBlockParam{
-			{
-				Text: g.systemInstructions,
-			},
+	if len(instructions) > 0 {
+		params.System = make([]a.TextBlockParam, 0, len(instructions))
+		for _, instruction := range instructions {
+			params.System = append(params.System, a.TextBlockParam{Text: instruction})
 		}
 	}
 
@@ -428,24 +466,9 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 			params.TopP = a.Float(*options.TopP)
 		}
 
-		// Set frequency penalty if non-zero
-		if options.FrequencyPenalty != nil {
-			return Response{}, fmt.Errorf("frequency penalty is invalid")
-		}
-
-		// Set presence penalty if non-zero
-		if options.PresencePenalty != nil {
-			return Response{}, fmt.Errorf("presence penalty is invalid")
-		}
-
 		// Set max tokens if specified
 		if options.MaxGenerationTokens != nil {
 			params.MaxTokens = int64(*options.MaxGenerationTokens)
-		}
-
-		// Set number of completions if specified
-		if options.N != nil {
-			return Response{}, fmt.Errorf("n is invalid")
 		}
 
 		// Set stop sequences if specified
@@ -493,15 +516,11 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 		}
 	}
 
-	// Add tools if any are registered
-	if len(g.tools) > 0 {
-		var tools []a.ToolUnionParam
-		for _, tool := range g.tools {
-			tools = append(tools, a.ToolUnionParam{
-				OfTool: &tool,
-			})
+	if len(tools) > 0 {
+		params.Tools = make([]a.ToolUnionParam, 0, len(tools))
+		for i := range tools {
+			params.Tools = append(params.Tools, a.ToolUnionParam{OfTool: &tools[i]})
 		}
-		params.Tools = tools
 	}
 
 	// Use message streaming, as the anthropic sdk *forces* us to use streaming for large models,
@@ -621,16 +640,31 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, dialog Dialog, option
 	return result, nil
 }
 
-func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
-	return func(yield func(StreamChunk, error) bool) {
+func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
+	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {
-			yield(StreamChunk{}, fmt.Errorf("openai: client not initialized"))
+			yield(StreamChunk{Err: fmt.Errorf("anthropic: client not initialized")})
 			return
 		}
 
-		// Check for empty dialog
+		dialog := request.Dialog
 		if len(dialog) == 0 {
-			yield(StreamChunk{}, ErrEmptyDialog)
+			yield(StreamChunk{Err: ErrEmptyDialog})
+			return
+		}
+		options, err := parseAnthropicGenerationOptions(request.Options)
+		if err != nil {
+			yield(StreamChunk{Err: err})
+			return
+		}
+		tools, err := convertToolsToAnthropic(request.Tools)
+		if err != nil {
+			yield(StreamChunk{Err: err})
+			return
+		}
+		instructions, err := textInstructions(request.Instructions)
+		if err != nil {
+			yield(StreamChunk{Err: err})
 			return
 		}
 
@@ -639,7 +673,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 		for _, msg := range dialog {
 			anthropicMsg, err := toAnthropicMessage(msg)
 			if err != nil {
-				yield(StreamChunk{}, fmt.Errorf("failed to convert message: %w", err))
+				yield(StreamChunk{Err: fmt.Errorf("failed to convert message: %w", err)})
 				return
 			}
 			messages = append(messages, anthropicMsg)
@@ -647,16 +681,14 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 
 		// Create Anthropic message params
 		params := a.MessageNewParams{
-			Model:    a.Model(g.model),
+			Model:    a.Model(request.Model),
 			Messages: messages,
 		}
 
-		// Add system instructions if present
-		if g.systemInstructions != "" {
-			params.System = []a.TextBlockParam{
-				{
-					Text: g.systemInstructions,
-				},
+		if len(instructions) > 0 {
+			params.System = make([]a.TextBlockParam, 0, len(instructions))
+			for _, instruction := range instructions {
+				params.System = append(params.System, a.TextBlockParam{Text: instruction})
 			}
 		}
 
@@ -672,27 +704,9 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				params.TopP = a.Float(*options.TopP)
 			}
 
-			// Set frequency penalty if non-zero
-			if options.FrequencyPenalty != nil {
-				yield(StreamChunk{}, fmt.Errorf("frequency penalty is invalid"))
-				return
-			}
-
-			// Set presence penalty if non-zero
-			if options.PresencePenalty != nil {
-				yield(StreamChunk{}, fmt.Errorf("presence penalty is invalid"))
-				return
-			}
-
 			// Set max tokens if specified
 			if options.MaxGenerationTokens != nil {
 				params.MaxTokens = int64(*options.MaxGenerationTokens)
-			}
-
-			// Set number of completions if specified
-			if options.N != nil {
-				yield(StreamChunk{}, fmt.Errorf("n is invalid"))
-				return
 			}
 
 			// Set stop sequences if specified
@@ -726,27 +740,23 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				for _, m := range options.OutputModalities {
 					switch m {
 					case Audio, Image, Video:
-						yield(StreamChunk{}, UnsupportedOutputModalityErr("image output not supported by model"))
+						yield(StreamChunk{Err: UnsupportedOutputModalityErr("image output not supported by model")})
 						return
 					}
 				}
 			}
 
 			if err := applyAnthropicThinkingConfig(&params, options.ThinkingBudget); err != nil {
-				yield(StreamChunk{}, err)
+				yield(StreamChunk{Err: err})
 				return
 			}
 		}
 
-		// Add tools if any are registered
-		if len(g.tools) > 0 {
-			var tools []a.ToolUnionParam
-			for _, tool := range g.tools {
-				tools = append(tools, a.ToolUnionParam{
-					OfTool: &tool,
-				})
+		if len(tools) > 0 {
+			params.Tools = make([]a.ToolUnionParam, 0, len(tools))
+			for i := range tools {
+				params.Tools = append(params.Tools, a.ToolUnionParam{OfTool: &tools[i]})
 			}
-			params.Tools = tools
 		}
 
 		// Start the stream
@@ -765,7 +775,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				// Capture usage and terminal status from the final message delta.
 				finalUsage = &event.Usage
 				if err := anthropicStopError(event.Delta.StopReason, event.Delta.StopDetails); err != nil {
-					yield(StreamChunk{}, err)
+					yield(StreamChunk{Err: err})
 					return
 				}
 				continue
@@ -784,7 +794,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 						MimeType:     "text/plain",
 						Content:      Str(event.ContentBlock.Name),
 					},
-				}, nil) {
+				}) {
 					return
 				}
 			case a.ContentBlockDeltaEvent:
@@ -800,7 +810,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							MimeType:     "text/plain",
 							Content:      Str(delta.Text),
 						},
-					}, nil) {
+					}) {
 						return
 					}
 				case a.InputJSONDelta:
@@ -815,7 +825,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 							MimeType:     "text/plain",
 							Content:      Str(delta.PartialJSON),
 						},
-					}, nil) {
+					}) {
 						return
 					}
 				case a.ThinkingDelta:
@@ -832,7 +842,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								ThinkingExtraFieldGeneratorKey: ThinkingGeneratorAnthropic,
 							},
 						},
-					}, nil) {
+					}) {
 						return
 					}
 				case a.SignatureDelta:
@@ -850,7 +860,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 								AnthropicExtraFieldThinkingSignature: delta.Signature,
 							},
 						},
-					}, nil) {
+					}) {
 						return
 					}
 				case a.CitationsDelta:
@@ -864,7 +874,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 				// blocks, such as multiple thinking blocks, remain distinct.
 				if !yield(StreamChunk{
 					Block: SeparatorBlock(),
-				}, nil) {
+				}) {
 					return
 				}
 			}
@@ -874,9 +884,9 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 		// Check for stream errors
 		if stream.Err() != nil {
 			if mapped := mapAnthropicError(stream.Err()); mapped != nil {
-				yield(StreamChunk{}, mapped)
+				yield(StreamChunk{Err: mapped})
 			} else {
-				yield(StreamChunk{}, stream.Err())
+				yield(StreamChunk{Err: stream.Err()})
 			}
 			return
 		}
@@ -905,7 +915,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, dialog Dialog, options 
 			if len(metadata) > 0 {
 				yield(StreamChunk{
 					Block: MetadataBlock(metadata),
-				}, nil)
+				})
 			}
 		}
 	}
@@ -929,14 +939,12 @@ type AnthropicSvc interface {
 	CountTokens(ctx context.Context, body a.MessageCountTokensParams, opts ...option.RequestOption) (res *a.MessageTokensCount, err error)
 }
 
-// NewAnthropicGenerator creates a new Anthropic generator with the specified model.
-// It returns a ToolCallingGenerator that preprocesses dialog for parallel tool use compatibility.
+// NewAnthropicGenerator creates a stateless Anthropic generator.
+// It preprocesses parallel tool results for Anthropic compatibility.
 // This generator fully supports the anyOf JSON Schema feature.
 //
 // Parameters:
 //   - client: An Anthropic service client
-//   - model: The Anthropic model to use (e.g., "claude-3-5-sonnet-20241022")
-//   - systemInstructions: Optional system instructions that set the model's behavior
 //
 // Supported modalities:
 //   - Text: Both input and output
@@ -947,52 +955,38 @@ type AnthropicSvc interface {
 // create PDF content blocks.
 //
 // The returned generator also implements the TokenCounter interface for token counting.
-func NewAnthropicGenerator(client AnthropicSvc, model, systemInstructions string) interface {
-	ToolCallingGenerator
+func NewAnthropicGenerator(client AnthropicSvc) interface {
+	Generator
 	StreamingGenerator
 	TokenCounter
 } {
-	inner := &AnthropicGenerator{
-		client:             client,
-		systemInstructions: systemInstructions,
-		model:              model,
-		tools:              make(map[string]a.ToolParam),
-	}
+	inner := &AnthropicGenerator{client: client}
 	return &PreprocessingGenerator{GeneratorWrapper: GeneratorWrapper{Inner: inner}}
 }
 
 var _ Generator = (*AnthropicGenerator)(nil)
-var _ ToolRegister = (*AnthropicGenerator)(nil)
+var _ StreamingGenerator = (*AnthropicGenerator)(nil)
 var _ TokenCounter = (*AnthropicGenerator)(nil)
 
-// Count implements the TokenCounter interface for AnthropicGenerator.
-// It converts the dialog to Anthropic's format and uses Anthropic's dedicated CountTokens API.
-//
-// Unlike the OpenAI implementation which uses a local tokenizer, this method makes an API call
-// to the Anthropic service. This provides the most accurate token count as it uses exactly
-// the same tokenization logic as the actual generation.
-//
-// The method accounts for:
-//   - System instructions (if set during generator initialization)
-//   - All messages in the dialog with their respective blocks
-//   - Multi-modal content like images
-//   - Tool definitions registered with the generator
-//
-// The context parameter allows for cancellation of the API call.
-//
-// Returns:
-//   - The total token count as uint, representing input tokens only
-//   - An error if the API call fails or if dialog conversion fails
-//
-// Note: Anthropic's CountTokens API returns only input token count. For an estimate of
-// output tokens, you would need to perform a separate calculation.
-func (g *AnthropicGenerator) Count(ctx context.Context, dialog Dialog) (uint, error) {
+// Count implements TokenCounter by sending the request's model, instructions,
+// dialog, and tools to Anthropic's CountTokens API. The API returns input tokens
+// only. The context can cancel the remote call.
+func (g *AnthropicGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	if g.client == nil {
 		return 0, fmt.Errorf("anthropic: client not initialized")
 	}
 
+	dialog := request.Dialog
 	if len(dialog) == 0 {
 		return 0, ErrEmptyDialog
+	}
+	tools, err := convertToolsToAnthropic(request.Tools)
+	if err != nil {
+		return 0, err
+	}
+	instructions, err := textInstructions(request.Instructions)
+	if err != nil {
+		return 0, err
 	}
 
 	var messages []a.MessageParam
@@ -1006,7 +1000,7 @@ func (g *AnthropicGenerator) Count(ctx context.Context, dialog Dialog) (uint, er
 
 	params := a.MessageCountTokensParams{
 		Messages: messages,
-		Model:    a.Model(g.model),
+		Model:    a.Model(request.Model),
 	}
 
 	hasThinking := false
@@ -1024,20 +1018,17 @@ func (g *AnthropicGenerator) Count(ctx context.Context, dialog Dialog) (uint, er
 		}
 	}
 
-	// Add system instructions if present
-	if g.systemInstructions != "" {
-		params.System = a.MessageCountTokensParamsSystemUnion{
-			OfTextBlockArray: []a.TextBlockParam{
-				{
-					Text: g.systemInstructions,
-				},
-			},
+	if len(instructions) > 0 {
+		blocks := make([]a.TextBlockParam, 0, len(instructions))
+		for _, instruction := range instructions {
+			blocks = append(blocks, a.TextBlockParam{Text: instruction})
 		}
+		params.System = a.MessageCountTokensParamsSystemUnion{OfTextBlockArray: blocks}
 	}
 
-	for _, tool := range g.tools {
+	for i := range tools {
 		params.Tools = append(params.Tools, a.MessageCountTokensToolUnionParam{
-			OfTool: &tool,
+			OfTool: &tools[i],
 		})
 	}
 

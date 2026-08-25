@@ -19,9 +19,12 @@ func TestOpenRouterGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 			Message:      openai.ChatCompletionMessage{Refusal: "I cannot help with that."},
 		}},
 	}}
-	generator := NewOpenRouterGenerator(client, "test-model", "")
+	generator := NewOpenRouterGenerator(client)
 
-	response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	response, err := generator.Generate(context.Background(), GenerationRequest{
+		Model:  "test-model",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}},
+	})
 	if response.FinishReason != ContentPolicyViolation {
 		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
 	}
@@ -38,9 +41,12 @@ func TestOpenRouterGenerateReturnsContentPolicyErrorForContentFilter(t *testing.
 	client := &mockChatCompletionService{response: &openai.ChatCompletion{
 		Choices: []openai.ChatCompletionChoice{{FinishReason: "content_filter"}},
 	}}
-	generator := NewOpenRouterGenerator(client, "test-model", "")
+	generator := NewOpenRouterGenerator(client)
 
-	response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	response, err := generator.Generate(context.Background(), GenerationRequest{
+		Model:  "test-model",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}},
+	})
 	if response.FinishReason != ContentPolicyViolation {
 		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
 	}
@@ -61,7 +67,7 @@ func TestOpenRouterGenerator_Generate(t *testing.T) {
 		option.WithAPIKey(apiKey),
 	)
 	// Instantiate an OpenRouter Generator
-	gen := NewOpenRouterGenerator(&client.Chat.Completions, "z-ai/glm-4.6:exacto", "You are a helpful assistant")
+	gen := NewOpenRouterGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -74,17 +80,20 @@ func TestOpenRouterGenerator_Generate(t *testing.T) {
 			},
 		},
 	}
+	request := GenerationRequest{
+		Model:        "z-ai/glm-4.6:exacto",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+	}
 	// Generate a response
-	resp, err := gen.Generate(context.Background(), dialog, nil)
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// The exact response text may vary, so we'll just print a placeholder
 	// Customize generation parameters
-	opts := GenOpts{
-		MaxGenerationTokens: Ptr(10000),
-	}
-	resp, err = gen.Generate(context.Background(), dialog, &opts)
+	request.Options = NewGenerationOptions(WithMaxGenerationTokens(10000))
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,11 +114,7 @@ func TestOpenRouterGenerator_Generate_image(t *testing.T) {
 		option.WithAPIKey(apiKey),
 	)
 	// Use a vision-capable model through OpenRouter
-	gen := NewOpenRouterGenerator(
-		&client.Chat.Completions,
-		"qwen/qwen3-vl-235b-a22b-instruct",
-		"You are a helpful assistant.",
-	)
+	gen := NewOpenRouterGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -128,7 +133,12 @@ func TestOpenRouterGenerator_Generate_image(t *testing.T) {
 			},
 		},
 	}
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{MaxGenerationTokens: Ptr(512)})
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:        "qwen/qwen3-vl-235b-a22b-instruct",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+		Options:      NewGenerationOptions(WithMaxGenerationTokens(512)),
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,18 +152,14 @@ func TestOpenRouterGenerator_Generate_image(t *testing.T) {
 		t.Fatalf("content does not contain Crood")
 	}
 }
-func TestOpenRouterGenerator_Register(t *testing.T) {
+func TestOpenRouterGenerator_RequestTools(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	client := openai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 		option.WithAPIKey(apiKey),
 	)
-	gen := NewOpenRouterGenerator(
-		&client.Chat.Completions,
-		"moonshotai/kimi-k2-0905:exacto",
-		"You are a helpful assistant that returns the price of a stock and nothing else.",
-	)
-	// Register a tool
+	gen := NewOpenRouterGenerator(&client.Chat.Completions)
+	// Define a request tool
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -167,14 +173,18 @@ func TestOpenRouterGenerator_Register(t *testing.T) {
 			return schema
 		}(),
 	}
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}},
 	}
+	request := GenerationRequest{
+		Model:        "moonshotai/kimi-k2-0905:exacto",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant that returns the price of a stock and nothing else.")),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+		Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
+	}
 	// Force the tool call
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{ToolChoice: "get_stock_price"})
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,7 +210,9 @@ func TestOpenRouterGenerator_Register(t *testing.T) {
 			{ID: toolCall.ID, BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")},
 		},
 	})
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	request.Dialog = dialog
+	request.Options = nil
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -219,11 +231,7 @@ func TestOpenRouterGenerator_Generate_reasoningModel(t *testing.T) {
 	// Use a reasoning model through OpenRouter
 	// NOTE: Models that support reasoning (like those with extended thinking)
 	// will automatically return reasoning_details which are extracted as Thinking blocks
-	gen := NewOpenRouterGenerator(
-		&client.Chat.Completions,
-		"z-ai/glm-4.6:exacto",
-		"You are a helpful assistant.",
-	)
+	gen := NewOpenRouterGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -236,8 +244,14 @@ func TestOpenRouterGenerator_Generate_reasoningModel(t *testing.T) {
 			},
 		},
 	}
+	request := GenerationRequest{
+		Model:        "z-ai/glm-4.6:exacto",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+		Options:      NewGenerationOptions(WithThinkingBudget("low")),
+	}
 	// Generate response - reasoning models may return thinking blocks automatically
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{ThinkingBudget: "low"})
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -275,8 +289,9 @@ func TestOpenRouterGenerator_Generate_reasoningModel(t *testing.T) {
 			},
 		},
 	})
+	request.Dialog = dialog
 	// Generate response - reasoning models may return thinking blocks automatically
-	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{ThinkingBudget: "low"})
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -315,7 +330,7 @@ func TestOpenRouterGenerator_Generate_invalidModel(t *testing.T) {
 		option.WithAPIKey(apiKey),
 	)
 	// Use a nonsense model ID to trigger an error
-	gen := NewOpenRouterGenerator(&client.Chat.Completions, "invalid/model-does-not-exist", "You are helpful")
+	gen := NewOpenRouterGenerator(&client.Chat.Completions)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -328,7 +343,11 @@ func TestOpenRouterGenerator_Generate_invalidModel(t *testing.T) {
 			},
 		},
 	}
-	_, err := gen.Generate(context.Background(), dialog, nil)
+	_, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:        "invalid/model-does-not-exist",
+		Instructions: SystemMessage(TextBlock("You are helpful")),
+		Dialog:       dialog,
+	})
 	if err == nil {
 		t.Fatal("expected invalid model to return an error")
 	}

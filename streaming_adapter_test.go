@@ -12,6 +12,12 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+type streamingGeneratorFunc func(context.Context, GenerationRequest) iter.Seq[StreamChunk]
+
+func (f streamingGeneratorFunc) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
+	return f(ctx, request)
+}
+
 // ExampleStreamingAdapter demonstrates how to use StreamingAdapter to convert
 // a StreamingGenerator to a regular Generator. This is useful when you want to
 // use streaming internally but present a non-streaming interface to users.
@@ -19,15 +25,15 @@ func TestStreamingAdapter(t *testing.T) {
 	requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient()
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		openai.ChatModelGPT4oMini,
-		"You are a helpful assistant.",
-	)
-	adapter := StreamingAdapter{S: &gen}
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
+	adapter := StreamingAdapter{S: gen}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the capital of France?")}}}
 
-	response, err := adapter.Generate(context.Background(), dialog, nil)
+	response, err := adapter.Generate(context.Background(), GenerationRequest{
+		Model:        openai.ChatModelGPT4oMini,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+	})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
@@ -42,11 +48,7 @@ func TestStreamingAdapter_withTools(t *testing.T) {
 	requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient()
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		openai.ChatModelGPT4oMini,
-		"You are a helpful weather assistant.",
-	)
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 
 	weatherTool := Tool{
 		Name:        "get_weather",
@@ -62,13 +64,16 @@ func TestStreamingAdapter_withTools(t *testing.T) {
 			return schema
 		}(),
 	}
-	if err := gen.Register(weatherTool); err != nil {
-		t.Fatalf("register weather tool: %v", err)
-	}
 
-	adapter := StreamingAdapter{S: &gen}
+	adapter := StreamingAdapter{S: gen}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What's the weather like in New York?")}}}
-	response, err := adapter.Generate(context.Background(), dialog, &GenOpts{ToolChoice: ToolChoiceAuto})
+	response, err := adapter.Generate(context.Background(), GenerationRequest{
+		Model:        openai.ChatModelGPT4oMini,
+		Instructions: SystemMessage(TextBlock("You are a helpful weather assistant.")),
+		Dialog:       dialog,
+		Tools:        []Tool{weatherTool},
+		Options:      NewGenerationOptions(WithToolChoice(ToolChoiceAuto)),
+	})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
@@ -90,16 +95,37 @@ func TestStreamingAdapter_withTools(t *testing.T) {
 // errors that occur during streaming.
 func TestStreamingAdapter_errorHandling(t *testing.T) {
 	client := openai.NewClient()
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		openai.ChatModelGPT4oMini,
-		"You are a helpful assistant.",
-	)
-	adapter := StreamingAdapter{S: &gen}
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
+	adapter := StreamingAdapter{S: gen}
 
-	_, err := adapter.Generate(context.Background(), Dialog{}, nil)
+	_, err := adapter.Generate(context.Background(), GenerationRequest{
+		Model:        openai.ChatModelGPT4oMini,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+	})
 	if !errors.Is(err, ErrEmptyDialog) {
 		t.Fatalf("Generate error = %v, want %v", err, ErrEmptyDialog)
+	}
+}
+
+func TestStreamingAdapterStopsOnErrorChunk(t *testing.T) {
+	wantErr := errors.New("stream failed")
+	continuedAfterError := false
+	generator := streamingGeneratorFunc(func(context.Context, GenerationRequest) iter.Seq[StreamChunk] {
+		return func(yield func(StreamChunk) bool) {
+			if !yield(StreamChunk{Err: wantErr}) {
+				return
+			}
+			continuedAfterError = true
+			yield(StreamChunk{Block: TextBlock("unexpected")})
+		}
+	})
+
+	_, err := (&StreamingAdapter{S: generator}).Generate(context.Background(), GenerationRequest{})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Generate() error = %v, want %v", err, wantErr)
+	}
+	if continuedAfterError {
+		t.Fatal("stream continued after terminal error chunk")
 	}
 }
 
@@ -116,7 +142,7 @@ func TestStreamingAdapter_multipleBlocks(t *testing.T) {
 	}
 	adapter := StreamingAdapter{S: mockGen}
 
-	response, err := adapter.Generate(context.Background(), nil, nil)
+	response, err := adapter.Generate(context.Background(), GenerationRequest{})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
@@ -144,7 +170,7 @@ func TestStreamingAdapter_separatorBlocksAreInternal(t *testing.T) {
 	}
 	adapter := StreamingAdapter{S: mockGen}
 
-	response, err := adapter.Generate(context.Background(), nil, nil)
+	response, err := adapter.Generate(context.Background(), GenerationRequest{})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
@@ -181,11 +207,7 @@ func TestStreamingAdapter_parallelToolCalls(t *testing.T) {
 	requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient()
-	gen := NewOpenAiGenerator(
-		&client.Chat.Completions,
-		openai.ChatModelGPT4oMini,
-		"You are a helpful stock price assistant.",
-	)
+	gen := NewOpenAiGenerator(&client.Chat.Completions)
 
 	stockTool := Tool{
 		Name:        "get_stock_price",
@@ -200,13 +222,16 @@ func TestStreamingAdapter_parallelToolCalls(t *testing.T) {
 			return schema
 		}(),
 	}
-	if err := gen.Register(stockTool); err != nil {
-		t.Fatalf("register stock tool: %v", err)
-	}
 
-	adapter := StreamingAdapter{S: &gen}
+	adapter := StreamingAdapter{S: gen}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What are the current prices of Apple and Microsoft stocks?")}}}
-	response, err := adapter.Generate(context.Background(), dialog, &GenOpts{ToolChoice: ToolChoiceAuto})
+	response, err := adapter.Generate(context.Background(), GenerationRequest{
+		Model:        openai.ChatModelGPT4oMini,
+		Instructions: SystemMessage(TextBlock("You are a helpful stock price assistant.")),
+		Dialog:       dialog,
+		Tools:        []Tool{stockTool},
+		Options:      NewGenerationOptions(WithToolChoice(ToolChoiceAuto)),
+	})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
@@ -229,7 +254,7 @@ func TestStreamingAdapter_customUsage(t *testing.T) {
 	adapter := StreamingAdapter{S: customGen}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Hello!")}}}
 
-	response, err := adapter.Generate(context.Background(), dialog, nil)
+	response, err := adapter.Generate(context.Background(), GenerationRequest{Dialog: dialog})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
@@ -246,11 +271,11 @@ type customStreamingGenerator struct {
 	systemPrompt string
 }
 
-func (c *customStreamingGenerator) Stream(ctx context.Context, dialog Dialog, options *GenOpts) iter.Seq2[StreamChunk, error] {
-	return func(yield func(StreamChunk, error) bool) {
+func (c *customStreamingGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
+	return func(yield func(StreamChunk) bool) {
 		// Validate input
-		if len(dialog) == 0 {
-			yield(StreamChunk{}, ErrEmptyDialog)
+		if len(request.Dialog) == 0 {
+			yield(StreamChunk{Err: ErrEmptyDialog})
 			return
 		}
 
@@ -266,7 +291,7 @@ func (c *customStreamingGenerator) Stream(ctx context.Context, dialog Dialog, op
 					Content:      Str(chunk),
 				},
 				CandidatesIndex: 0,
-			}, nil) {
+			}) {
 				return // User stopped iteration
 			}
 		}

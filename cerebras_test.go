@@ -37,8 +37,11 @@ func TestCerebrasGeneratorReturnsContentPolicyError(t *testing.T) {
 			}))
 			defer server.Close()
 
-			generator := NewCerebrasGenerator(server.Client(), server.URL, "test", "", "test-key")
-			response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+			generator := NewCerebrasGenerator(server.Client(), server.URL, "test-key")
+			response, err := generator.Generate(context.Background(), GenerationRequest{
+				Model:  "test",
+				Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}},
+			})
 			if response.FinishReason != ContentPolicyViolation {
 				t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
 			}
@@ -56,14 +59,18 @@ func TestCerebrasGeneratorReturnsContentPolicyError(t *testing.T) {
 
 func TestCerebrasGenerator_Generate(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
-	gen := NewCerebrasGenerator(nil, "", "gpt-oss-120b", "You are a helpful assistant.", apiKey)
+	gen := NewCerebrasGenerator(nil, "", apiKey)
 	dialog := Dialog{
 		{
 			Role:   User,
 			Blocks: []Block{TextBlock("Hello!")},
 		},
 	}
-	resp, err := gen.Generate(context.Background(), dialog, nil)
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:        "gpt-oss-120b",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+		Dialog:       dialog,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,13 +80,7 @@ func TestCerebrasGenerator_Generate(t *testing.T) {
 func TestCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	// Use gpt-oss-120b model which supports reasoning with reasoning_effort parameter
-	gen := NewCerebrasGenerator(
-		nil,
-		"",
-		"gpt-oss-120b",
-		"You are a helpful assistant that explains your reasoning step by step.",
-		apiKey,
-	)
+	gen := NewCerebrasGenerator(nil, "", apiKey)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -92,10 +93,14 @@ func TestCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
 			},
 		},
 	}
+	request := GenerationRequest{
+		Model:        "gpt-oss-120b",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant that explains your reasoning step by step.")),
+		Dialog:       dialog,
+		Options:      NewGenerationOptions(WithThinkingBudget("medium")),
+	}
 	// Generate response with reasoning enabled (medium effort)
-	resp, err := gen.Generate(context.Background(), dialog, &GenOpts{
-		ThinkingBudget: "medium",
-	})
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -130,10 +135,9 @@ func TestCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
 			},
 		},
 	})
+	request.Dialog = dialog
 	// Generate response with reasoning (the previous reasoning should be retained)
-	resp, err = gen.Generate(context.Background(), dialog, &GenOpts{
-		ThinkingBudget: "medium",
-	})
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -161,13 +165,7 @@ func TestCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
 func TestCerebrasGenerator_Generate_reasoning_zai(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	// Use zai-glm-4.6 model which supports reasoning with disable_reasoning parameter
-	gen := NewCerebrasGenerator(
-		nil,
-		"",
-		"zai-glm-4.6",
-		"You are a helpful assistant that explains your reasoning step by step.",
-		apiKey,
-	)
+	gen := NewCerebrasGenerator(nil, "", apiKey)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -180,8 +178,13 @@ func TestCerebrasGenerator_Generate_reasoning_zai(t *testing.T) {
 			},
 		},
 	}
+	request := GenerationRequest{
+		Model:        "zai-glm-4.6",
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant that explains your reasoning step by step.")),
+		Dialog:       dialog,
+	}
 	// Generate response with reasoning enabled (disable_reasoning: false)
-	resp, err := gen.Generate(context.Background(), dialog, nil)
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -216,8 +219,9 @@ func TestCerebrasGenerator_Generate_reasoning_zai(t *testing.T) {
 			},
 		},
 	})
+	request.Dialog = dialog
 	// Generate response with reasoning (the previous reasoning should be retained)
-	resp, err = gen.Generate(context.Background(), dialog, nil)
+	resp, err = gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -242,9 +246,10 @@ func TestCerebrasGenerator_Generate_reasoning_zai(t *testing.T) {
 		}
 	}
 }
-func TestCerebrasGenerator_Register(t *testing.T) {
+func TestCerebrasGenerator_RequestTools(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
-	cgen := NewCerebrasGenerator(nil, "", "qwen-3-235b-a22b-instruct-2507", `You are a helpful assistant that returns the price of a stock and nothing else.
+	cgen := NewCerebrasGenerator(nil, "", apiKey)
+	instructions := `You are a helpful assistant that returns the price of a stock and nothing else.
 Only output the price, like
 <example>
 435.56
@@ -252,8 +257,8 @@ Only output the price, like
 <example>
 3235.55
 </example>
-`, apiKey)
-	// Register a tool
+`
+	// Define a request tool
 	tickerTool := Tool{
 		Name:        "get_stock_price",
 		Description: "Get the current stock price for a given ticker symbol.",
@@ -267,14 +272,18 @@ Only output the price, like
 			return schema
 		}(),
 	}
-	if err := cgen.Register(tickerTool); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	dialog := Dialog{
 		{Role: User, Blocks: []Block{TextBlock("What is the price of Apple stock?")}},
 	}
+	request := GenerationRequest{
+		Model:        "qwen-3-235b-a22b-instruct-2507",
+		Instructions: SystemMessage(TextBlock(instructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+		Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
+	}
 	// Force the tool call
-	resp, err := cgen.Generate(context.Background(), dialog, &GenOpts{ToolChoice: "get_stock_price"})
+	resp, err := cgen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -300,8 +309,10 @@ Only output the price, like
 			{ID: toolCall.ID, BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str("123.45")},
 		},
 	})
+	request.Dialog = dialog
+	request.Options = NewGenerationOptions(WithToolChoice("none"))
 	// Ask model to answer now without calling tools
-	resp, err = cgen.Generate(context.Background(), dialog, &GenOpts{ToolChoice: "none"})
+	resp, err = cgen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

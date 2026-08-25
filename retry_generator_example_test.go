@@ -15,7 +15,7 @@ type retryExampleGenerator struct {
 	streamCalls   atomic.Uint32
 }
 
-func (g *retryExampleGenerator) Generate(context.Context, gai.Dialog, *gai.GenOpts) (gai.Response, error) {
+func (g *retryExampleGenerator) Generate(context.Context, gai.GenerationRequest) (gai.Response, error) {
 	if g.generateCalls.Add(1) == 1 {
 		return gai.Response{}, retryExampleRateLimitError()
 	}
@@ -25,14 +25,14 @@ func (g *retryExampleGenerator) Generate(context.Context, gai.Dialog, *gai.GenOp
 	}}}, nil
 }
 
-func (g *retryExampleGenerator) Stream(context.Context, gai.Dialog, *gai.GenOpts) iter.Seq2[gai.StreamChunk, error] {
+func (g *retryExampleGenerator) Stream(context.Context, gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
 	attempt := g.streamCalls.Add(1)
-	return func(yield func(gai.StreamChunk, error) bool) {
+	return func(yield func(gai.StreamChunk) bool) {
 		if attempt == 1 {
-			yield(gai.StreamChunk{}, retryExampleRateLimitError())
+			yield(gai.StreamChunk{Err: retryExampleRateLimitError()})
 			return
 		}
-		yield(gai.StreamChunk{Block: gai.TextBlock("streamed")}, nil)
+		yield(gai.StreamChunk{Block: gai.TextBlock("streamed")})
 	}
 }
 
@@ -66,7 +66,7 @@ func ExampleRetryGenerator() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	response, err := retrying.Generate(ctx, gai.Dialog{}, nil)
+	response, err := retrying.Generate(ctx, gai.GenerationRequest{})
 	if err != nil {
 		fmt.Println("generate error:", err)
 		return
@@ -74,9 +74,9 @@ func ExampleRetryGenerator() {
 	fmt.Println(response.Candidates[0].Blocks[0].Content.String())
 
 	// Startup failures can be retried. After a chunk, errors are returned without replay.
-	for chunk, err := range retrying.Stream(ctx, gai.Dialog{}, nil) {
-		if err != nil {
-			fmt.Println("stream error:", err)
+	for chunk := range retrying.Stream(ctx, gai.GenerationRequest{}) {
+		if chunk.Err != nil {
+			fmt.Println("stream error:", chunk.Err)
 			return
 		}
 		fmt.Println(chunk.Block.Content.String())

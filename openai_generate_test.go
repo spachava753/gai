@@ -17,9 +17,11 @@ type mockChatCompletionService struct {
 	response     *oai.ChatCompletion
 	err          error
 	streamEvents []oaissestream.Event
+	requests     []oai.ChatCompletionNewParams
 }
 
 func (m *mockChatCompletionService) New(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (*oai.ChatCompletion, error) {
+	m.requests = append(m.requests, body)
 	return m.response, m.err
 }
 
@@ -53,9 +55,12 @@ func TestOpenAIGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 			Message:      oai.ChatCompletionMessage{Refusal: "I cannot help with that."},
 		}},
 	}}
-	generator := NewOpenAiGenerator(client, "gpt-5", "")
+	generator := NewOpenAiGenerator(client)
 
-	response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	response, err := generator.Generate(context.Background(), GenerationRequest{
+		Model:  "gpt-5",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}},
+	})
 	if response.FinishReason != ContentPolicyViolation {
 		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
 	}
@@ -72,9 +77,12 @@ func TestOpenAIGenerateReturnsContentPolicyErrorForContentFilter(t *testing.T) {
 	client := &mockChatCompletionService{response: &oai.ChatCompletion{
 		Choices: []oai.ChatCompletionChoice{{FinishReason: "content_filter"}},
 	}}
-	generator := NewOpenAiGenerator(client, "gpt-5", "")
+	generator := NewOpenAiGenerator(client)
 
-	response, err := generator.Generate(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil)
+	response, err := generator.Generate(context.Background(), GenerationRequest{
+		Model:  "gpt-5",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}},
+	})
 	if response.FinishReason != ContentPolicyViolation {
 		t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
 	}
@@ -91,12 +99,15 @@ func TestOpenAIStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	client := &mockChatCompletionService{streamEvents: []oaissestream.Event{{
 		Data: []byte(`{"id":"chatcmpl_123","object":"chat.completion.chunk","created":0,"model":"gpt-5","choices":[{"index":0,"delta":{"refusal":"I cannot help with that."},"finish_reason":""}]}`),
 	}}}
-	generator := NewOpenAiGenerator(client, "gpt-5", "")
+	generator := NewOpenAiGenerator(client)
 
 	var gotErr error
-	for _, err := range generator.Stream(context.Background(), Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}}, nil) {
-		if err != nil {
-			gotErr = err
+	for chunk := range generator.Stream(context.Background(), GenerationRequest{
+		Model:  "gpt-5",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}},
+	}) {
+		if chunk.Err != nil {
+			gotErr = chunk.Err
 			break
 		}
 	}
@@ -160,10 +171,10 @@ func TestGenerate(t *testing.T) {
 	}
 
 	// Test with single stop sequence
-	singleStopOptions := &GenOpts{
-		Temperature:   Ptr(0.7),
-		StopSequences: []string{"stop"},
-	}
+	singleStopOptions := NewGenerationOptions(
+		WithTemperature(0.7),
+		WithStopSequences("stop"),
+	)
 
 	// Create a dialog with a tool result that the assistant will use in its response
 	toolResultDialog := Dialog{
@@ -201,22 +212,20 @@ func TestGenerate(t *testing.T) {
 	}
 
 	// Standard options for tests
-	testOptions := &GenOpts{
-		Temperature: Ptr(0.7),
-	}
+	testOptions := NewGenerationOptions(WithTemperature(0.7))
 
 	// Advanced options for testing more parameters
-	advancedOptions := &GenOpts{
-		Temperature:         Ptr(0.5),
-		TopP:                Ptr(0.9),
-		TopK:                Ptr[uint](10),
-		FrequencyPenalty:    Ptr(0.2),
-		PresencePenalty:     Ptr(0.1),
-		MaxGenerationTokens: Ptr(100),
-		N:                   Ptr[uint](2),
-		StopSequences:       []string{"stop"},
-		ToolChoice:          ToolChoiceToolsRequired,
-	}
+	advancedOptions := NewGenerationOptions(
+		WithTemperature(0.5),
+		WithTopP(0.9),
+		WithTopK(10),
+		WithFrequencyPenalty(0.2),
+		WithPresencePenalty(0.1),
+		WithMaxGenerationTokens(100),
+		WithCandidateCount(2),
+		WithStopSequences("stop"),
+		WithToolChoice(ToolChoiceToolsRequired),
+	)
 
 	// Typical successful response
 	normalResponse := &oai.ChatCompletion{
@@ -338,7 +347,7 @@ func TestGenerate(t *testing.T) {
 		name     string
 		client   *mockChatCompletionService
 		dialog   Dialog
-		options  *GenOpts
+		options  GenerationOptions
 		want     Response
 		wantErr  bool
 		errorMsg string
@@ -583,10 +592,15 @@ func TestGenerate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create generator with mock client
-			g := NewOpenAiGenerator(tt.client, "gpt-4", "You are a helpful assistant")
+			g := NewOpenAiGenerator(tt.client)
 
 			// Call Generate
-			got, err := g.Generate(context.Background(), tt.dialog, tt.options)
+			got, err := g.Generate(context.Background(), GenerationRequest{
+				Model:        "gpt-4",
+				Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+				Dialog:       tt.dialog,
+				Options:      tt.options,
+			})
 
 			// Check error cases
 			if (err != nil) != tt.wantErr {

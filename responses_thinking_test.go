@@ -14,6 +14,14 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
+const responsesStockToolInstructions = `You are a helpful assistant that uses tools when needed.
+When asked about stock prices, use the get_stock_price tool.
+After getting the price, report it to the user.`
+
+const responsesLookupToolInstructions = `You are a helpful assistant that uses tools when needed.
+When asked to look up information, always use the provided tools.
+After getting tool results, report them to the user.`
+
 func TestResponsesGenerator_StreamingAdapter_LiveThinkingSummaryFormatting(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 
@@ -30,8 +38,8 @@ func TestResponsesGenerator_StreamingAdapter_LiveThinkingSummaryFormatting(t *te
 	defer cancel()
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, reasoningModel, "You solve hard reasoning tasks carefully and expose detailed reasoning summaries when requested.")
-	adapter := StreamingAdapter{S: &gen}
+	gen := NewResponsesGenerator(&client.Responses)
+	adapter := StreamingAdapter{S: gen}
 
 	dialog := Dialog{{
 		Role: User,
@@ -64,16 +72,19 @@ Constraints:
 Find who drinks water and who owns the zebra. Keep the final visible answer concise: one sentence for water and one sentence for zebra.`)},
 	}}
 
-	opts := &GenOpts{
-		ThinkingBudget:      "medium",
-		MaxGenerationTokens: Ptr(12000),
-		Temperature:         Ptr(1.0),
-		ExtraArgs: map[string]any{
-			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
-		},
-	}
+	options := NewGenerationOptions(
+		WithThinkingBudget("medium"),
+		WithMaxGenerationTokens(12000),
+		WithTemperature(1.0),
+	)
+	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
 
-	resp, err := adapter.Generate(ctx, dialog, opts)
+	resp, err := adapter.Generate(ctx, GenerationRequest{
+		Model:        reasoningModel,
+		Instructions: SystemMessage(TextBlock("You solve hard reasoning tasks carefully and expose detailed reasoning summaries when requested.")),
+		Dialog:       dialog,
+		Options:      options,
+	})
 	if err != nil {
 		t.Fatalf("StreamingAdapter Generate failed: %v", err)
 	}
@@ -169,22 +180,25 @@ func TestResponsesGenerator_Generate_Thinking_Logging(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5, "You are a helpful assistant")
+	gen := NewResponsesGenerator(&client.Responses)
 
 	dialog := Dialog{{
 		Role:   User,
 		Blocks: []Block{TextBlock("What is 2 + 2? Think step by step.")},
 	}}
 
-	opts := GenOpts{
-		ThinkingBudget: "medium",
-		Temperature:    Ptr(1.0),
-		ExtraArgs: map[string]any{
-			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
-		},
-	}
+	options := NewGenerationOptions(
+		WithThinkingBudget("medium"),
+		WithTemperature(1.0),
+	)
+	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
 
-	resp, err := gen.Generate(context.Background(), dialog, &opts)
+	resp, err := gen.Generate(context.Background(), GenerationRequest{
+		Model:        openai.ChatModelGPT5,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+		Options:      options,
+	})
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -235,28 +249,29 @@ func TestResponsesGenerator_Stream_Thinking_Logging(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
+	gen := NewResponsesGenerator(&client.Responses)
 
 	dialog := Dialog{{
 		Role:   User,
 		Blocks: []Block{TextBlock("What is the capital of France? Think about it briefly.")},
 	}}
 
-	opts := GenOpts{
-		ThinkingBudget: "medium",
-		ExtraArgs: map[string]any{
-			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
-		},
-	}
+	options := NewGenerationOptions(WithThinkingBudget("medium"))
+	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
 
 	var allBlocks []Block
 	var thinkingContent string
 	var regularContent string
 
 	t.Log("=== Streaming response ===")
-	for chunk, err := range gen.Stream(context.Background(), dialog, &opts) {
-		if err != nil {
-			t.Fatalf("Stream error: %v", err)
+	for chunk := range gen.Stream(context.Background(), GenerationRequest{
+		Model:        openai.ChatModelGPT5Nano,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+		Options:      options,
+	}) {
+		if chunk.Err != nil {
+			t.Fatalf("Stream error: %v", chunk.Err)
 		}
 		allBlocks = append(allBlocks, chunk.Block)
 
@@ -303,9 +318,7 @@ func TestResponsesGenerator_StatelessToolCallWithReasoning(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that uses tools when needed.
-When asked about stock prices, use the get_stock_price tool.
-After getting the price, report it to the user.`)
+	gen := NewResponsesGenerator(&client.Responses)
 
 	tickerTool := Tool{
 		Name:        "get_stock_price",
@@ -320,9 +333,6 @@ After getting the price, report it to the user.`)
 			return schema
 		}(),
 	}
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("Failed to register tool: %v", err)
-	}
 
 	// Turn 1: Ask the model to use a tool with reasoning enabled
 	dialog := Dialog{{
@@ -330,14 +340,17 @@ After getting the price, report it to the user.`)
 		Blocks: []Block{TextBlock("What is the current price of Apple stock?")},
 	}}
 
-	opts := GenOpts{
-		ThinkingBudget: "low",
-		ExtraArgs: map[string]any{
-			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
-		},
+	options := NewGenerationOptions(WithThinkingBudget("low"))
+	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
+	request := GenerationRequest{
+		Model:        openai.ChatModelGPT5Mini,
+		Instructions: SystemMessage(TextBlock(responsesStockToolInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+		Options:      options,
 	}
 
-	resp, err := gen.Generate(context.Background(), dialog, &opts)
+	resp, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("Turn 1 Generate failed: %v", err)
 	}
@@ -388,7 +401,8 @@ After getting the price, report it to the user.`)
 		}},
 	})
 
-	resp2, err := gen.Generate(context.Background(), dialog, &opts)
+	request.Dialog = dialog
+	resp2, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("Turn 2 Generate failed: %v", err)
 	}
@@ -426,9 +440,7 @@ func TestResponsesGenerator_StreamingToolCallWithReasoning(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that uses tools when needed.
-When asked about stock prices, use the get_stock_price tool.
-After getting the price, report it to the user.`)
+	gen := NewResponsesGenerator(&client.Responses)
 
 	tickerTool := Tool{
 		Name:        "get_stock_price",
@@ -443,12 +455,9 @@ After getting the price, report it to the user.`)
 			return schema
 		}(),
 	}
-	if err := gen.Register(tickerTool); err != nil {
-		t.Fatalf("Failed to register tool: %v", err)
-	}
 
 	// Use StreamingAdapter to get a Generator interface from the streaming path
-	adapter := &StreamingAdapter{S: &gen}
+	adapter := &StreamingAdapter{S: gen}
 
 	// Turn 1: Ask the model to use a tool with reasoning enabled
 	dialog := Dialog{{
@@ -456,14 +465,17 @@ After getting the price, report it to the user.`)
 		Blocks: []Block{TextBlock("What is the current price of Apple stock?")},
 	}}
 
-	opts := GenOpts{
-		ThinkingBudget: "low",
-		ExtraArgs: map[string]any{
-			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
-		},
+	options := NewGenerationOptions(WithThinkingBudget("low"))
+	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
+	request := GenerationRequest{
+		Model:        openai.ChatModelGPT5Mini,
+		Instructions: SystemMessage(TextBlock(responsesStockToolInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{tickerTool},
+		Options:      options,
 	}
 
-	resp, err := adapter.Generate(context.Background(), dialog, &opts)
+	resp, err := adapter.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("Turn 1 Generate (streaming) failed: %v", err)
 	}
@@ -520,7 +532,8 @@ After getting the price, report it to the user.`)
 		}},
 	})
 
-	resp2, err := adapter.Generate(context.Background(), dialog, &opts)
+	request.Dialog = dialog
+	resp2, err := adapter.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("Turn 2 Generate (streaming) failed: %v", err)
 	}
@@ -565,9 +578,7 @@ func TestResponsesGenerator_ReasoningTokenPreservation_Generate(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that uses tools when needed.
-When asked to look up information, always use the provided tools.
-After getting tool results, report them to the user.`)
+	gen := NewResponsesGenerator(&client.Responses)
 
 	// Register two tools so the model has a reason to make multiple tool calls
 	lookupTool := Tool{
@@ -583,16 +594,6 @@ After getting tool results, report them to the user.`)
 			return schema
 		}(),
 	}
-	if err := gen.Register(lookupTool); err != nil {
-		t.Fatalf("Failed to register tool: %v", err)
-	}
-
-	opts := GenOpts{
-		ThinkingBudget: "low",
-		ExtraArgs: map[string]any{
-			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
-		},
-	}
 
 	// === Phase 1: Function-calling loop within one assistant turn ===
 
@@ -600,6 +601,16 @@ After getting tool results, report them to the user.`)
 		Role:   User,
 		Blocks: []Block{TextBlock("Look up the population of Tokyo and the population of New York City, then tell me which is larger.")},
 	}}
+
+	options := NewGenerationOptions(WithThinkingBudget("low"))
+	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
+	request := GenerationRequest{
+		Model:        openai.ChatModelGPT5Mini,
+		Instructions: SystemMessage(TextBlock(responsesLookupToolInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{lookupTool},
+		Options:      options,
+	}
 
 	type turnMetrics struct {
 		inputTokens     int
@@ -615,7 +626,8 @@ After getting tool results, report them to the user.`)
 
 	// Loop until the model stops calling tools (up to a safety limit)
 	for i := 0; i < 5; i++ {
-		resp, err := gen.Generate(context.Background(), dialog, &opts)
+		request.Dialog = dialog
+		resp, err := gen.Generate(context.Background(), request)
 		if err != nil {
 			t.Fatalf("Turn %d Generate failed: %v", i+1, err)
 		}
@@ -730,7 +742,8 @@ After getting tool results, report them to the user.`)
 		Blocks: []Block{TextBlock("Now look up the population of London.")},
 	})
 
-	resp2, err := gen.Generate(context.Background(), dialog, &opts)
+	request.Dialog = dialog
+	resp2, err := gen.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("New turn Generate failed: %v", err)
 	}
@@ -808,9 +821,7 @@ func TestResponsesGenerator_ReasoningTokenPreservation_Stream(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Mini, `You are a helpful assistant that uses tools when needed.
-When asked to look up information, always use the provided tools.
-After getting tool results, report them to the user.`)
+	gen := NewResponsesGenerator(&client.Responses)
 
 	lookupTool := Tool{
 		Name:        "lookup_info",
@@ -825,19 +836,9 @@ After getting tool results, report them to the user.`)
 			return schema
 		}(),
 	}
-	if err := gen.Register(lookupTool); err != nil {
-		t.Fatalf("Failed to register tool: %v", err)
-	}
 
 	// Use StreamingAdapter for the streaming path
-	adapter := &StreamingAdapter{S: &gen}
-
-	opts := GenOpts{
-		ThinkingBudget: "low",
-		ExtraArgs: map[string]any{
-			ResponsesThoughtSummaryDetailParam: responses.ReasoningSummaryDetailed,
-		},
-	}
+	adapter := &StreamingAdapter{S: gen}
 
 	// === Phase 1: Function-calling loop within one assistant turn ===
 
@@ -845,6 +846,16 @@ After getting tool results, report them to the user.`)
 		Role:   User,
 		Blocks: []Block{TextBlock("Look up the population of Tokyo and the population of New York City, then tell me which is larger.")},
 	}}
+
+	options := NewGenerationOptions(WithThinkingBudget("low"))
+	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
+	request := GenerationRequest{
+		Model:        openai.ChatModelGPT5Mini,
+		Instructions: SystemMessage(TextBlock(responsesLookupToolInstructions)),
+		Dialog:       dialog,
+		Tools:        []Tool{lookupTool},
+		Options:      options,
+	}
 
 	type turnMetrics struct {
 		inputTokens      int
@@ -855,7 +866,8 @@ After getting tool results, report them to the user.`)
 	var turns []turnMetrics
 
 	for i := 0; i < 5; i++ {
-		resp, err := adapter.Generate(context.Background(), dialog, &opts)
+		request.Dialog = dialog
+		resp, err := adapter.Generate(context.Background(), request)
 		if err != nil {
 			t.Fatalf("Turn %d Generate (streaming) failed: %v", i+1, err)
 		}
@@ -957,7 +969,8 @@ After getting tool results, report them to the user.`)
 		Blocks: []Block{TextBlock("Now look up the population of London.")},
 	})
 
-	resp2, err := adapter.Generate(context.Background(), dialog, &opts)
+	request.Dialog = dialog
+	resp2, err := adapter.Generate(context.Background(), request)
 	if err != nil {
 		t.Fatalf("New turn Generate (streaming) failed: %v", err)
 	}
@@ -1018,7 +1031,7 @@ func TestResponsesGenerator_StreamMetadata(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	gen := NewResponsesGenerator(&client.Responses, openai.ChatModelGPT5Nano, "You are a helpful assistant")
+	gen := NewResponsesGenerator(&client.Responses)
 
 	dialog := Dialog{{
 		Role:   User,
@@ -1026,9 +1039,13 @@ func TestResponsesGenerator_StreamMetadata(t *testing.T) {
 	}}
 
 	var blocks []Block
-	for chunk, err := range gen.Stream(context.Background(), dialog, nil) {
-		if err != nil {
-			t.Fatalf("Stream error: %v", err)
+	for chunk := range gen.Stream(context.Background(), GenerationRequest{
+		Model:        openai.ChatModelGPT5Nano,
+		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+		Dialog:       dialog,
+	}) {
+		if chunk.Err != nil {
+			t.Fatalf("Stream error: %v", chunk.Err)
 		}
 		blocks = append(blocks, chunk.Block)
 	}

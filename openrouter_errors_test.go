@@ -32,15 +32,14 @@ func TestOpenRouterGeneratorSurfacesProviderOverload(t *testing.T) {
 				t.Fatalf("unmarshal response: %v", err)
 			}
 
-			generator := NewOpenRouterGenerator(
-				&mockChatCompletionService{response: &response},
-				"test/model",
-				"",
-			)
-			_, err := generator.Generate(context.Background(), Dialog{{
-				Role:   User,
-				Blocks: []Block{TextBlock("hello")},
-			}}, nil)
+			generator := NewOpenRouterGenerator(&mockChatCompletionService{response: &response})
+			_, err := generator.Generate(context.Background(), GenerationRequest{
+				Model: "test/model",
+				Dialog: Dialog{{
+					Role:   User,
+					Blocks: []Block{TextBlock("hello")},
+				}},
+			})
 
 			var apiErr *ApiErr
 			if !errors.As(err, &apiErr) {

@@ -3,69 +3,60 @@ package gai
 import (
 	"context"
 	"iter"
+	"reflect"
 	"testing"
 )
 
-// wrapperMockGenerator implements all generator interfaces for testing wrapper functionality
 type wrapperMockGenerator struct {
-	generateFunc func(ctx context.Context, d Dialog, o *GenOpts) (Response, error)
-	countFunc    func(ctx context.Context, d Dialog) (uint, error)
-	registerFunc func(tool Tool) error
-	streamFunc   func(ctx context.Context, d Dialog, o *GenOpts) iter.Seq2[StreamChunk, error]
+	generateFunc func(context.Context, GenerationRequest) (Response, error)
+	countFunc    func(context.Context, GenerationRequest) (uint, error)
+	streamFunc   func(context.Context, GenerationRequest) iter.Seq[StreamChunk]
 }
 
-func (m *wrapperMockGenerator) Generate(ctx context.Context, d Dialog, o *GenOpts) (Response, error) {
+func (m *wrapperMockGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if m.generateFunc != nil {
-		return m.generateFunc(ctx, d, o)
+		return m.generateFunc(ctx, request)
 	}
 	return Response{}, nil
 }
 
-func (m *wrapperMockGenerator) Count(ctx context.Context, d Dialog) (uint, error) {
+func (m *wrapperMockGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	if m.countFunc != nil {
-		return m.countFunc(ctx, d)
+		return m.countFunc(ctx, request)
 	}
 	return 0, nil
 }
 
-func (m *wrapperMockGenerator) Register(tool Tool) error {
-	if m.registerFunc != nil {
-		return m.registerFunc(tool)
-	}
-	return nil
-}
-
-func (m *wrapperMockGenerator) Stream(ctx context.Context, d Dialog, o *GenOpts) iter.Seq2[StreamChunk, error] {
+func (m *wrapperMockGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	if m.streamFunc != nil {
-		return m.streamFunc(ctx, d, o)
+		return m.streamFunc(ctx, request)
 	}
-	return func(yield func(StreamChunk, error) bool) {}
+	return func(yield func(StreamChunk) bool) {}
 }
 
-// wrapperBasicGenerator only implements Generator (not TokenCounter, ToolCallingGenerator, etc.)
 type wrapperBasicGenerator struct{}
 
-func (b *wrapperBasicGenerator) Generate(ctx context.Context, d Dialog, o *GenOpts) (Response, error) {
+func (b *wrapperBasicGenerator) Generate(context.Context, GenerationRequest) (Response, error) {
 	return Response{}, nil
 }
 
 func TestGeneratorWrapper_Generate(t *testing.T) {
-	called := false
+	request := GenerationRequest{Model: "test-model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}}
+	var received GenerationRequest
 	mock := &wrapperMockGenerator{
-		generateFunc: func(ctx context.Context, d Dialog, o *GenOpts) (Response, error) {
-			called = true
+		generateFunc: func(_ context.Context, request GenerationRequest) (Response, error) {
+			received = request
 			return Response{FinishReason: EndTurn}, nil
 		},
 	}
 
 	wrapper := &GeneratorWrapper{Inner: mock}
-	resp, err := wrapper.Generate(context.Background(), nil, nil)
-
+	resp, err := wrapper.Generate(context.Background(), request)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if !called {
-		t.Error("inner Generate was not called")
+	if !reflect.DeepEqual(received, request) {
+		t.Errorf("request changed during delegation: got %#v", received)
 	}
 	if resp.FinishReason != EndTurn {
 		t.Error("response not passed through")
@@ -74,14 +65,11 @@ func TestGeneratorWrapper_Generate(t *testing.T) {
 
 func TestGeneratorWrapper_Count_Supported(t *testing.T) {
 	mock := &wrapperMockGenerator{
-		countFunc: func(ctx context.Context, d Dialog) (uint, error) {
-			return 42, nil
-		},
+		countFunc: func(context.Context, GenerationRequest) (uint, error) { return 42, nil },
 	}
 
 	wrapper := &GeneratorWrapper{Inner: mock}
-	count, err := wrapper.Count(context.Background(), nil)
-
+	count, err := wrapper.Count(context.Background(), GenerationRequest{})
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -92,57 +80,26 @@ func TestGeneratorWrapper_Count_Supported(t *testing.T) {
 
 func TestGeneratorWrapper_Count_NotSupported(t *testing.T) {
 	wrapper := &GeneratorWrapper{Inner: &wrapperBasicGenerator{}}
-	_, err := wrapper.Count(context.Background(), nil)
-
+	_, err := wrapper.Count(context.Background(), GenerationRequest{})
 	if err == nil {
 		t.Error("expected error for unsupported TokenCounter")
 	}
 }
 
-func TestGeneratorWrapper_Register_Supported(t *testing.T) {
-	registered := ""
-	mock := &wrapperMockGenerator{
-		registerFunc: func(tool Tool) error {
-			registered = tool.Name
-			return nil
-		},
-	}
-
-	wrapper := &GeneratorWrapper{Inner: mock}
-	err := wrapper.Register(Tool{Name: "test_tool"})
-
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if registered != "test_tool" {
-		t.Errorf("expected test_tool, got %s", registered)
-	}
-}
-
-func TestGeneratorWrapper_Register_NotSupported(t *testing.T) {
-	wrapper := &GeneratorWrapper{Inner: &wrapperBasicGenerator{}}
-	err := wrapper.Register(Tool{Name: "test"})
-
-	if err == nil {
-		t.Error("expected error for unsupported ToolCallingGenerator")
-	}
-}
-
 func TestGeneratorWrapper_Stream_Supported(t *testing.T) {
 	mock := &wrapperMockGenerator{
-		streamFunc: func(ctx context.Context, d Dialog, o *GenOpts) iter.Seq2[StreamChunk, error] {
-			return func(yield func(StreamChunk, error) bool) {
-				yield(StreamChunk{Block: Block{BlockType: Content}}, nil)
+		streamFunc: func(context.Context, GenerationRequest) iter.Seq[StreamChunk] {
+			return func(yield func(StreamChunk) bool) {
+				yield(StreamChunk{Block: Block{BlockType: Content}})
 			}
 		},
 	}
 
 	wrapper := &GeneratorWrapper{Inner: mock}
 	chunks := 0
-	for range wrapper.Stream(context.Background(), nil, nil) {
+	for range wrapper.Stream(context.Background(), GenerationRequest{}) {
 		chunks++
 	}
-
 	if chunks != 1 {
 		t.Errorf("expected 1 chunk, got %d", chunks)
 	}
@@ -152,30 +109,27 @@ func TestGeneratorWrapper_Stream_NotSupported(t *testing.T) {
 	wrapper := &GeneratorWrapper{Inner: &wrapperBasicGenerator{}}
 
 	var streamErr error
-	for _, err := range wrapper.Stream(context.Background(), nil, nil) {
-		streamErr = err
+	for chunk := range wrapper.Stream(context.Background(), GenerationRequest{}) {
+		streamErr = chunk.Err
 	}
-
 	if streamErr == nil {
 		t.Error("expected error for unsupported StreamingGenerator")
 	}
 }
 
-// wrapperOrderTrackingWrapper tracks order of Generate calls for TestWrap_Order
 type wrapperOrderTrackingWrapper struct {
 	GeneratorWrapper
 	name  string
 	order *[]string
 }
 
-func (w *wrapperOrderTrackingWrapper) Generate(ctx context.Context, d Dialog, o *GenOpts) (Response, error) {
+func (w *wrapperOrderTrackingWrapper) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	*w.order = append(*w.order, w.name)
-	return w.GeneratorWrapper.Generate(ctx, d, o)
+	return w.GeneratorWrapper.Generate(ctx, request)
 }
 
 func TestWrap_Order(t *testing.T) {
 	var order []string
-
 	makeWrapper := func(name string) WrapperFunc {
 		return func(inner Generator) Generator {
 			return &wrapperOrderTrackingWrapper{
@@ -186,64 +140,32 @@ func TestWrap_Order(t *testing.T) {
 		}
 	}
 
-	base := &wrapperBasicGenerator{}
-	gen := Wrap(base,
-		makeWrapper("first"),
-		makeWrapper("second"),
-		makeWrapper("third"),
-	)
+	gen := Wrap(&wrapperBasicGenerator{}, makeWrapper("first"), makeWrapper("second"), makeWrapper("third"))
+	_, _ = gen.Generate(context.Background(), GenerationRequest{})
 
-	_, _ = gen.Generate(context.Background(), nil, nil)
-
-	// First wrapper is outermost, so it logs first
 	expected := []string{"first", "second", "third"}
-	if len(order) != len(expected) {
-		t.Fatalf("expected %d entries, got %d", len(expected), len(order))
-	}
-	for i, v := range expected {
-		if order[i] != v {
-			t.Errorf("position %d: expected %s, got %s", i, v, order[i])
-		}
+	if !reflect.DeepEqual(order, expected) {
+		t.Fatalf("expected %v, got %v", expected, order)
 	}
 }
 
 func TestWrap_Empty(t *testing.T) {
 	base := &wrapperBasicGenerator{}
-	gen := Wrap(base)
-
-	if gen != base {
+	if gen := Wrap(base); gen != base {
 		t.Error("Wrap with no wrappers should return base unchanged")
 	}
 }
 
 func TestWithRetry(t *testing.T) {
-	base := &wrapperMockGenerator{}
-	wrapperFn := WithRetry(DefaultRetryConfig())
-	wrapped := wrapperFn(base)
-
+	wrapped := WithRetry(DefaultRetryConfig())(&wrapperMockGenerator{})
 	if _, ok := wrapped.(*RetryGenerator); !ok {
 		t.Errorf("expected *RetryGenerator, got %T", wrapped)
 	}
 }
 
 func TestWithPreprocessing(t *testing.T) {
-	base := &wrapperMockGenerator{}
-	wrapperFn := WithPreprocessing()
-	wrapped := wrapperFn(base)
-
+	wrapped := WithPreprocessing()(&wrapperBasicGenerator{})
 	if _, ok := wrapped.(*PreprocessingGenerator); !ok {
 		t.Errorf("expected *PreprocessingGenerator, got %T", wrapped)
 	}
-}
-
-func TestWithPreprocessing_Panics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic for non-ToolCallingGenerator")
-		}
-	}()
-
-	base := &wrapperBasicGenerator{}
-	wrapperFn := WithPreprocessing()
-	wrapperFn(base) // Should panic
 }
