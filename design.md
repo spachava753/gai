@@ -361,3 +361,9 @@ The caller owns request slices and maps. Adapters read them and build provider r
 Retry notifications, fallback policy functions, and service middleware may run concurrently. Code passed into those hooks must be safe for that use.
 
 Here, "stateless generator" has a narrow meaning. A generator has no hidden model request settings and no mutable tool registry. It still has fields for clients, credentials, endpoints, and wrapper policy.
+
+## TODOs
+
+This section collects unresolved design work. These items do not describe the current API.
+
+- **Provider-native tools.** Define how requests enable provider-native tools such as hosted web search, computer use, text editing, and apply-patch. The design must cover execution ownership, normalized call and result blocks, and replay-safe provider metadata.
