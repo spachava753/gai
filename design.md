@@ -1,23 +1,41 @@
 # Generator design
 
-This document defines the generator interfaces, shared request and response types, state ownership, and design rationale for GAI.
+This document describes the request model, generator interfaces, and provider adapters used by GAI. It also describes the rules that wrappers rely on when they retry, fall back, preprocess dialogs, or collect a stream.
 
-## Goals
+A generator wraps a connection to a model provider. It stores the provider client and, for direct HTTP adapters, the endpoint and credentials. It does not store a model, system instructions, tools, or conversation history. Those values belong to `GenerationRequest` and are supplied on every call.
 
-The generator API has these goals:
+The library does not append to the conversation or execute tool calls. The application owns both jobs.
 
-- A generation request contains every semantic input needed to reproduce a model call.
-- Generator values are safe to share because they do not contain mutable request configuration.
-- Provider adapters translate one shared request into provider SDK types.
-- Callers own conversation history and tool execution.
-- Common generation parameters are easy to set without closing the option set to provider-specific features.
-- Streaming, token counting, retry, fallback, and preprocessing compose around the same request value.
+A generation call follows this path:
 
-## State boundary
+```text
+GenerationRequest -> wrappers -> provider adapter -> provider API
+                                              |
+Response          <- normalization <----------+
+```
 
-A generator stores immutable execution dependencies. These include provider clients, HTTP transports, credentials, and endpoint configuration. They determine where and how a request is sent, not what the model is asked to do.
+For example, one OpenAI generator can handle requests with different models and instructions:
 
-A `GenerationRequest` stores semantic state:
+```go
+client := openai.NewClient()
+generator := NewOpenAiGenerator(&client.Chat.Completions)
+
+request := GenerationRequest{
+    Model:        "gpt-4o-mini",
+    Instructions: SystemMessage(TextBlock("Answer in one sentence.")),
+    Dialog: Dialog{{
+        Role:   User,
+        Blocks: []Block{TextBlock("Why is the sky blue?")},
+    }},
+    Options: NewGenerationOptions(WithTemperature(0.2)),
+}
+
+response, err := generator.Generate(ctx, request)
+```
+
+The model and instructions appear in the request because they describe this call, not the connection to OpenAI. A later call can reuse `generator` with a different request.
+
+## The request
 
 ```go
 type GenerationRequest struct {
@@ -29,15 +47,27 @@ type GenerationRequest struct {
 }
 ```
 
-The request contains the model, system instructions, complete dialog, available tools, common generation parameters, and provider-specific generation parameters. A caller can log, queue, authorize, copy, transform, or replay this value without reading generator fields.
+The fields have the following meanings:
 
-Generators must not mutate a request or retain references to request data after an invocation ends. Callers must not mutate a request concurrently with an invocation. Go slices and maps remain reference-backed values, so immutability is a contract rather than a property enforced by the language.
+| Field | Meaning |
+| --- | --- |
+| `Model` | Provider model name for this call. |
+| `Instructions` | Optional system message. |
+| `Dialog` | Complete conversation presented to the model. |
+| `Tools` | Complete set of tools available during this call. |
+| `Options` | Common and provider-specific generation settings. |
 
-Invocation-local data such as retry counters, provider message conversions, tool-call ID maps, and streaming assembly buffers belongs to the invocation. Wrapper policy such as retry timing and fallback ordering belongs to the wrapper and is not model request state.
+A retry can repeat the same request, and middleware can inspect or replace any part of it without reading generator fields. Fallback passes the same value to each target.
 
-## Core interfaces
+`context.Context` remains a separate argument because it controls the execution of the call, not the model's behavior. It carries cancellation and deadlines.
 
-### Generation
+Generators treat a request as read-only. Copying `GenerationRequest` is shallow because its messages, tools, and options contain slices or maps. The caller must not modify those values while a call is in progress, and a generator must not retain them after the call returns.
+
+Data created while handling a request stays local to that call. Examples include converted provider messages, tool-call ID maps, retry counters, and stream assembly buffers.
+
+## Interfaces
+
+Every provider implements `Generator`:
 
 ```go
 type Generator interface {
@@ -45,42 +75,29 @@ type Generator interface {
 }
 ```
 
-`context.Context` carries cancellation and deadlines. Generation parameters belong to `GenerationRequest`, not to context values.
+`Generate` waits for the provider to finish and returns one normalized `Response`.
 
-The single request argument prevents wrappers from accidentally forwarding only part of a call. Retry and preprocessing forward a request value. Fallback forwards the same request to each target unless an explicit request transformation is part of the fallback policy.
-
-### Streaming
+Streaming and token counting are optional because not every provider supports them:
 
 ```go
 type StreamingGenerator interface {
-    Stream(
-        ctx context.Context,
-        request GenerationRequest,
-    ) iter.Seq[StreamChunk]
+    Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk]
 }
-```
 
-`StreamingGenerator` is a separate capability because not every provider offers streaming. The standard-library `iter.Seq` type lets consumers stop iteration without a separate channel. A chunk with a non-nil `Err` reports a terminal stream failure. The producer yields that error chunk once and then returns.
-
-`StreamingAdapter` collects a stream into a `Response`. It reconstructs tool calls, joins content deltas, preserves logical block boundaries, extracts usage metadata, and supports candidate index zero.
-
-### Token counting
-
-```go
 type TokenCounter interface {
     Count(ctx context.Context, request GenerationRequest) (uint, error)
 }
 ```
 
-Counting receives the same request as generation because model, instructions, dialog, and tools can all affect input token usage. A provider may ignore output-only generation options while counting.
+All three methods receive the same request. In particular, token counting includes the model, instructions, dialog, and tools instead of relying on configuration hidden in the generator. OpenAI counts locally with `tiktoken`; Anthropic and Gemini call their token-counting APIs.
 
-Token counting remains a separate capability because some providers do not expose it and implementations may use either a local tokenizer or a provider API.
+Cerebras and OpenRouter implement generation only. The other provider capabilities are listed below.
 
-## System instructions
-
-`GenerationRequest.Instructions` is a `Message`. A non-empty instruction message must use the `System` role:
+## Messages and instructions
 
 ```go
+type Dialog []Message
+
 type Role uint
 
 const (
@@ -89,26 +106,6 @@ const (
     ToolResult
     System
 )
-```
-
-A helper creates the canonical value:
-
-```go
-func SystemMessage(blocks ...Block) Message
-```
-
-Using `Message` gives instructions the same ordered block representation and provider metadata placement rules as dialog content. It also leaves room for APIs to accept image, audio, document, or other instruction modalities without changing `GenerationRequest`.
-
-Provider adapters enforce their actual instruction capabilities. Every integrated provider accepts text instructions, so adapters accept `Content` blocks with `Text` modality. An adapter returns an unsupported-modality error when an instruction contains a modality that its API cannot accept. It returns an invalid-parameter error for instruction block types that cannot represent system content, such as tool calls or thinking blocks.
-
-An empty instruction message means no system instructions. `System` messages do not belong in `Dialog`; the dedicated field preserves the provider distinction between instructions and conversation turns.
-
-Providers that accept multiple text instruction parts preserve block order. Providers that accept one string join text blocks with a blank line so block boundaries do not concatenate words.
-
-## Dialog and content
-
-```go
-type Dialog []Message
 
 type Message struct {
     Role            Role
@@ -118,9 +115,30 @@ type Message struct {
 }
 ```
 
-The caller supplies the complete dialog on every invocation. Generators do not append messages or retain conversation history. This supports stateless provider calls and lets applications own persistence, truncation, redaction, and context-window policy.
+`Dialog` is the complete conversation sent to the provider. The generator neither adds the returned assistant message nor removes old turns. Applications that need persistence, truncation, or redaction perform those operations before constructing the next request.
 
-A `Message` groups ordered blocks under one role. `ToolResultError` distinguishes an error returned to the model from a successful tool result. `ExtraFields` stores provider data whose scope is the complete message.
+A message has one role and an ordered list of blocks. `ToolResultError` distinguishes a failed tool result from a successful one. `ExtraFields` holds provider metadata that applies to the message as a whole.
+
+System instructions use the same `Message` representation but live in a separate request field:
+
+```go
+request := GenerationRequest{
+    Instructions: SystemMessage(TextBlock("Answer as a Go programmer.")),
+    Dialog: Dialog{
+        {Role: User, Blocks: []Block{TextBlock("What does append return?")}},
+        {Role: Assistant, Blocks: []Block{TextBlock("It returns the updated slice.")}},
+        {Role: User, Blocks: []Block{TextBlock("Can it reuse the backing array?")}},
+    },
+}
+```
+
+A non-empty instruction message must have the `System` role. An empty message means no instructions. System messages are not valid dialog turns because provider APIs handle instructions separately from conversation history.
+
+`Instructions` is a `Message`, rather than a string, so it can preserve ordered blocks and provider metadata. This also leaves a place for images or documents if provider APIs later allow them in system instructions.
+
+**Current implementation.** Provider adapters accept text content blocks in `Instructions`. They reject other media with `UnsupportedInputModalityErr` and reject tool-call or thinking blocks with `InvalidParameterErr`. An adapter that needs one instruction string joins text blocks with a blank line.
+
+## Blocks
 
 ```go
 type Block struct {
@@ -133,11 +151,11 @@ type Block struct {
 }
 ```
 
-A block is the shared container for text, media, thinking, tool calls, stream metadata, and stream separators. Known block types use string discriminators so provider additions do not require a closed enum. `Modality` is a numeric enum for the shared text, image, audio, and video set.
+A `Message` contains one or more blocks. `BlockType` identifies text or media content, model thinking, a tool call, usage metadata, or an internal stream separator. It is a string so an adapter can carry a provider-specific block type without changing the shared enum first.
 
-`Content` implements `fmt.Stringer`. Provider adapters consume `Content.String()`, allowing text and base64-encoded media to use the same field. Package helpers such as `TextBlock`, `ImageBlock`, `AudioBlock`, `PDFBlock`, and `ToolCallBlock` construct canonical values.
+`ModalityType` describes the data as text, image, audio, or video. `MimeType` gives the concrete media format. `Content` is a `fmt.Stringer`, and adapters read it through `Content.String()`. The package constructors `TextBlock`, `ImageBlock`, `AudioBlock`, `PDFBlock`, and `ToolCallBlock` fill these fields consistently.
 
-`ExtraFields` stores provider-specific replay data at the narrowest useful scope. Thinking signatures and image hints belong to blocks. Metadata that applies to an entire assistant message belongs to `Message.ExtraFields`.
+`ExtraFields` carries provider data that must survive a later turn. For example, an Anthropic thinking signature belongs to the thinking block that produced it, while an OpenAI Responses phase belongs to `Message.ExtraFields` because it applies to the whole assistant message.
 
 ## Tools
 
@@ -154,78 +172,74 @@ type ToolCallInput struct {
 }
 ```
 
-Tools are request data. `GenerationRequest.Tools` is the complete tool set available to that invocation. Generators do not expose a registration method and do not retain converted tool definitions.
+`GenerationRequest.Tools` is the complete tool list for one call. A tool schema can be written directly or derived from a Go type:
 
-Each provider validates and converts tools while building its request. Conversion is intentionally invocation-scoped. An immutable prepared-tool optimization can be added if measurement shows conversion cost is material, but it must not introduce mutable generator configuration.
+```go
+type WeatherInput struct {
+    Location string `json:"location"`
+}
 
-JSON Schema is the provider-independent tool definition format. Provider adapters enforce their supported subset. `GenerateSchema[T]` derives a schema from a Go type and disallows unknown object properties by default.
+schema, err := GenerateSchema[WeatherInput]()
+if err != nil {
+    return err
+}
 
-Generators return tool calls to the application. Applications own authorization, execution, retries, persistence, and the follow-up generation request. `ToolCallback` and `ToolCallBackFunc` help implement application callbacks but are not generator state.
+request.Tools = []Tool{{
+    Name:        "get_weather",
+    Description: "Return the current weather for a location.",
+    InputSchema: schema,
+}}
+```
+
+JSON Schema is the interchange format because every supported tool API accepts a subset of it. `GenerateSchema[T]` rejects unknown object properties by default. Each provider adapter checks the schema again and reports constructs that its API cannot represent.
+
+The adapter converts tools while it builds the provider request. It does not retain the converted definitions, and there is no registration method. As a result, authorization code can choose a different tool list for each request without mutating a shared generator.
+
+A response may contain a `ToolCall` block whose content decodes to `ToolCallInput`. GAI does not execute that call. The application validates and runs it, appends a `ToolResult` message to the dialog, and sends another generation request. `ToolCallback` and `ToolCallBackFunc` are helpers for this application-owned loop.
+
+**Implementation note.** Converting an unchanged schema on every request costs more than registration-time conversion. The current design favors immutable generators. If conversion becomes measurable, it can be cached in a separate immutable tool-set value.
 
 ## Generation options
 
-Generation options use one extensible map:
-
 ```go
 type GenerationOptions map[string]any
-```
 
-Presence in the map distinguishes an explicit zero value from an omitted parameter. Recognized keys have canonical value types. A provider validates the type and value of every recognized key it uses. Unknown keys are ignored, allowing one request to carry options for more than one fallback provider.
-
-Common keys are exported constants:
-
-```go
-const (
-    GenerationOptionTemperature         = "temperature"
-    GenerationOptionTopP                = "top_p"
-    GenerationOptionTopK                = "top_k"
-    GenerationOptionFrequencyPenalty    = "frequency_penalty"
-    GenerationOptionPresencePenalty     = "presence_penalty"
-    GenerationOptionCandidateCount      = "candidate_count"
-    GenerationOptionMaxGenerationTokens = "max_generation_tokens"
-    GenerationOptionToolChoice          = "tool_choice"
-    GenerationOptionStopSequences       = "stop_sequences"
-    GenerationOptionOutputModalities    = "output_modalities"
-    GenerationOptionAudioConfig         = "audio_config"
-    GenerationOptionThinkingBudget      = "thinking_budget"
-)
-```
-
-The canonical value types are `float64` for temperature, top-p, frequency penalty, and presence penalty; `uint` for top-k and candidate count; `int` for maximum generation tokens; `string` for tool choice and thinking budget; `[]string` for stop sequences; `[]Modality` for output modalities; and `AudioConfig` for audio output configuration.
-
-Functional options provide typed construction for common parameters:
-
-```go
 type GenerationOption func(GenerationOptions)
-
-func NewGenerationOptions(options ...GenerationOption) GenerationOptions
-func WithTemperature(value float64) GenerationOption
-func WithTopP(value float64) GenerationOption
-func WithTopK(value uint) GenerationOption
-func WithFrequencyPenalty(value float64) GenerationOption
-func WithPresencePenalty(value float64) GenerationOption
-func WithCandidateCount(value uint) GenerationOption
-func WithMaxGenerationTokens(value int) GenerationOption
-func WithToolChoice(value string) GenerationOption
-func WithStopSequences(values ...string) GenerationOption
-func WithOutputModalities(values ...Modality) GenerationOption
-func WithAudioConfig(value AudioConfig) GenerationOption
-func WithThinkingBudget(value string) GenerationOption
 ```
 
-Callers can use functional options, map literals, or both:
+Common settings have typed helpers:
 
 ```go
 options := NewGenerationOptions(
     WithTemperature(0.2),
+    WithMaxGenerationTokens(500),
     WithToolChoice(ToolChoiceAuto),
 )
+```
+
+The helpers write entries into the map using exported keys such as `GenerationOptionTemperature`. Provider-specific settings use their own exported keys and the same map:
+
+```go
 options[ResponsesServiceTierParam] = "priority"
 ```
 
-Provider-specific exported constants identify custom keys. Provider-specific values live directly in `GenerationOptions`; there is no nested extra-arguments map.
+There is no nested `ExtraArgs` map. An adapter reads the settings it supports, checks their Go types, and ignores unknown keys. Ignoring unknown keys allows a request used for fallback to contain settings for more than one provider.
 
-A map is chosen because provider parameters change more often than the shared request structure. Functional options recover type safety and discoverability for common parameters while direct map entries keep provider work independent.
+Omission and zero have different meanings. If `GenerationOptionTemperature` is absent, the provider chooses its default. If the map contains `GenerationOptionTemperature: float64(0)`, the adapter sends zero.
+
+The common keys use these value types:
+
+| Keys | Type |
+| --- | --- |
+| `temperature`, `top_p`, `frequency_penalty`, `presence_penalty` | `float64` |
+| `top_k`, `candidate_count` | `uint` |
+| `max_generation_tokens` | `int` |
+| `tool_choice`, `thinking_budget` | `string` |
+| `stop_sequences` | `[]string` |
+| `output_modalities` | `[]Modality` |
+| `audio_config` | `AudioConfig` |
+
+`GenerationOptions` is a map rather than a struct because the supported parameters are the union of several provider APIs and that union changes often. Typed helpers keep common settings discoverable, while direct entries allow a provider option to be added without changing the shared request type.
 
 ## Responses
 
@@ -237,15 +251,17 @@ type Response struct {
 }
 ```
 
-Candidates are assistant messages and use the same block representation as dialog input. The slice supports providers that return more than one candidate.
+Each candidate is an assistant `Message`, so generated content can go back into a later dialog without conversion. The slice also matches providers that return several candidates.
 
-`FinishReason` normalizes provider stop reasons into `Unknown`, `EndTurn`, `StopSequence`, `MaxGenerationLimit`, `ToolUse`, and `ContentPolicyViolation`.
+`FinishReason` translates provider stop reasons into the package values `Unknown`, `EndTurn`, `StopSequence`, `MaxGenerationLimit`, `ToolUse`, and `ContentPolicyViolation`.
 
-`Metadata` is `map[string]any`. Common keys cover input, generation, cache read, cache write, and reasoning token counts. The map permits provider metrics without expanding `Response`; typed helpers retrieve common values.
+`Metadata` is `map[string]any`. Helpers read the common token counts, while the map leaves room for provider usage fields that GAI does not know about.
 
-Provider failures use `ApiErr`, which retains provider details and adds a provider-independent `APIErrorKind` for retry and fallback decisions. Stable local conditions use sentinel or structured error types.
+Provider API failures use `ApiErr`. It keeps the provider details and adds an `APIErrorKind` that retry and fallback policies can inspect. Local validation failures use sentinel errors or small error structs.
 
-## Streaming data
+## Streaming
+
+A streaming provider yields `StreamChunk` values through `iter.Seq`:
 
 ```go
 type StreamChunk struct {
@@ -256,27 +272,49 @@ type StreamChunk struct {
 }
 ```
 
-Streams reuse partial blocks instead of defining another content hierarchy. Content and thinking chunks carry string fragments. Tool calls begin with a block containing the call ID and tool name, followed by blocks containing JSON argument fragments. Separator blocks preserve provider block boundaries. Metadata blocks carry usage.
+Each value is either a data chunk or the terminal error. A data chunk has a nil `Err`. An error chunk has no payload; after yielding it, the producer returns. This gives callers one ordinary iterator to range over:
 
-`MessageExtraFields` carries message-level metadata discovered during streaming. `StreamingAdapter` merges those fields and rejects conflicting values. `Err` is excluded from serialized forms. A non-nil `Err` is mutually exclusive with stream payload fields and terminates the stream. Providers normalize validation, request, transport, decoding, context, and in-band API errors into this terminal chunk.
+```go
+for chunk := range generator.Stream(ctx, request) {
+    if chunk.Err != nil {
+        return chunk.Err
+    }
+    consume(chunk)
+}
+```
 
-## Provider adapters
+Adapters convert all failures to this form, whether the provider sent an error event, the SDK returned an iterator error, the connection failed, or the context was cancelled. `Err` is excluded from JSON and YAML because it is part of the live stream, not generated content.
 
-Provider generators retain only execution dependencies:
+Data chunks use the same `Block` type as messages. The stream protocol adds a few ordering rules:
 
-| Provider generator | Stored dependencies | Capabilities |
+- Text and thinking blocks contain fragments that may be joined with adjacent blocks of the same type.
+- A tool call starts with a block containing the call ID and tool name. Later blocks contain JSON argument fragments.
+- A separator ends a provider block. It prevents adjacent fragments from being joined and is omitted from the final response.
+- If the provider reports usage, the final data chunk contains a metadata block.
+
+`MessageExtraFields` carries metadata for the assistant message under construction. `StreamingAdapter` merges these maps and rejects conflicting values.
+
+`CandidatesIndex` identifies the generated candidate. OpenAI Chat Completions reports this index when `candidate_count` is greater than one.
+
+**Current limitations.** `StreamingAdapter` returns an error for candidate indexes above zero. The Gemini API supports multiple streamed candidates, but `GeminiGenerator.Stream` does not yet handle them.
+
+## Provider generators
+
+A provider generator keeps only what it needs to send a request:
+
+| Generator | Stored fields | Interfaces |
 | --- | --- | --- |
-| `OpenAiGenerator` | completion service | generate, stream, count |
-| `AnthropicGenerator` | message service | generate, stream, count |
-| `GeminiGenerator` | Gemini client | generate, stream, count |
-| `CerebrasGenerator` | HTTP client, endpoint, API key | generate |
-| `OpenRouterGenerator` | completion service | generate |
-| `ResponsesGenerator` | Responses service | generate, stream |
-| `ZaiGenerator` | generated clients and API transport | generate, stream |
+| `OpenAiGenerator` | completion service | `Generator`, `StreamingGenerator`, `TokenCounter` |
+| `AnthropicGenerator` | message service | `Generator`, `StreamingGenerator`, `TokenCounter` |
+| `GeminiGenerator` | Gemini client | `Generator`, `StreamingGenerator`, `TokenCounter` |
+| `CerebrasGenerator` | HTTP client, endpoint, API key | `Generator` |
+| `OpenRouterGenerator` | completion service | `Generator` |
+| `ResponsesGenerator` | Responses service | `Generator`, `StreamingGenerator` |
+| `ZaiGenerator` | generated clients and API transport | `Generator`, `StreamingGenerator` |
 
-Model, instructions, tools, and thinking settings come from `GenerationRequest`. Constructors establish transport dependencies and return generators ready for concurrent requests.
+Constructors set up those connections. They do not choose a model, install tools, or store instructions. Every call gets that data from `GenerationRequest`.
 
-`ResponsesGenerator` sets the upstream Responses API `store` option to false. Provider-side conversation storage and local generator state are separate concerns; both are stateless in this adapter.
+`ResponsesGenerator` also sets the upstream `store` option to false. The OpenAI service does not retain the conversation, and the Go generator does not retain request state.
 
 ## Wrappers
 
@@ -288,34 +326,38 @@ type GeneratorWrapper struct {
 type WrapperFunc func(Generator) Generator
 ```
 
-`GeneratorWrapper` delegates generation and performs runtime checks for optional streaming and counting capabilities. Embedding it lets middleware override selected methods. `Wrap` applies wrapper functions so the first supplied wrapper is the outermost call layer.
+`GeneratorWrapper` provides default delegation for middleware that needs to change only one operation. A wrapper embeds it and overrides `Generate`, `Stream`, or `Count` as needed.
 
-`RetryGenerator` stores retry policy and an inner generator. Attempt counters and timers are invocation-local. It retries generation failures and streaming failures that occur without emitted output.
+`Wrap` builds a middleware stack. The first function is the outermost wrapper and receives the call first:
 
-`FallbackGenerator` stores ordered generators and fallback policy. It forwards the request unchanged. A fallback that needs provider-specific model names uses an explicit request transformation policy rather than mutating a generator.
+```go
+generator := Wrap(
+    base,
+    WithRetry(retryConfig),
+    WithPreprocessing(),
+)
+```
 
-`PreprocessingGenerator` rewrites parallel tool-result messages in the request dialog for providers that require consolidated results. It copies the request value and replaces only the dialog passed inward.
+`GeneratorWrapper` defines `Stream` and `Count` even when its inner `Generator` does not implement the corresponding optional interface. An interface assertion on the wrapper therefore does not prove that the operation is available. `Count` returns an unsupported error, and `Stream` yields one terminal error chunk.
 
-`StreamingAdapter` stores a streaming generator and collects its stream into a normal response.
+`RetryGenerator` retries ordinary generation failures according to its policy. For streaming, it retries only failures that occur before the caller receives a data chunk. Retrying after partial output would duplicate content.
 
-`AnthropicServiceWrapper` operates below the generator and applies immutable provider request modifiers such as cache controls.
+`FallbackGenerator` tries generators in order and forwards the request unchanged.
 
-## Concurrency and ownership
+**Current limitation.** Fallback also forwards `Model` unchanged. Targets that use different model names need a request-rewrite step outside `FallbackGenerator`; the package does not provide a rewrite hook.
 
-Generator values contain no mutable semantic configuration. Concurrent calls may use different models, instructions, tools, dialogs, and options through the same generator. Safety also depends on the supplied provider client supporting concurrent use.
+`PreprocessingGenerator` makes a shallow copy of the request and replaces its dialog with one that combines parallel tool results. Anthropic and Gemini require this form.
 
-Request maps and slices belong to the caller. Provider adapters read them and create provider-specific values without modifying them. Functional option constructors clone slice arguments so later caller mutation does not change an option value unexpectedly.
+`StreamingAdapter` collects a `StreamingGenerator` and exposes it as a normal `Generator`.
 
-Callbacks stored in retry policy, fallback policy, or service middleware may run concurrently. Their documentation must state this requirement.
+`AnthropicServiceWrapper` wraps the Anthropic SDK service before it reaches `AnthropicGenerator`. It applies provider request changes such as cache controls.
 
-## Rationale
+## Ownership and concurrency
 
-A self-contained request makes call behavior explicit. Logging, policy checks, replay, testing, routing, and queueing can operate on one value.
+A generator can handle concurrent calls with different models, instructions, dialogs, tools, and options. The provider client stored inside it must also support concurrent use.
 
-A `Message` for instructions reuses ordered multimodal blocks and metadata scoping while letting each provider reject unsupported instruction content. The common request does not need a structural change when a provider adds multimodal instructions.
+The caller owns request slices and maps. Adapters read them and build provider request values without changing them. Functional option helpers clone slice arguments, so changing the source slice later does not change the stored option.
 
-Request-scoped tools remove configuration ordering and data races around registration. They also allow authorization to produce a different tool set for every call.
+Retry notifications, fallback policy functions, and service middleware may run concurrently. Code passed into those hooks must be safe for that use.
 
-Map-backed options avoid a permanent split between common struct fields and provider escape hatches. Exported keys and functional options give common settings stable names and canonical Go types.
-
-Immutable transport dependencies remain on generators because passing clients, credentials, and endpoints in every request would expose secrets as semantic data and make wrapper composition cumbersome. Statelessness means no hidden or mutable model request state, not a fieldless Go value.
+Here, "stateless generator" has a narrow meaning. A generator has no hidden model request settings and no mutable tool registry. It still has fields for clients, credentials, endpoints, and wrapper policy.
