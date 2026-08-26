@@ -125,6 +125,9 @@ const (
 	// ThinkingGeneratorCerebras identifies thinking blocks from the Cerebras generator.
 	ThinkingGeneratorCerebras = "cerebras"
 
+	// ThinkingGeneratorDeepSeek identifies thinking blocks from the DeepSeek generator.
+	ThinkingGeneratorDeepSeek = "deepseek"
+
 	// ThinkingGeneratorGemini identifies thinking blocks from the Gemini generator.
 	// Gemini thinking blocks may also contain GeminiExtraFieldThoughtSignature.
 	ThinkingGeneratorGemini = "gemini"

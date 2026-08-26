@@ -36,7 +36,7 @@ func main() {
 	header := `# gai - Go for AI
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8.svg)
+![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)
 
 `
 

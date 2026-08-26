@@ -1,13 +1,14 @@
 # GAI (Go AI generation utilities)
 
-GAI is a Go library for interacting with LLM providers (OpenAI, Anthropic, Google Gemini) with consistent APIs, composable generators, streaming support, metrics, and robust testing. The core library is in the repository root as a standard Go module.
+GAI is a Go library for interacting with LLM providers, including OpenAI, Anthropic, Google Gemini, Cerebras, OpenRouter, ZAI, and DeepSeek, with consistent APIs, composable generators, streaming support, metrics, and robust testing. The core library is in the repository root as a standard Go module.
 
 @README.md provides a general overview and quick start. See @ROADMAP.md for planned work.
 
 ## Project structure and organization
 
 - Root Go module (go.mod) with all library code colocated for ease of import
-  - Provider clients: `openai.go`, `anthropic.go`, `gemini.go`
+  - Provider clients: `openai.go`, `anthropic.go`, `gemini.go`, `cerebras.go`, `openrouter.go`, `responses.go`, `zai.go`, `deepseek.go`
+  - Generated OpenAPI clients: `internal/cerebras/`, `internal/deepseek/`, `internal/openrouter/`, `internal/zai/`
   - Generation pipeline and composition: `generate.go`, `retry_generator.go`, `fallback_generator.go`, `preprocessing_generator.go`
   - Streaming primitives: `streaming.go`
   - Shared domain types and helpers: `message.go`, `tool.go`, `errors.go`, `metrics.go`, `callback.go`
@@ -25,7 +26,7 @@ Conventions
 
 ## Build, test, and development commands
 
-Requirements: Go 1.22+.
+Requirements: Go 1.26+.
 
 Common commands
 - Install deps: `go mod download`
@@ -67,7 +68,7 @@ Imports
 Key concepts
 - Generator abstraction: pluggable components that transform inputs to model calls and outputs
 - Composition patterns: retry, fallback, and preprocessing generators compose functionality without duplication
-- Provider adapters: thin wrappers that expose a unified interface over OpenAI, Anthropic, and Gemini SDKs/HTTP APIs
+- Provider adapters: thin wrappers that expose a unified interface over provider SDKs, generated clients, and HTTP APIs
 - Streaming: unified stream interface emitting chunks, with helpers for incremental assembly
 - Tools: typed function/tool-call support with validation and safe dispatch
 - Metrics and callbacks: hooks for observability, tracing, and policy checks
@@ -108,6 +109,10 @@ Secrets
   - OpenAI: `OPENAI_API_KEY`
   - Anthropic: `ANTHROPIC_API_KEY`
   - Google: `GOOGLE_API_KEY` or ADC where applicable
+  - Cerebras: `CEREBRAS_API_KEY`
+  - OpenRouter: `OPENROUTER_API_KEY`
+  - ZAI: `ZAI_API_KEY`
+  - DeepSeek: `DEEPSEEK_API_KEY`
 - Provide `.env` locally but do not commit secrets; prefer `.env.example` when introduced
 
 Data handling
@@ -152,7 +157,7 @@ When adding new configuration
 
 ## Development environment
 
-- Go 1.22+
+- Go 1.26+
 - Optional tools: `golangci-lint`, `rg` (ripgrep)
 
 ## Parsing notes for agentic tools

@@ -13,7 +13,7 @@ import (
 	"github.com/ogen-go/ogen/validate"
 )
 
-func decodePaasV4ChatCompletionsPostResponse(resp *http.Response) (res *ChatCompletionResponse, _ error) {
+func decodePaasV4ChatCompletionsPostResponse(resp *http.Response) (res PaasV4ChatCompletionsPostRes, _ error) {
 	switch resp.StatusCode {
 	case 200:
 		// Code 200.
@@ -55,6 +55,9 @@ func decodePaasV4ChatCompletionsPostResponse(resp *http.Response) (res *ChatComp
 			}(); err != nil {
 				return res, errors.Wrap(err, "validate")
 			}
+			return &response, nil
+		case ct == "text/event-stream":
+			response := PaasV4ChatCompletionsPostOKTextEventStream{resp: resp}
 			return &response, nil
 		default:
 			return res, validate.InvalidContentType(ct)

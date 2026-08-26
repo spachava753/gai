@@ -4,6 +4,7 @@ package deepseek
 
 import (
 	"context"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,13 +13,171 @@ import (
 	"github.com/go-faster/errors"
 	ht "github.com/ogen-go/ogen/http"
 	"github.com/ogen-go/ogen/ogenerrors"
+	"github.com/ogen-go/ogen/sse"
 	"github.com/ogen-go/ogen/uri"
+	"github.com/ogen-go/ogen/validate"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 	"go.opentelemetry.io/otel/trace"
 )
+
+type sseClientConfig struct {
+	LastEventID       string
+	Retry             *time.Duration
+	MaxRetries        int
+	InitialBufferCap  int
+	MaxEventSize      int
+	RetryErrorHandler sse.RetryErrorHandler
+}
+
+type SSEClientOption func(*sseClientConfig)
+
+func newSSEClientConfig(opts ...SSEClientOption) sseClientConfig {
+	var cfg sseClientConfig
+	cfg.apply(opts...)
+	return cfg
+}
+
+func (c *sseClientConfig) apply(opts ...SSEClientOption) {
+	for _, opt := range opts {
+		if opt != nil {
+			opt(c)
+		}
+	}
+}
+
+// WithSSELastEventID sets the initial lastEventID value for the stream.
+func WithSSELastEventID(lastEventID string) SSEClientOption {
+	return func(o *sseClientConfig) {
+		o.LastEventID = lastEventID
+	}
+}
+
+// WithSSERetry sets the initial SSE reconnect delay.
+func WithSSERetry(delay time.Duration) SSEClientOption {
+	return func(o *sseClientConfig) {
+		o.Retry = &delay
+	}
+}
+
+// WithSSEMaxRetries sets the maximum number of reconnect attempts.
+//
+// Zero sets unlimited reconnect attempts.
+func WithSSEMaxRetries(n int) SSEClientOption {
+	return func(o *sseClientConfig) {
+		o.MaxRetries = n
+	}
+}
+
+// WithSSEInitialBufferCap sets the initial decoder line buffer capacity.
+func WithSSEInitialBufferCap(n int) SSEClientOption {
+	return func(o *sseClientConfig) {
+		o.InitialBufferCap = n
+	}
+}
+
+// WithSSEMaxEventSize sets the maximum parsable SSE event size in bytes.
+//
+// Zero disables the limit.
+func WithSSEMaxEventSize(n int) SSEClientOption {
+	return func(o *sseClientConfig) {
+		o.MaxEventSize = n
+	}
+}
+
+// WithSSERetryErrorHandler sets the callback invoked after a reconnect attempt fails.
+func WithSSERetryErrorHandler(h sse.RetryErrorHandler) SSEClientOption {
+	return func(o *sseClientConfig) {
+		o.RetryErrorHandler = h
+	}
+}
+
+// sseConnectFunc reconnects an SSE stream using the lastEventID value.
+type sseConnectFunc func(ctx context.Context, lastEventID string) (*http.Response, error)
+
+func newSSEResponseDecoder(resp *http.Response, options sseClientConfig) *sse.Decoder {
+	if resp == nil || resp.Body == nil {
+		return nil
+	}
+	return sse.NewDecoder(resp.Body,
+		options.InitialBufferCap,
+		options.MaxEventSize,
+		options.LastEventID,
+		options.Retry,
+	)
+}
+
+func reconnectSSE(ctx context.Context,
+	resp *http.Response,
+	decoder *sse.Decoder,
+	connect sseConnectFunc,
+	options sseClientConfig,
+	stateUpdater interface{ setState(sse.State, error) },
+) (*http.Response, *sse.Decoder, error) {
+	if resp != nil && resp.Body != nil {
+		if err := resp.Body.Close(); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	retry := sse.DefaultRetry
+	if decoder != nil {
+		retry = decoder.Retry()
+	} else if options.Retry != nil {
+		retry = *options.Retry
+	}
+
+	lastEventID := options.LastEventID
+	if decoder != nil {
+		lastEventID = decoder.LastEventID()
+	}
+
+	if err := waitSSERetry(ctx, retry); err != nil {
+		if stateUpdater != nil {
+			stateUpdater.setState(sse.StateConnecting, err)
+		}
+		return nil, nil, err
+	}
+
+	var attempts int
+	for {
+		nextResp, err := connect(ctx, lastEventID)
+		if err == nil {
+			options.LastEventID = lastEventID
+			options.Retry = &retry
+			return nextResp, newSSEResponseDecoder(nextResp, options), nil
+		}
+
+		attempts++
+		stateUpdater.setState(sse.StateConnecting, err)
+		if options.RetryErrorHandler != nil {
+			options.RetryErrorHandler(ctx, err)
+		}
+		if options.MaxRetries > 0 && attempts >= options.MaxRetries {
+			return nil, nil, errors.Wrap(sse.ErrMaxRetriesExceeded, err.Error())
+		}
+		if err := waitSSERetry(ctx, retry); err != nil {
+			if stateUpdater != nil {
+				stateUpdater.setState(sse.StateConnecting, err)
+			}
+			return nil, nil, err
+		}
+	}
+}
+
+func waitSSERetry(ctx context.Context, retry time.Duration) error {
+	timer := time.NewTimer(retry)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 func trimTrailingSlashes(u *url.URL) {
 	u.Path = strings.TrimRight(u.Path, "/")
@@ -33,7 +192,7 @@ type Invoker interface {
 	// output, and streaming.
 	//
 	// POST /chat/completions
-	ChatCompletionsPost(ctx context.Context, request *ChatCompletionRequest) (*ChatCompletionResponse, error)
+	ChatCompletionsPost(ctx context.Context, request *ChatCompletionRequest) (ChatCompletionsPostRes, error)
 }
 
 // Client implements OAS client.
@@ -100,12 +259,12 @@ func (c *Client) onResponse(ctx context.Context, resp *http.Response) error {
 // output, and streaming.
 //
 // POST /chat/completions
-func (c *Client) ChatCompletionsPost(ctx context.Context, request *ChatCompletionRequest) (*ChatCompletionResponse, error) {
+func (c *Client) ChatCompletionsPost(ctx context.Context, request *ChatCompletionRequest) (ChatCompletionsPostRes, error) {
 	res, err := c.sendChatCompletionsPost(ctx, request)
 	return res, err
 }
 
-func (c *Client) sendChatCompletionsPost(ctx context.Context, request *ChatCompletionRequest) (res *ChatCompletionResponse, err error) {
+func (c *Client) sendChatCompletionsPost(ctx context.Context, request *ChatCompletionRequest) (res ChatCompletionsPostRes, err error) {
 	// Validate request before sending.
 	if err := func() error {
 		if err := request.Validate(); err != nil {
@@ -163,6 +322,16 @@ func (c *Client) sendChatCompletionsPost(ctx context.Context, request *ChatCompl
 		return res, errors.Wrap(err, "encode request")
 	}
 
+	sseOptions := c.cfg.sseCfg
+	r.Header.Set("Cache-Control", "no-cache")
+	lastEventID := r.Header.Get("Last-Event-ID")
+	if lastEventID == "" {
+		lastEventID = sseOptions.LastEventID
+	}
+	if lastEventID != "" {
+		r.Header.Set("Last-Event-ID", lastEventID)
+		sseOptions.LastEventID = lastEventID
+	}
 	{
 		type bitset = [1]uint8
 		var satisfied bitset
@@ -205,8 +374,6 @@ func (c *Client) sendChatCompletionsPost(ctx context.Context, request *ChatCompl
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
-	body := resp.Body
-	defer body.Close()
 
 	if err := c.onResponse(ctx, resp); err != nil {
 		return res, errors.Wrap(err, "client edit response")
@@ -215,7 +382,72 @@ func (c *Client) sendChatCompletionsPost(ctx context.Context, request *ChatCompl
 	stage = "DecodeResponse"
 	result, err := decodeChatCompletionsPostResponse(resp)
 	if err != nil {
+		_ = resp.Body.Close()
 		return res, errors.Wrap(err, "decode response")
+	}
+	ct, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		_ = resp.Body.Close()
+		return res, errors.Wrap(err, "parse media type")
+	}
+	// For SSE response keep the body open for streaming.
+	if ht.MatchContentType("text/event-stream", ct) {
+		result.initSSEStream(func(reconnectCtx context.Context, lastEventID string) (*http.Response, error) {
+			reconnectReq := r.Clone(reconnectCtx)
+			if r.GetBody != nil {
+				body, err := r.GetBody()
+				if err != nil {
+					return nil, errors.Wrap(err, "clone reconnect body")
+				}
+				reconnectReq.Body = body
+			} else if r.Body != nil && r.Body != http.NoBody {
+				return nil, errors.New("reconnect request body is not readable")
+			}
+			reconnectReq.Header.Set("Cache-Control", "no-cache")
+			reconnectReq.Header.Set("Accept", "text/event-stream")
+			if lastEventID != "" {
+				reconnectReq.Header.Set("Last-Event-ID", lastEventID)
+			} else {
+				reconnectReq.Header.Del("Last-Event-ID")
+			}
+
+			if err := c.onRequest(reconnectCtx, reconnectReq); err != nil {
+				return nil, errors.Wrap(err, "client edit reconnect request")
+			}
+
+			reconnectResp, err := c.cfg.Client.Do(reconnectReq)
+			if err != nil {
+				return nil, errors.Wrap(err, "do reconnect request")
+			}
+
+			if err := c.onResponse(reconnectCtx, reconnectResp); err != nil {
+				_ = reconnectResp.Body.Close()
+				return nil, errors.Wrap(err, "client edit reconnect response")
+			}
+
+			// SSE standard treats 204 No Content as an explicit instruction to stop reconnecting.
+			if reconnectResp.StatusCode == http.StatusNoContent {
+				_ = reconnectResp.Body.Close()
+				return nil, sse.ErrNoReconnect
+			}
+			if reconnectResp.StatusCode != resp.StatusCode {
+				_ = reconnectResp.Body.Close()
+				return nil, validate.UnexpectedStatusCodeWithResponse(reconnectResp)
+			}
+			ct, _, err := mime.ParseMediaType(reconnectResp.Header.Get("Content-Type"))
+			if err != nil {
+				_ = reconnectResp.Body.Close()
+				return nil, errors.Wrap(err, "parse reconnect media type")
+			}
+			if !ht.MatchContentType("text/event-stream", ct) {
+				_ = reconnectResp.Body.Close()
+				return nil, validate.InvalidContentType(ct)
+			}
+
+			return reconnectResp, nil
+		}, sseOptions)
+	} else {
+		_ = resp.Body.Close()
 	}
 
 	return result, nil

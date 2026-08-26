@@ -68,6 +68,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChatCompletionResponse"
+            text/event-stream:
+              x-ogen-sse-event-shape: data-only
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ChatCompletionChunk"
+                  - type: string
+                    description: Sentinel indicating that the stream has completed.
+                    enum:
+                      - "[DONE]"
         default:
           description: Error response
           content:
@@ -513,6 +522,102 @@ components:
         - created
         - model
         - choices
+    ChatCompletionChunk:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the chat completion.
+        object:
+          type: string
+          enum:
+            - chat.completion.chunk
+        created:
+          type: integer
+          description: Unix timestamp when the chunk was created.
+        model:
+          type: string
+          description: The model used for the completion.
+        system_fingerprint:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatCompletionChunkChoice"
+        usage:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Usage"
+      required:
+        - id
+        - object
+        - created
+        - model
+        - choices
+    ChatCompletionChunkChoice:
+      type: object
+      properties:
+        index:
+          type: integer
+        delta:
+          $ref: "#/components/schemas/ChatCompletionChunkDelta"
+        finish_reason:
+          type: string
+          nullable: true
+          enum:
+            - stop
+            - length
+            - tool_calls
+            - content_filter
+            - insufficient_system_resource
+        logprobs:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/LogProbs"
+      required:
+        - index
+        - delta
+        - finish_reason
+    ChatCompletionChunkDelta:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - assistant
+        content:
+          type: string
+          nullable: true
+        reasoning_content:
+          type: string
+          nullable: true
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatCompletionChunkToolCall"
+    ChatCompletionChunkToolCall:
+      type: object
+      properties:
+        index:
+          type: integer
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - function
+        function:
+          $ref: "#/components/schemas/ChatCompletionChunkToolCallFunction"
+      required:
+        - index
+        - function
+    ChatCompletionChunkToolCallFunction:
+      type: object
+      properties:
+        name:
+          type: string
+        arguments:
+          type: string
     ChatChoice:
       type: object
       properties:

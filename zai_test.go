@@ -3,10 +3,14 @@ package gai
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
+
+	zaiapi "github.com/spachava753/gai/internal/zai"
 )
 
 func requireContentContaining(t *testing.T, resp Response, want string) {
@@ -34,6 +38,112 @@ func requireBlockType(t *testing.T, resp Response, blockType string) Block {
 	}
 	t.Fatalf("no %s block found; response: %+v", blockType, resp)
 	return Block{}
+}
+
+func TestZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/paas/v4/chat/completions" {
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			http.Error(w, "missing authorization", http.StatusUnauthorized)
+			return
+		}
+		var request struct {
+			Stream bool `json:"stream"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || !request.Stream {
+			http.Error(w, "expected streaming request", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(
+			"data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n" +
+				"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"}}]}\n\n" +
+				"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"calculate\",\"arguments\":\"{\\\"x\\\":1}\"}}]}}]}\n\n" +
+				"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":1}}}\n\n" +
+				"data: [DONE]\n\n",
+		))
+	}))
+	defer server.Close()
+
+	client, err := zaiapi.NewClient(server.URL, zaiSecuritySource{apiKey: "test-key"}, zaiapi.WithClient(server.Client()))
+	if err != nil {
+		t.Fatalf("create generated client: %v", err)
+	}
+	generator := NewZaiGenerator(client, "")
+
+	var thinking, content string
+	var toolCall string
+	var usage map[string]int
+	for chunk := range generator.Stream(t.Context(), GenerationRequest{
+		Model:  "glm-5",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("calculate")}}},
+	}) {
+		if chunk.Err != nil {
+			t.Fatalf("stream returned error: %v", chunk.Err)
+		}
+		switch chunk.Block.BlockType {
+		case Thinking:
+			thinking += chunk.Block.Content.String()
+		case Content:
+			content += chunk.Block.Content.String()
+		case ToolCall:
+			toolCall += chunk.Block.Content.String()
+		case MetadataBlockType:
+			if err := json.Unmarshal([]byte(chunk.Block.Content.String()), &usage); err != nil {
+				t.Fatalf("decode usage metadata: %v", err)
+			}
+		}
+	}
+
+	if thinking != "thinking" || content != "answer" {
+		t.Fatalf("thinking = %q, content = %q", thinking, content)
+	}
+	if toolCall != `calculate{"x":1}` {
+		t.Fatalf("tool call chunks = %q", toolCall)
+	}
+	if usage[UsageMetricInputTokens] != 3 || usage[UsageMetricGenerationTokens] != 2 || usage[UsageMetricCacheReadTokens] != 1 {
+		t.Fatalf("usage metadata = %v", usage)
+	}
+}
+
+func TestZaiGeneratorUsesGeneratedJSONClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Stream bool `json:"stream"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Stream {
+			http.Error(w, "expected non-streaming request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"completion_1","choices":[{"index":0,"message":{"role":"assistant","content":"answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`))
+	}))
+	defer server.Close()
+
+	client, err := zaiapi.NewClient(server.URL, zaiSecuritySource{apiKey: "test-key"}, zaiapi.WithClient(server.Client()))
+	if err != nil {
+		t.Fatalf("create generated client: %v", err)
+	}
+	response, err := NewZaiGenerator(client, "").Generate(t.Context(), GenerationRequest{
+		Model:  "glm-5",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("answer")}}},
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if response.FinishReason != EndTurn || len(response.Candidates) != 1 || len(response.Candidates[0].Blocks) != 1 {
+		t.Fatalf("response = %+v", response)
+	}
+	if got := response.Candidates[0].Blocks[0].Content.String(); got != "answer" {
+		t.Fatalf("content = %q, want answer", got)
+	}
+	if response.UsageMetadata[UsageMetricInputTokens] != 3 || response.UsageMetadata[UsageMetricGenerationTokens] != 2 {
+		t.Fatalf("usage metadata = %v", response.UsageMetadata)
+	}
 }
 
 func TestZaiGenerator(t *testing.T) {

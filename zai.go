@@ -1,15 +1,12 @@
 package gai
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"iter"
-	"net/http"
 	"os"
 	"strings"
 
@@ -29,18 +26,12 @@ import (
 //
 // Supported models include glm-5.1, glm-5, glm-4.7, glm-4.6, glm-4.5, and variants.
 type ZaiGenerator struct {
-	client       ZaiCompletionService
-	streamClient ZaiStreamingCompletionService
+	client ZaiCompletionService
 }
 
 // ZaiCompletionService defines the generated Z.AI chat completions client surface.
 type ZaiCompletionService interface {
-	PaasV4ChatCompletionsPost(ctx context.Context, request zai.PaasV4ChatCompletionsPostReq, params zai.PaasV4ChatCompletionsPostParams) (*zai.ChatCompletionResponse, error)
-}
-
-// ZaiStreamingCompletionService streams Z.AI chat completions using generated request types.
-type ZaiStreamingCompletionService interface {
-	NewStreaming(ctx context.Context, request zai.PaasV4ChatCompletionsPostReq, params zai.PaasV4ChatCompletionsPostParams) (*zaiStream, error)
+	PaasV4ChatCompletionsPost(ctx context.Context, request zai.PaasV4ChatCompletionsPostReq, params zai.PaasV4ChatCompletionsPostParams) (zai.PaasV4ChatCompletionsPostRes, error)
 }
 
 const (
@@ -78,24 +69,10 @@ func NewZaiGenerator(client ZaiCompletionService, apiKey string) *ZaiGenerator {
 		apiKey = os.Getenv("Z_API_KEY")
 	}
 
-	var streamClient ZaiStreamingCompletionService
 	if client == nil {
-		defaultClient, err := newDefaultZaiClient(apiKey)
-		if err == nil {
-			client = defaultClient
-			streamClient = defaultClient
-		}
-	} else if c, ok := client.(ZaiStreamingCompletionService); ok {
-		streamClient = c
+		client, _ = newDefaultZaiClient(apiKey)
 	}
-	if streamClient == nil {
-		streamClient, _ = newDefaultZaiClient(apiKey)
-	}
-
-	return &ZaiGenerator{
-		client:       client,
-		streamClient: streamClient,
-	}
+	return &ZaiGenerator{client: client}
 }
 
 type zaiSecuritySource struct {
@@ -106,32 +83,8 @@ func (s zaiSecuritySource) BearerAuth(ctx context.Context, operationName zai.Ope
 	return zai.BearerAuth{Token: s.apiKey}, nil
 }
 
-type defaultZaiClient struct {
-	client     *zai.Client
-	httpClient *http.Client
-	apiKey     string
-	baseURL    string
-}
-
-func newDefaultZaiClient(apiKey string) (*defaultZaiClient, error) {
-	client, err := zai.NewClient(
-		zaiBaseURL,
-		zaiSecuritySource{apiKey: apiKey},
-		zai.WithClient(http.DefaultClient),
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &defaultZaiClient{
-		client:     client,
-		httpClient: http.DefaultClient,
-		apiKey:     apiKey,
-		baseURL:    zaiBaseURL,
-	}, nil
-}
-
-func (c *defaultZaiClient) PaasV4ChatCompletionsPost(ctx context.Context, request zai.PaasV4ChatCompletionsPostReq, params zai.PaasV4ChatCompletionsPostParams) (*zai.ChatCompletionResponse, error) {
-	return c.client.PaasV4ChatCompletionsPost(ctx, request, params)
+func newDefaultZaiClient(apiKey string) (*zai.Client, error) {
+	return zai.NewClient(zaiBaseURL, zaiSecuritySource{apiKey: apiKey})
 }
 
 func convertToolToZai(tool Tool) (zai.FunctionToolSchema, error) {
@@ -706,9 +659,16 @@ func (g *ZaiGenerator) Generate(ctx context.Context, generationRequest Generatio
 		return Response{}, err
 	}
 
-	resp, err := g.client.PaasV4ChatCompletionsPost(ctx, request, params)
+	rawResponse, err := g.client.PaasV4ChatCompletionsPost(ctx, request, params)
 	if err != nil {
 		return Response{}, mapZAIError(err)
+	}
+	resp, ok := rawResponse.(*zai.ChatCompletionResponse)
+	if !ok {
+		if stream, isStream := rawResponse.(*zai.PaasV4ChatCompletionsPostOKTextEventStream); isStream {
+			_ = stream.Close()
+		}
+		return Response{}, fmt.Errorf("zai: expected JSON completion response, got %T", rawResponse)
 	}
 
 	result := Response{UsageMetadata: make(Metadata)}
@@ -778,8 +738,8 @@ func (g *ZaiGenerator) Generate(ctx context.Context, generationRequest Generatio
 // Stream implements StreamingGenerator
 func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
-		if g.streamClient == nil {
-			yield(StreamChunk{Err: fmt.Errorf("zai: streaming client not initialized")})
+		if g.client == nil {
+			yield(StreamChunk{Err: fmt.Errorf("zai: client not initialized")})
 			return
 		}
 		if len(generationRequest.Dialog) == 0 {
@@ -793,21 +753,41 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 			return
 		}
 
-		stream, err := g.streamClient.NewStreaming(ctx, request, params)
+		rawResponse, err := g.client.PaasV4ChatCompletionsPost(ctx, request, params)
 		if err != nil {
 			yield(StreamChunk{Err: mapZAIError(err)})
 			return
 		}
+		stream, ok := rawResponse.(*zai.PaasV4ChatCompletionsPostOKTextEventStream)
+		if !ok {
+			yield(StreamChunk{Err: fmt.Errorf("zai: expected event stream response, got %T", rawResponse)})
+			return
+		}
 		defer stream.Close()
 
-		var finalUsage *zaiStreamUsage
-		for stream.Next() {
-			chunk := stream.Current()
-			if chunk.Usage != nil {
-				finalUsage = chunk.Usage
+		var finalUsage zai.ChatCompletionStreamUsage
+		var hasFinalUsage bool
+		for {
+			event, err := stream.Next(ctx)
+			if err != nil {
+				yield(StreamChunk{Err: mapZAIError(err)})
+				return
+			}
+			if event.Data.IsPaasV4ChatCompletionsPostOKTextEventStreamEventData1() {
+				break
+			}
+			chunk, ok := event.Data.GetChatCompletionStreamResponse()
+			if !ok {
+				yield(StreamChunk{Err: fmt.Errorf("zai: unexpected event data type %q", event.Data.Type)})
+				return
+			}
+			if usage, ok := chunk.Usage.Get(); ok {
+				finalUsage = usage
+				hasFinalUsage = true
 			}
 			for _, choice := range chunk.Choices {
-				switch choice.FinishReason {
+				finishReason := choice.FinishReason.Or("")
+				switch finishReason {
 				case "length", "model_context_window_exceeded":
 					yield(StreamChunk{Err: ErrMaxGenerationLimit})
 					return
@@ -816,23 +796,23 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 					return
 				}
 
-				if choice.Delta.Refusal != "" {
+				if refusal := choice.Delta.Refusal.Or(""); refusal != "" {
 					yield(StreamChunk{Err: ContentPolicyErr("content refused")})
 					return
 				}
 
-				if choice.Delta.ReasoningContent != "" {
-					if !yield(StreamChunk{Block: zaiThinkingBlock(choice.Delta.ReasoningContent), CandidatesIndex: choice.Index}) {
+				if reasoning := choice.Delta.ReasoningContent.Or(""); reasoning != "" {
+					if !yield(StreamChunk{Block: zaiThinkingBlock(reasoning), CandidatesIndex: choice.Index}) {
 						return
 					}
 				}
-				if choice.Delta.Content != "" {
+				if content := choice.Delta.Content.Or(""); content != "" {
 					if !yield(StreamChunk{
 						Block: Block{
 							BlockType:    Content,
 							ModalityType: Text,
 							MimeType:     "text/plain",
-							Content:      Str(choice.Delta.Content),
+							Content:      Str(content),
 						},
 						CandidatesIndex: choice.Index,
 					}) {
@@ -840,28 +820,28 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 					}
 				}
 				for _, tc := range choice.Delta.ToolCalls {
-					if tc.Function.Name != "" {
+					if name := tc.Function.Name.Or(""); name != "" {
 						if !yield(StreamChunk{
 							Block: Block{
-								ID:           tc.ID,
+								ID:           tc.ID.Or(""),
 								BlockType:    ToolCall,
 								ModalityType: Text,
 								MimeType:     "text/plain",
-								Content:      Str(tc.Function.Name),
+								Content:      Str(name),
 							},
 							CandidatesIndex: choice.Index,
 						}) {
 							return
 						}
 					}
-					if tc.Function.Arguments != "" {
+					if arguments := tc.Function.Arguments.Or(""); arguments != "" {
 						if !yield(StreamChunk{
 							Block: Block{
-								ID:           tc.ID,
+								ID:           tc.ID.Or(""),
 								BlockType:    ToolCall,
 								ModalityType: Text,
 								MimeType:     "text/plain",
-								Content:      Str(tc.Function.Arguments),
+								Content:      Str(arguments),
 							},
 							CandidatesIndex: choice.Index,
 						}) {
@@ -872,17 +852,16 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 			}
 		}
 
-		if stream.Err() != nil {
-			yield(StreamChunk{Err: mapZAIError(stream.Err())})
-			return
-		}
-
-		if finalUsage != nil {
+		if hasFinalUsage {
+			var cachedTokens float64
+			if details, ok := finalUsage.PromptTokensDetails.Get(); ok {
+				cachedTokens = optFloat64(details.CachedTokens)
+			}
 			metadata := make(Metadata)
 			addZaiUsageMetadata(metadata, zaiUsage{
-				PromptTokens:     finalUsage.PromptTokens,
-				CompletionTokens: finalUsage.CompletionTokens,
-				CachedTokens:     finalUsage.PromptTokensDetails.CachedTokens,
+				PromptTokens:     optFloat64(finalUsage.PromptTokens),
+				CompletionTokens: optFloat64(finalUsage.CompletionTokens),
+				CachedTokens:     cachedTokens,
 			})
 			if len(metadata) > 0 {
 				yield(StreamChunk{Block: MetadataBlock(metadata), CandidatesIndex: 0})
@@ -977,116 +956,6 @@ func decodeZaiToolCallArguments(raw json.RawMessage, params *map[string]any) err
 		return json.Unmarshal([]byte(args), params)
 	}
 	return json.Unmarshal(raw, params)
-}
-
-type zaiStream struct {
-	body    io.Closer
-	scanner *bufio.Scanner
-	current zaiStreamChunk
-	err     error
-}
-
-type zaiStreamChunk struct {
-	Choices []struct {
-		Index int `json:"index"`
-		Delta struct {
-			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content"`
-			Refusal          string `json:"refusal"`
-			ToolCalls        []struct {
-				Index    int    `json:"index"`
-				ID       string `json:"id"`
-				Type     string `json:"type"`
-				Function struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				} `json:"function"`
-			} `json:"tool_calls"`
-		} `json:"delta"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Usage *zaiStreamUsage `json:"usage"`
-}
-
-type zaiStreamUsage struct {
-	PromptTokens        float64 `json:"prompt_tokens"`
-	CompletionTokens    float64 `json:"completion_tokens"`
-	PromptTokensDetails struct {
-		CachedTokens float64 `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
-}
-
-func (s *zaiStream) Next() bool {
-	for s.scanner.Scan() {
-		line := strings.TrimSpace(s.scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") {
-			continue
-		}
-		data, ok := strings.CutPrefix(line, "data:")
-		if !ok {
-			continue
-		}
-		data = strings.TrimSpace(data)
-		if data == "[DONE]" {
-			return false
-		}
-		var chunk zaiStreamChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			s.err = err
-			return false
-		}
-		s.current = chunk
-		return true
-	}
-	if err := s.scanner.Err(); err != nil {
-		s.err = err
-	}
-	return false
-}
-
-func (s *zaiStream) Current() zaiStreamChunk {
-	return s.current
-}
-
-func (s *zaiStream) Err() error {
-	return s.err
-}
-
-func (s *zaiStream) Close() error {
-	return s.body.Close()
-}
-
-func (c *defaultZaiClient) NewStreaming(ctx context.Context, request zai.PaasV4ChatCompletionsPostReq, params zai.PaasV4ChatCompletionsPostParams) (*zaiStream, error) {
-	if err := request.Validate(); err != nil {
-		return nil, err
-	}
-	payload, err := request.MarshalJSON()
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.baseURL, "/")+"/paas/v4/chat/completions", bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	if language, ok := params.AcceptLanguage.Get(); ok {
-		httpReq.Header.Set("Accept-Language", string(language))
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, mapHTTPAPIError(ProviderZAI, resp)
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	return &zaiStream{body: resp.Body, scanner: scanner}, nil
 }
 
 func mapZAIError(err error) error {

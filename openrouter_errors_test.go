@@ -2,12 +2,10 @@ package gai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
-
-	oai "github.com/openai/openai-go/v3"
 )
 
 func TestOpenRouterGeneratorSurfacesProviderOverload(t *testing.T) {
@@ -27,12 +25,13 @@ func TestOpenRouterGeneratorSurfacesProviderOverload(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var response oai.ChatCompletion
-			if err := json.Unmarshal([]byte(tt.body), &response); err != nil {
-				t.Fatalf("unmarshal response: %v", err)
-			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
 
-			generator := NewOpenRouterGenerator(&mockChatCompletionService{response: &response})
+			generator := newOpenRouterTestGenerator(t, server)
 			_, err := generator.Generate(context.Background(), GenerationRequest{
 				Model: "test/model",
 				Dialog: Dialog{{

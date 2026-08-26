@@ -13,6 +13,7 @@ import (
 	oai "github.com/openai/openai-go/v3"
 	oairesponses "github.com/openai/openai-go/v3/responses"
 
+	openrouterapi "github.com/spachava753/gai/internal/openrouter"
 	"github.com/spachava753/gai/internal/zai"
 )
 
@@ -324,17 +325,23 @@ func TestOpenAIErrorMappingUsesHTTPStatus(t *testing.T) {
 	}
 }
 
-func TestOpenRouterSDKOverloadMapping(t *testing.T) {
-	var cause oai.Error
-	if err := json.Unmarshal([]byte(`{"code":503,"message":"Upstream request failed","metadata":{"error_type":"provider_overloaded"}}`), &cause); err != nil {
-		t.Fatalf("unmarshal SDK error: %v", err)
+func TestOpenRouterGeneratedOverloadMapping(t *testing.T) {
+	cause := &openrouterapi.ErrorEnvelopeStatusCodeWithHeaders{
+		StatusCode: http.StatusServiceUnavailable,
+		RetryAfter: openrouterapi.NewOptString("11"),
+		Response: openrouterapi.ErrorEnvelope{Error: openrouterapi.ErrorDetail{
+			Code:    http.StatusServiceUnavailable,
+			Message: "Upstream request failed",
+			Metadata: openrouterapi.NewOptErrorMetadata(openrouterapi.ErrorMetadata{
+				ErrorType: openrouterapi.NewOptString("provider_overloaded"),
+			}),
+		}},
 	}
-	cause.StatusCode = http.StatusServiceUnavailable
-	cause.Response = &http.Response{Header: http.Header{"Retry-After": []string{"11"}}}
 
-	got := mapOpenRouterError(&cause)
-	if got == nil {
-		t.Fatal("mapOpenRouterError() = nil, want *ApiErr")
+	err := mapOpenRouterTransportError(cause)
+	var got *ApiErr
+	if !errors.As(err, &got) {
+		t.Fatalf("mapOpenRouterTransportError() = %T %v, want *ApiErr", err, err)
 	}
 	if got.Kind != APIErrorKindOverloaded {
 		t.Fatalf("Kind = %q, want %q", got.Kind, APIErrorKindOverloaded)
@@ -345,8 +352,8 @@ func TestOpenRouterSDKOverloadMapping(t *testing.T) {
 	if delay, ok := got.RetryAfter(); !ok || delay != 11*time.Second {
 		t.Fatalf("RetryAfter() = (%s, %t), want (11s, true)", delay, ok)
 	}
-	if !errors.Is(got, &cause) {
-		t.Fatal("mapped error does not wrap the SDK error")
+	if !errors.Is(got, cause) {
+		t.Fatal("mapped error does not wrap the generated error")
 	}
 }
 

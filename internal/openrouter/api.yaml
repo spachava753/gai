@@ -1,0 +1,590 @@
+openapi: 3.0.3
+info:
+  title: OpenRouter Chat Completions API
+  description: OpenRouter Chat Completions API used by the GAI adapter.
+  version: 1.0.0
+servers:
+  - url: https://openrouter.ai/api/v1
+security:
+  - bearerAuth: []
+paths:
+  /chat/completions:
+    post:
+      operationId: createChatCompletion
+      description: Creates a chat completion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: Successful response or provider error after routing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenRouterResponse"
+            text/event-stream:
+              x-ogen-sse-event-shape: data-only
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ChatCompletionChunk"
+                  - type: string
+                    enum:
+                      - "[DONE]"
+        default:
+          description: Error response.
+          headers:
+            Retry-After:
+              description: Delay before retrying, in seconds or as an HTTP date.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    ChatCompletionRequest:
+      type: object
+      required:
+        - model
+        - messages
+      properties:
+        model:
+          type: string
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Message"
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+        frequency_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+        presence_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+        n:
+          type: integer
+          minimum: 1
+        max_completion_tokens:
+          type: integer
+          minimum: 1
+        stop:
+          $ref: "#/components/schemas/Stop"
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/FunctionTool"
+        tool_choice:
+          $ref: "#/components/schemas/ToolChoice"
+        reasoning:
+          $ref: "#/components/schemas/ReasoningConfig"
+        stream:
+          type: boolean
+    Stop:
+      oneOf:
+        - type: string
+        - type: array
+          maxItems: 4
+          items:
+            type: string
+    ReasoningConfig:
+      type: object
+      properties:
+        effort:
+          type: string
+          enum:
+            - max
+            - xhigh
+            - high
+            - medium
+            - low
+            - minimal
+            - none
+        max_tokens:
+          type: integer
+          minimum: 1
+    ToolChoice:
+      oneOf:
+        - $ref: "#/components/schemas/ToolChoiceMode"
+        - $ref: "#/components/schemas/NamedToolChoice"
+    ToolChoiceMode:
+      type: string
+      enum:
+        - none
+        - auto
+        - required
+    NamedToolChoice:
+      type: object
+      required:
+        - type
+        - function
+      properties:
+        type:
+          type: string
+          enum:
+            - function
+        function:
+          type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+    FunctionTool:
+      type: object
+      required:
+        - type
+        - function
+      properties:
+        type:
+          type: string
+          enum:
+            - function
+        function:
+          $ref: "#/components/schemas/FunctionObject"
+    FunctionObject:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        description:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: {}
+    Message:
+      oneOf:
+        - $ref: "#/components/schemas/SystemMessage"
+        - $ref: "#/components/schemas/UserMessage"
+        - $ref: "#/components/schemas/AssistantMessage"
+        - $ref: "#/components/schemas/ToolMessage"
+      discriminator:
+        propertyName: role
+        mapping:
+          system: "#/components/schemas/SystemMessage"
+          user: "#/components/schemas/UserMessage"
+          assistant: "#/components/schemas/AssistantMessage"
+          tool: "#/components/schemas/ToolMessage"
+    SystemMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum:
+            - system
+        content:
+          type: string
+    UserMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum:
+            - user
+        content:
+          $ref: "#/components/schemas/UserMessageContent"
+    UserMessageContent:
+      oneOf:
+        - type: string
+        - type: array
+          items:
+            $ref: "#/components/schemas/UserContentPart"
+    UserContentPart:
+      oneOf:
+        - $ref: "#/components/schemas/TextContentPart"
+        - $ref: "#/components/schemas/ImageContentPart"
+        - $ref: "#/components/schemas/AudioContentPart"
+        - $ref: "#/components/schemas/FileContentPart"
+      discriminator:
+        propertyName: type
+        mapping:
+          text: "#/components/schemas/TextContentPart"
+          image_url: "#/components/schemas/ImageContentPart"
+          input_audio: "#/components/schemas/AudioContentPart"
+          file: "#/components/schemas/FileContentPart"
+    TextContentPart:
+      type: object
+      required:
+        - type
+        - text
+      properties:
+        type:
+          type: string
+          enum:
+            - text
+        text:
+          type: string
+    ImageContentPart:
+      type: object
+      required:
+        - type
+        - image_url
+      properties:
+        type:
+          type: string
+          enum:
+            - image_url
+        image_url:
+          type: object
+          required:
+            - url
+          properties:
+            url:
+              type: string
+    AudioContentPart:
+      type: object
+      required:
+        - type
+        - input_audio
+      properties:
+        type:
+          type: string
+          enum:
+            - input_audio
+        input_audio:
+          type: object
+          required:
+            - data
+            - format
+          properties:
+            data:
+              type: string
+            format:
+              type: string
+    FileContentPart:
+      type: object
+      required:
+        - type
+        - file
+      properties:
+        type:
+          type: string
+          enum:
+            - file
+        file:
+          type: object
+          required:
+            - file_data
+            - filename
+          properties:
+            file_data:
+              type: string
+            filename:
+              type: string
+    AssistantMessage:
+      type: object
+      required:
+        - role
+      properties:
+        role:
+          type: string
+          enum:
+            - assistant
+        content:
+          type: string
+          nullable: true
+        reasoning:
+          type: string
+          nullable: true
+        reasoning_details:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReasoningDetail"
+        refusal:
+          type: string
+          nullable: true
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolCall"
+        audio:
+          $ref: "#/components/schemas/AssistantAudio"
+    AssistantAudio:
+      type: object
+      properties:
+        id:
+          type: string
+        data:
+          type: string
+        transcript:
+          type: string
+        expires_at:
+          type: integer
+          format: int64
+    ToolMessage:
+      type: object
+      required:
+        - role
+        - content
+        - tool_call_id
+      properties:
+        role:
+          type: string
+          enum:
+            - tool
+        content:
+          type: string
+        tool_call_id:
+          type: string
+    ReasoningDetail:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+        summary:
+          type: string
+        text:
+          type: string
+          nullable: true
+        data:
+          type: string
+        signature:
+          type: string
+          nullable: true
+        id:
+          type: string
+          nullable: true
+        format:
+          type: string
+          nullable: true
+        index:
+          type: integer
+    ToolCall:
+      type: object
+      required:
+        - id
+        - type
+        - function
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - function
+        function:
+          $ref: "#/components/schemas/ToolCallFunction"
+    ToolCallFunction:
+      type: object
+      required:
+        - name
+        - arguments
+      properties:
+        name:
+          type: string
+        arguments:
+          type: string
+    OpenRouterResponse:
+      oneOf:
+        - $ref: "#/components/schemas/ChatCompletionResponse"
+        - $ref: "#/components/schemas/ErrorEnvelope"
+    ChatCompletionResponse:
+      type: object
+      required:
+        - id
+        - object
+        - created
+        - model
+        - choices
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum:
+            - chat.completion
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        system_fingerprint:
+          type: string
+          nullable: true
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatChoice"
+        usage:
+          $ref: "#/components/schemas/Usage"
+    ChatChoice:
+      type: object
+      required:
+        - index
+        - message
+      properties:
+        index:
+          type: integer
+        finish_reason:
+          type: string
+          nullable: true
+        message:
+          $ref: "#/components/schemas/AssistantMessage"
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+    ChatCompletionChunk:
+      type: object
+      required:
+        - id
+        - object
+        - created
+        - model
+        - choices
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum:
+            - chat.completion.chunk
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatCompletionChunkChoice"
+        usage:
+          $ref: "#/components/schemas/Usage"
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+    ChatCompletionChunkChoice:
+      type: object
+      required:
+        - index
+        - delta
+      properties:
+        index:
+          type: integer
+        delta:
+          $ref: "#/components/schemas/ChatCompletionChunkDelta"
+        finish_reason:
+          type: string
+          nullable: true
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+    ChatCompletionChunkDelta:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - assistant
+        content:
+          type: string
+          nullable: true
+        refusal:
+          type: string
+          nullable: true
+        reasoning_details:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReasoningDetail"
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatCompletionChunkToolCall"
+    ChatCompletionChunkToolCall:
+      type: object
+      required:
+        - index
+        - function
+      properties:
+        index:
+          type: integer
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - function
+        function:
+          $ref: "#/components/schemas/ChatCompletionChunkToolCallFunction"
+    ChatCompletionChunkToolCallFunction:
+      type: object
+      properties:
+        name:
+          type: string
+        arguments:
+          type: string
+    Usage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        prompt_tokens_details:
+          $ref: "#/components/schemas/PromptTokensDetails"
+        completion_tokens_details:
+          $ref: "#/components/schemas/CompletionTokensDetails"
+    PromptTokensDetails:
+      type: object
+      properties:
+        cached_tokens:
+          type: integer
+        cache_write_tokens:
+          type: integer
+    CompletionTokensDetails:
+      type: object
+      properties:
+        reasoning_tokens:
+          type: integer
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+    ErrorDetail:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        error_type:
+          type: string
+        metadata:
+          $ref: "#/components/schemas/ErrorMetadata"
+    ErrorMetadata:
+      type: object
+      properties:
+        error_type:
+          type: string

@@ -5,9 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
-	oai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
+	"github.com/go-faster/jx"
+
+	"github.com/spachava753/gai/internal/openrouter"
 )
 
 const (
@@ -32,69 +38,18 @@ const (
 	OpenRouterUsageMetricReasoningDetailsAvailable = "reasoning_details_available"
 )
 
-// OpenRouterGenerator implements the Generator interface using OpenRouter's API,
-// which is largely compatible with OpenAI's API but includes additional features
-// like reasoning tokens and extended error information.
-//
-// OpenRouter is a unified API that provides access to multiple LLM providers
-// (OpenAI, Anthropic, Google, Meta, etc.) through a single interface. This
-// generator leverages the OpenAI SDK since OpenRouter's API is a superset of
-// OpenAI's API.
-//
-// Reasoning Support:
-// OpenRouter supports reasoning tokens via the "reasoning" parameter with effort
-// levels ("low", "medium", "high") or max_tokens (as string). This generator:
-// 1. Sets reasoning config in requests via GenerationOptionThinkingBudget
-// 2. Extracts reasoning_details from responses as Thinking blocks with extra fields:
-//   - OpenRouterExtraFieldReasoningType
-//   - OpenRouterExtraFieldReasoningFormat
-//   - OpenRouterExtraFieldReasoningIndex
-//   - OpenRouterExtraFieldReasoningSignature (when applicable)
-//
-// 3. Passes reasoning_details back in assistant messages (recommended by OpenRouter)
-// 4. Sets OpenRouterUsageMetricReasoningDetailsAvailable in Response.UsageMetadata when reasoning_details are present
-//
-// Note: Streaming is not yet implemented for this generator.
+const openRouterBaseURL = "https://openrouter.ai/api/v1"
+
+// OpenRouterGenerator implements Generator using the generated OpenRouter client.
+// It normalizes replayable reasoning details, function tools, multimodal input,
+// provider errors, and usage data from OpenRouter Chat Completions.
 type OpenRouterGenerator struct {
-	client OpenAICompletionService
+	client OpenRouterCompletionService
 }
 
-type openRouterErrorMetadata struct {
-	ErrorType string `json:"error_type"`
-}
-
-type openRouterErrorPayload struct {
-	Code      json.RawMessage         `json:"code"`
-	Message   string                  `json:"message"`
-	ErrorType string                  `json:"error_type"`
-	Metadata  openRouterErrorMetadata `json:"metadata"`
-}
-
-func (p openRouterErrorPayload) canonicalErrorType() string {
-	if p.Metadata.ErrorType != "" {
-		return p.Metadata.ErrorType
-	}
-	return p.ErrorType
-}
-
-// openRouterRawResponse wraps the raw JSON response from OpenRouter.
-type openRouterRawResponse struct {
-	Error   *openRouterErrorPayload `json:"error"`
-	Choices []struct {
-		Error   *openRouterErrorPayload `json:"error"`
-		Message struct {
-			ReasoningDetails []struct {
-				Type      string `json:"type"`
-				Summary   string `json:"summary,omitempty"`
-				Text      string `json:"text,omitempty"`
-				Data      string `json:"data,omitempty"` // For encrypted reasoning
-				Signature string `json:"signature,omitempty"`
-				ID        string `json:"id"`
-				Format    string `json:"format"`
-				Index     int    `json:"index"`
-			} `json:"reasoning_details,omitempty"`
-		} `json:"message"`
-	} `json:"choices"`
+// OpenRouterCompletionService defines the generated OpenRouter chat completions client surface.
+type OpenRouterCompletionService interface {
+	CreateChatCompletion(ctx context.Context, request *openrouter.ChatCompletionRequest) (openrouter.CreateChatCompletionRes, error)
 }
 
 func classifyOpenRouterError(statusCode int, errorType string) APIErrorKind {
@@ -128,50 +83,45 @@ func classifyOpenRouterError(statusCode int, errorType string) APIErrorKind {
 	}
 }
 
-func mapOpenRouterError(err error) *ApiErr {
-	var apiErr *oai.Error
-	if !errors.As(err, &apiErr) {
-		return nil
+func openRouterErrorType(detail openrouter.ErrorDetail) string {
+	if metadata, ok := detail.Metadata.Get(); ok {
+		if errorType := metadata.ErrorType.Or(""); errorType != "" {
+			return errorType
+		}
 	}
-
-	var payload openRouterErrorPayload
-	_ = json.Unmarshal([]byte(apiErr.RawJSON()), &payload)
-	return &ApiErr{
-		Provider:           ProviderOpenRouter,
-		Kind:               classifyOpenRouterError(apiErr.StatusCode, payload.canonicalErrorType()),
-		StatusCode:         apiErr.StatusCode,
-		Message:            apiErr.Message,
-		RawBody:            apiErr.RawJSON(),
-		RetryAfterDuration: retryAfterFromResponse(apiErr.Response),
-		Cause:              err,
-	}
+	return detail.ErrorType.Or("")
 }
 
-func mapOpenRouterResponseError(rawBody string, payload openRouterErrorPayload) *ApiErr {
-	statusCode := 500
-	var code int
-	if err := json.Unmarshal(payload.Code, &code); err == nil && code > 0 {
-		statusCode = code
+func mapOpenRouterErrorDetail(detail openrouter.ErrorDetail, statusCode int, rawBody string) *ApiErr {
+	if statusCode <= 0 {
+		statusCode = detail.Code
+	}
+	if statusCode <= 0 {
+		statusCode = 500
 	}
 	return &ApiErr{
 		Provider:   ProviderOpenRouter,
-		Kind:       classifyOpenRouterError(statusCode, payload.canonicalErrorType()),
+		Kind:       classifyOpenRouterError(statusCode, openRouterErrorType(detail)),
 		StatusCode: statusCode,
-		Message:    payload.Message,
+		Message:    detail.Message,
 		RawBody:    rawBody,
 	}
 }
 
-// openRouterReasoningDetail represents a single reasoning detail in the request
-type openRouterReasoningDetail struct {
-	Type      string `json:"type"`
-	Summary   string `json:"summary,omitempty"`
-	Text      string `json:"text,omitempty"`
-	Data      string `json:"data,omitempty"`
-	Signature string `json:"signature,omitempty"`
-	ID        string `json:"id"`
-	Format    string `json:"format"`
-	Index     int    `json:"index"`
+func mapOpenRouterTransportError(err error) error {
+	var statusErr *openrouter.ErrorEnvelopeStatusCodeWithHeaders
+	if !errors.As(err, &statusErr) {
+		return err
+	}
+	rawBody, _ := json.Marshal(statusErr.Response)
+	mapped := mapOpenRouterErrorDetail(statusErr.Response.Error, statusErr.StatusCode, string(rawBody))
+	if retryAfter := statusErr.RetryAfter.Or(""); retryAfter != "" {
+		if delay, ok := parseRetryAfter(retryAfter, time.Now()); ok {
+			mapped.RetryAfterDuration = &delay
+		}
+	}
+	mapped.Cause = err
+	return mapped
 }
 
 type openRouterGenerationOptions struct {
@@ -243,72 +193,385 @@ func parseOpenRouterGenerationOptions(values GenerationOptions) (*openRouterGene
 	return options, nil
 }
 
-// NewOpenRouterGenerator creates a stateless OpenRouter generator that uses the OpenAI SDK
-// with OpenRouter-specific configuration. The baseURL should be "https://openrouter.ai/api/v1"
-// and the apiKey should be your OpenRouter API key.
-//
-// Example:
-//
-//	client := openai.NewClient(
-//	    option.WithBaseURL("https://openrouter.ai/api/v1"),
-//	    option.WithAPIKey(os.Getenv("OPENROUTER_API_KEY")),
-//	)
-//	gen := NewOpenRouterGenerator(&client.Chat.Completions)
-func NewOpenRouterGenerator(client OpenAICompletionService) *OpenRouterGenerator {
+// NewOpenRouterGenerator creates a stateless OpenRouter generator using the generated client.
+// If client is nil, a generated client is created with the OpenRouter base URL.
+// apiKey is read from OPENROUTER_API_KEY when empty.
+func NewOpenRouterGenerator(client OpenRouterCompletionService, apiKey string) *OpenRouterGenerator {
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENROUTER_API_KEY")
+	}
+	if client == nil {
+		client, _ = newDefaultOpenRouterClient(apiKey)
+	}
 	return &OpenRouterGenerator{client: client}
 }
 
-// buildReasoningDetailsForRequest converts thinking blocks into OpenRouter's reasoning_details format
-func buildReasoningDetailsForRequest(thinkingBlocks []Block) []openRouterReasoningDetail {
-	var details []openRouterReasoningDetail
+type openRouterSecuritySource struct {
+	apiKey string
+}
 
-	for i, block := range thinkingBlocks {
+func (s openRouterSecuritySource) BearerAuth(ctx context.Context, operationName openrouter.OperationName) (openrouter.BearerAuth, error) {
+	return openrouter.BearerAuth{Token: s.apiKey}, nil
+}
+
+func newDefaultOpenRouterClient(apiKey string) (*openrouter.Client, error) {
+	return openrouter.NewClient(openRouterBaseURL, openRouterSecuritySource{apiKey: apiKey})
+}
+
+func buildOpenRouterReasoningDetails(blocks []Block) []openrouter.ReasoningDetail {
+	details := make([]openrouter.ReasoningDetail, 0, len(blocks))
+	for i, block := range blocks {
 		if block.BlockType != Thinking {
 			continue
 		}
-
-		detail := openRouterReasoningDetail{
-			ID:     block.ID,
-			Index:  i,
-			Format: "anthropic-claude-v1", // Default format
+		detail := openrouter.ReasoningDetail{
+			Type:   "reasoning.text",
+			Format: openrouter.NewOptNilString("anthropic-claude-v1"),
+			Index:  openrouter.NewOptInt(i),
 		}
-
-		// Extract reasoning type from extra fields
+		if block.ID != "" {
+			detail.ID = openrouter.NewOptNilString(block.ID)
+		}
 		if reasoningType, ok := block.ExtraFields[OpenRouterExtraFieldReasoningType].(string); ok {
 			detail.Type = reasoningType
-		} else {
-			detail.Type = "reasoning.text" // Default type
 		}
-
-		// Extract format from extra fields if available
 		if format, ok := block.ExtraFields[OpenRouterExtraFieldReasoningFormat].(string); ok {
-			detail.Format = format
+			detail.Format = openrouter.NewOptNilString(format)
 		}
-
-		// Extract index from extra fields if available
 		if index, ok := block.ExtraFields[OpenRouterExtraFieldReasoningIndex].(int); ok {
-			detail.Index = index
+			detail.Index = openrouter.NewOptInt(index)
 		}
 
-		// Set content based on type
 		switch detail.Type {
 		case "reasoning.summary":
-			detail.Summary = block.Content.String()
+			detail.Summary = openrouter.NewOptString(block.Content.String())
 		case "reasoning.encrypted":
-			detail.Data = block.Content.String()
-		case "reasoning.text":
-			detail.Text = block.Content.String()
-			if sig, ok := block.ExtraFields[OpenRouterExtraFieldReasoningSignature].(string); ok {
-				detail.Signature = sig
-			}
+			detail.Data = openrouter.NewOptString(block.Content.String())
 		default:
-			detail.Text = block.Content.String()
+			detail.Text = openrouter.NewOptNilString(block.Content.String())
+			if signature, ok := block.ExtraFields[OpenRouterExtraFieldReasoningSignature].(string); ok {
+				detail.Signature = openrouter.NewOptNilString(signature)
+			}
 		}
-
 		details = append(details, detail)
 	}
-
 	return details
+}
+
+func convertToolToOpenRouter(tool Tool) (openrouter.FunctionTool, error) {
+	function := openrouter.FunctionObject{Name: tool.Name}
+	if tool.Description != "" {
+		function.Description = openrouter.NewOptString(tool.Description)
+	}
+	if tool.InputSchema != nil {
+		schemaJSON, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			return openrouter.FunctionTool{}, err
+		}
+		var rawParameters map[string]json.RawMessage
+		if err := json.Unmarshal(schemaJSON, &rawParameters); err != nil {
+			return openrouter.FunctionTool{}, err
+		}
+		parameters := make(openrouter.FunctionObjectParameters, len(rawParameters))
+		for name, raw := range rawParameters {
+			parameters[name] = jx.Raw(raw)
+		}
+		function.Parameters = openrouter.NewOptFunctionObjectParameters(parameters)
+	}
+	converted := openrouter.FunctionTool{Type: openrouter.FunctionToolTypeFunction, Function: function}
+	if err := converted.Validate(); err != nil {
+		return openrouter.FunctionTool{}, err
+	}
+	return converted, nil
+}
+
+func convertToolsToOpenRouter(tools []Tool) ([]openrouter.FunctionTool, error) {
+	converted := make([]openrouter.FunctionTool, 0, len(tools))
+	seen := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		if tool.Name == "" {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be empty")}
+		}
+		if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be %s", tool.Name)}
+		}
+		if _, exists := seen[tool.Name]; exists {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool already provided")}
+		}
+		seen[tool.Name] = struct{}{}
+		providerTool, err := convertToolToOpenRouter(tool)
+		if err != nil {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: err}
+		}
+		converted = append(converted, providerTool)
+	}
+	return converted, nil
+}
+
+func buildOpenRouterMessages(request GenerationRequest) ([]openrouter.Message, error) {
+	messages := make([]openrouter.Message, 0, len(request.Dialog)+1)
+	instructions, err := joinedTextInstructions(request.Instructions)
+	if err != nil {
+		return nil, err
+	}
+	if instructions != "" {
+		messages = append(messages, openrouter.NewSystemMessageMessage(openrouter.SystemMessage{
+			Role: openrouter.SystemMessageRoleSystem, Content: instructions,
+		}))
+	}
+	for i, message := range request.Dialog {
+		switch message.Role {
+		case User:
+			user, err := buildOpenRouterUserMessage(message.Blocks)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, openrouter.NewUserMessageMessage(user))
+		case Assistant:
+			assistant, err := buildOpenRouterAssistantMessage(message.Blocks)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, openrouter.NewAssistantMessageMessage(assistant))
+		case ToolResult:
+			toolResult, err := buildOpenRouterToolMessage(message.Blocks)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, openrouter.NewToolMessageMessage(toolResult))
+		default:
+			return nil, fmt.Errorf("openrouter: unsupported role at index %d: %v", i, message.Role)
+		}
+	}
+	return messages, nil
+}
+
+func buildOpenRouterUserMessage(blocks []Block) (openrouter.UserMessage, error) {
+	if len(blocks) == 0 {
+		return openrouter.UserMessage{}, fmt.Errorf("openrouter: user message must have at least one block")
+	}
+	if len(blocks) == 1 && blocks[0].BlockType == Content && blocks[0].ModalityType == Text {
+		return openrouter.UserMessage{
+			Role:    openrouter.UserMessageRoleUser,
+			Content: openrouter.NewStringUserMessageContent(blocks[0].Content.String()),
+		}, nil
+	}
+	parts := make([]openrouter.UserContentPart, 0, len(blocks))
+	for _, block := range blocks {
+		if block.BlockType != Content {
+			return openrouter.UserMessage{}, fmt.Errorf("openrouter: unsupported user block type %q", block.BlockType)
+		}
+		switch block.ModalityType {
+		case Text:
+			parts = append(parts, openrouter.NewTextContentPartUserContentPart(openrouter.TextContentPart{
+				Type: openrouter.TextContentPartTypeText, Text: block.Content.String(),
+			}))
+		case Image:
+			if block.MimeType == "" {
+				return openrouter.UserMessage{}, fmt.Errorf("openrouter: image block missing MIME type")
+			}
+			dataURL := fmt.Sprintf("data:%s;base64,%s", block.MimeType, block.Content.String())
+			if block.MimeType == "application/pdf" {
+				filenameValue, ok := block.ExtraFields[BlockFieldFilenameKey]
+				if !ok {
+					return openrouter.UserMessage{}, fmt.Errorf("openrouter: PDF block missing filename")
+				}
+				filename, ok := filenameValue.(string)
+				if !ok {
+					return openrouter.UserMessage{}, fmt.Errorf("openrouter: PDF filename is not a string")
+				}
+				parts = append(parts, openrouter.NewFileContentPartUserContentPart(openrouter.FileContentPart{
+					Type: openrouter.FileContentPartTypeFile,
+					File: openrouter.FileContentPartFile{FileData: dataURL, Filename: filename},
+				}))
+				continue
+			}
+			parts = append(parts, openrouter.NewImageContentPartUserContentPart(openrouter.ImageContentPart{
+				Type:     openrouter.ImageContentPartTypeImageURL,
+				ImageURL: openrouter.ImageContentPartImageURL{URL: dataURL},
+			}))
+		case Audio:
+			format, ok := strings.CutPrefix(block.MimeType, "audio/")
+			if !ok || (format != "wav" && format != "mp3") {
+				return openrouter.UserMessage{}, fmt.Errorf("openrouter: unsupported audio format %q", block.MimeType)
+			}
+			parts = append(parts, openrouter.NewAudioContentPartUserContentPart(openrouter.AudioContentPart{
+				Type:       openrouter.AudioContentPartTypeInputAudio,
+				InputAudio: openrouter.AudioContentPartInputAudio{Data: block.Content.String(), Format: format},
+			}))
+		default:
+			return openrouter.UserMessage{}, UnsupportedInputModalityErr(block.ModalityType.String())
+		}
+	}
+	return openrouter.UserMessage{
+		Role:    openrouter.UserMessageRoleUser,
+		Content: openrouter.NewUserContentPartArrayUserMessageContent(parts),
+	}, nil
+}
+
+func buildOpenRouterAssistantMessage(blocks []Block) (openrouter.AssistantMessage, error) {
+	message := openrouter.AssistantMessage{Role: openrouter.AssistantMessageRoleAssistant}
+	var content strings.Builder
+	var thinking []Block
+	for _, block := range blocks {
+		switch block.BlockType {
+		case Content:
+			switch block.ModalityType {
+			case Text:
+				content.WriteString(block.Content.String())
+			case Audio:
+				if block.ID == "" {
+					return openrouter.AssistantMessage{}, fmt.Errorf("openrouter: assistant audio block missing ID")
+				}
+				message.Audio = openrouter.NewOptAssistantAudio(openrouter.AssistantAudio{ID: openrouter.NewOptString(block.ID)})
+			default:
+				return openrouter.AssistantMessage{}, UnsupportedInputModalityErr(block.ModalityType.String())
+			}
+		case Thinking:
+			if block.ModalityType != Text {
+				return openrouter.AssistantMessage{}, UnsupportedInputModalityErr(block.ModalityType.String())
+			}
+			thinking = append(thinking, block)
+		case ToolCall:
+			if block.ID == "" {
+				return openrouter.AssistantMessage{}, fmt.Errorf("openrouter: tool call block missing ID")
+			}
+			var input ToolCallInput
+			if err := json.Unmarshal([]byte(block.Content.String()), &input); err != nil {
+				return openrouter.AssistantMessage{}, fmt.Errorf("openrouter: invalid tool call content: %w", err)
+			}
+			arguments, err := json.Marshal(input.Parameters)
+			if err != nil {
+				return openrouter.AssistantMessage{}, fmt.Errorf("openrouter: marshal tool arguments: %w", err)
+			}
+			message.ToolCalls = append(message.ToolCalls, openrouter.ToolCall{
+				ID: block.ID, Type: openrouter.ToolCallTypeFunction,
+				Function: openrouter.ToolCallFunction{Name: input.Name, Arguments: string(arguments)},
+			})
+		default:
+			return openrouter.AssistantMessage{}, fmt.Errorf("openrouter: unsupported assistant block type %q", block.BlockType)
+		}
+	}
+	if content.Len() > 0 {
+		message.Content = openrouter.NewOptNilString(content.String())
+	}
+	message.ReasoningDetails = buildOpenRouterReasoningDetails(thinking)
+	return message, nil
+}
+
+func buildOpenRouterToolMessage(blocks []Block) (openrouter.ToolMessage, error) {
+	if len(blocks) == 0 {
+		return openrouter.ToolMessage{}, fmt.Errorf("openrouter: tool result message must have at least one block")
+	}
+	toolCallID := blocks[0].ID
+	if toolCallID == "" {
+		return openrouter.ToolMessage{}, fmt.Errorf("openrouter: tool result block must have a tool call ID")
+	}
+	var content strings.Builder
+	for _, block := range blocks {
+		if block.ID != toolCallID {
+			return openrouter.ToolMessage{}, fmt.Errorf("openrouter: all tool result blocks must have the same ID")
+		}
+		if block.BlockType != Content {
+			return openrouter.ToolMessage{}, fmt.Errorf("openrouter: unsupported tool result block type %q", block.BlockType)
+		}
+		if block.ModalityType != Text {
+			return openrouter.ToolMessage{}, UnsupportedInputModalityErr(block.ModalityType.String())
+		}
+		content.WriteString(block.Content.String())
+	}
+	return openrouter.ToolMessage{Role: openrouter.ToolMessageRoleTool, Content: content.String(), ToolCallID: toolCallID}, nil
+}
+
+func (g *OpenRouterGenerator) buildRequest(request GenerationRequest) (*openrouter.ChatCompletionRequest, error) {
+	options, err := parseOpenRouterGenerationOptions(request.Options)
+	if err != nil {
+		return nil, err
+	}
+	messages, err := buildOpenRouterMessages(request)
+	if err != nil {
+		return nil, err
+	}
+	tools, err := convertToolsToOpenRouter(request.Tools)
+	if err != nil {
+		return nil, err
+	}
+	providerRequest := &openrouter.ChatCompletionRequest{Model: request.Model, Messages: messages, Stream: openrouter.NewOptBool(false)}
+	if len(tools) > 0 {
+		providerRequest.Tools = tools
+	}
+	if options.Temperature != nil {
+		providerRequest.Temperature = openrouter.NewOptFloat64(*options.Temperature)
+	}
+	if options.TopP != nil {
+		providerRequest.TopP = openrouter.NewOptFloat64(*options.TopP)
+	}
+	if options.FrequencyPenalty != nil {
+		providerRequest.FrequencyPenalty = openrouter.NewOptFloat64(*options.FrequencyPenalty)
+	}
+	if options.PresencePenalty != nil {
+		providerRequest.PresencePenalty = openrouter.NewOptFloat64(*options.PresencePenalty)
+	}
+	if options.CandidateCount != nil {
+		providerRequest.N = openrouter.NewOptInt(int(*options.CandidateCount))
+	}
+	if options.MaxGenerationTokens != nil {
+		providerRequest.MaxCompletionTokens = openrouter.NewOptInt(*options.MaxGenerationTokens)
+	}
+	if len(options.StopSequences) == 1 {
+		providerRequest.Stop = openrouter.NewOptStop(openrouter.NewStringStop(options.StopSequences[0]))
+	} else if len(options.StopSequences) > 1 {
+		providerRequest.Stop = openrouter.NewOptStop(openrouter.NewStringArrayStop(options.StopSequences))
+	}
+	if options.ThinkingBudget != "" {
+		reasoning, err := openRouterReasoningConfig(options.ThinkingBudget)
+		if err != nil {
+			return nil, err
+		}
+		providerRequest.Reasoning = openrouter.NewOptReasoningConfig(reasoning)
+	}
+	if err := applyOpenRouterToolChoice(providerRequest, options.ToolChoice, request.Tools); err != nil {
+		return nil, err
+	}
+	return providerRequest, nil
+}
+
+func openRouterReasoningConfig(value string) (openrouter.ReasoningConfig, error) {
+	effort := openrouter.ReasoningConfigEffort(value)
+	if err := effort.Validate(); err == nil {
+		return openrouter.ReasoningConfig{Effort: openrouter.NewOptReasoningConfigEffort(effort)}, nil
+	}
+	maxTokens, err := strconv.Atoi(value)
+	if err != nil || maxTokens < 1 {
+		return openrouter.ReasoningConfig{}, &InvalidParameterErr{
+			Parameter: GenerationOptionThinkingBudget,
+			Reason:    "must be a supported effort or a positive integer token budget",
+		}
+	}
+	return openrouter.ReasoningConfig{MaxTokens: openrouter.NewOptInt(maxTokens)}, nil
+}
+
+func applyOpenRouterToolChoice(request *openrouter.ChatCompletionRequest, choice string, tools []Tool) error {
+	if choice == "" {
+		return nil
+	}
+	if choice == ToolChoiceToolsRequired && len(tools) == 0 {
+		return InvalidToolChoiceErr("required needs at least one tool")
+	}
+	if choice == "none" || choice == ToolChoiceAuto || choice == ToolChoiceToolsRequired {
+		request.ToolChoice = openrouter.NewOptToolChoice(openrouter.NewToolChoiceModeToolChoice(openrouter.ToolChoiceMode(choice)))
+		return nil
+	}
+	for _, tool := range tools {
+		if tool.Name == choice {
+			request.ToolChoice = openrouter.NewOptToolChoice(openrouter.NewNamedToolChoiceToolChoice(openrouter.NamedToolChoice{
+				Type:     openrouter.NamedToolChoiceTypeFunction,
+				Function: openrouter.NamedToolChoiceFunction{Name: choice},
+			}))
+			return nil
+		}
+	}
+	return InvalidToolChoiceErr(fmt.Sprintf("tool %q is not in the request", choice))
 }
 
 // Generate implements Generator
@@ -317,334 +580,325 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, request GenerationRe
 		return Response{}, fmt.Errorf("openrouter: client not initialized")
 	}
 
-	dialog := request.Dialog
-	if len(dialog) == 0 {
+	if len(request.Dialog) == 0 {
 		return Response{}, ErrEmptyDialog
 	}
-	options, err := parseOpenRouterGenerationOptions(request.Options)
+	providerRequest, err := g.buildRequest(request)
 	if err != nil {
 		return Response{}, err
 	}
-	tools, err := convertToolsToOpenAI(request.Tools)
+	rawResponse, err := g.client.CreateChatCompletion(ctx, providerRequest)
 	if err != nil {
-		return Response{}, err
+		return Response{}, mapOpenRouterTransportError(err)
 	}
-	instructions, err := textInstructions(request.Instructions)
-	if err != nil {
-		return Response{}, err
+	providerResponse, ok := rawResponse.(*openrouter.OpenRouterResponse)
+	if !ok {
+		if stream, isStream := rawResponse.(*openrouter.CreateChatCompletionOKTextEventStream); isStream {
+			_ = stream.Close()
+		}
+		return Response{}, fmt.Errorf("openrouter: expected JSON completion response, got %T", rawResponse)
 	}
 
-	// Convert each message to OpenAI format
-	// Filter out Thinking blocks since toOpenAIMessage doesn't know how to handle them
-	// We'll add them back via WithJSONSet
-	var messages []oai.ChatCompletionMessageParamUnion
-	var assistantMsgIndices []int // Track indices of assistant messages with thinking
-	var thinkingBlocksByMsg [][]Block
-
-	for i, msg := range dialog {
-		// Separate thinking blocks from other blocks
-		var thinkingBlocks []Block
-		var otherBlocks []Block
-		for _, block := range msg.Blocks {
-			if block.BlockType == Thinking {
-				thinkingBlocks = append(thinkingBlocks, block)
-			} else {
-				otherBlocks = append(otherBlocks, block)
-			}
-		}
-
-		// Convert message without thinking blocks
-		msgForConversion := msg
-		msgForConversion.Blocks = otherBlocks
-
-		oaiMsg, err := toOpenAIMessage(msgForConversion)
-		if err != nil {
-			return Response{}, fmt.Errorf("failed to convert message: %w", err)
-		}
-		messages = append(messages, oaiMsg)
-
-		// Track assistant messages with thinking blocks
-		if msg.Role == Assistant && len(thinkingBlocks) > 0 {
-			assistantMsgIndices = append(assistantMsgIndices, i)
-			thinkingBlocksByMsg = append(thinkingBlocksByMsg, thinkingBlocks)
+	rawBody, _ := json.Marshal(providerResponse)
+	if errorEnvelope, ok := providerResponse.GetErrorEnvelope(); ok {
+		return Response{}, mapOpenRouterErrorDetail(errorEnvelope.Error, errorEnvelope.Error.Code, string(rawBody))
+	}
+	completion, ok := providerResponse.GetChatCompletionResponse()
+	if !ok {
+		return Response{}, fmt.Errorf("openrouter: unexpected response type %q", providerResponse.Type)
+	}
+	for _, choice := range completion.Choices {
+		if detail, ok := choice.Error.Get(); ok {
+			return Response{}, mapOpenRouterErrorDetail(detail, detail.Code, string(rawBody))
 		}
 	}
 
-	// Create OpenAI chat completion params
-	params := oai.ChatCompletionNewParams{
-		Model:    request.Model,
-		Messages: messages,
-		Tools:    tools,
+	result := Response{UsageMetadata: make(Metadata)}
+	if usage, ok := completion.Usage.Get(); ok {
+		addOpenRouterUsageMetadata(result.UsageMetadata, usage)
 	}
-
-	if len(instructions) > 0 {
-		parts := make([]oai.ChatCompletionContentPartTextParam, 0, len(instructions))
-		for _, instruction := range instructions {
-			parts = append(parts, oai.ChatCompletionContentPartTextParam{Text: instruction})
-		}
-		params.Messages = append([]oai.ChatCompletionMessageParamUnion{
-			oai.SystemMessage(parts),
-		}, messages...)
-	}
-
-	// Map our options to OpenAI params if options are provided
-	if options != nil {
-		// Set temperature if non-zero
-		if options.Temperature != nil {
-			params.Temperature = oai.Float(*options.Temperature)
-		}
-
-		// Set top_p if non-zero
-		if options.TopP != nil {
-			params.TopP = oai.Float(*options.TopP)
-		}
-
-		// Set frequency penalty
-		if options.FrequencyPenalty != nil {
-			params.FrequencyPenalty = oai.Float(*options.FrequencyPenalty)
-		}
-
-		// Set presence penalty
-		if options.PresencePenalty != nil {
-			params.PresencePenalty = oai.Float(*options.PresencePenalty)
-		}
-
-		// Set max tokens
-		if options.MaxGenerationTokens != nil {
-			params.MaxCompletionTokens = oai.Int(int64(*options.MaxGenerationTokens))
-		}
-
-		// Set number of responses
-		if options.CandidateCount != nil {
-			params.N = oai.Int(int64(*options.CandidateCount))
-		}
-
-		// Set stop sequences if specified
-		if len(options.StopSequences) > 0 {
-			// OpenAI accepts either a single string or array of strings
-			if len(options.StopSequences) == 1 {
-				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfString: oai.String(options.StopSequences[0])}
-			} else {
-				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfStringArray: options.StopSequences}
-			}
-		}
-
-		// Set tool choice if specified
-		if options.ToolChoice != "" {
-			switch options.ToolChoice {
-			case ToolChoiceAuto:
-				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceAuto)}
-			case ToolChoiceToolsRequired:
-				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceToolsRequired)}
-			default:
-				// Specific tool name
-				params.ToolChoice = oai.ToolChoiceOptionFunctionToolChoice(oai.ChatCompletionNamedToolChoiceFunctionParam{
-					Name: options.ToolChoice,
-				})
-			}
-		}
-	}
-
-	// Build request options for OpenRouter-specific features
-	var reqOpts []option.RequestOption
-
-	// Add reasoning_details to assistant messages with thinking blocks
-	for idx, msgIndex := range assistantMsgIndices {
-		thinkingBlocks := thinkingBlocksByMsg[idx]
-		reasoningDetails := buildReasoningDetailsForRequest(thinkingBlocks)
-		if len(reasoningDetails) > 0 {
-			// Use sjson format: messages.{index}.reasoning_details
-			jsonPath := fmt.Sprintf("messages.%d.reasoning_details", msgIndex)
-			reqOpts = append(reqOpts, option.WithJSONSet(jsonPath, reasoningDetails))
-		}
-	}
-
-	// Handle ThinkingBudget for reasoning configuration
-	if options != nil && options.ThinkingBudget != "" {
-		// Try to parse as effort level or max_tokens
-		switch options.ThinkingBudget {
-		case "low", "medium", "high":
-			reqOpts = append(reqOpts, option.WithJSONSet("reasoning.effort", options.ThinkingBudget))
-		default:
-			// Assume it's a numeric max_tokens value (string will be parsed by API)
-			reqOpts = append(reqOpts, option.WithJSONSet("reasoning.max_tokens", options.ThinkingBudget))
-		}
-	}
-
-	// Make the API call with request options
-	resp, err := g.client.New(ctx, params, reqOpts...)
-	if err != nil {
-		if mapped := mapOpenRouterError(err); mapped != nil {
-			return Response{}, mapped
-		}
-		return Response{}, fmt.Errorf("failed to create new message: %w", err)
-	}
-
-	// OpenRouter may return provider errors in an HTTP 200 response, either at
-	// the top level or in a choice after partial output was generated.
-	var rawResp openRouterRawResponse
-	rawJSON := resp.RawJSON()
-	if rawJSON != "" {
-		if err := json.Unmarshal([]byte(rawJSON), &rawResp); err == nil {
-			if rawResp.Error != nil {
-				return Response{}, mapOpenRouterResponseError(rawJSON, *rawResp.Error)
-			}
-			for _, choice := range rawResp.Choices {
-				if choice.Error != nil {
-					return Response{}, mapOpenRouterResponseError(rawJSON, *choice.Error)
-				}
-			}
-		}
-	}
-
-	// Convert OpenAI response to our Response type
-	result := Response{
-		UsageMetadata: make(Metadata),
-	}
-
-	// Add usage metrics if available
-	if usage := resp.Usage; usage.PromptTokens > 0 || usage.CompletionTokens > 0 {
-		if promptTokens := usage.PromptTokens; promptTokens > 0 {
-			result.UsageMetadata[UsageMetricInputTokens] = int(promptTokens)
-		}
-		if completionTokens := usage.CompletionTokens; completionTokens > 0 {
-			result.UsageMetadata[UsageMetricGenerationTokens] = int(completionTokens)
-		}
-		// Check for cached tokens (OpenRouter uses OpenAI SDK structure)
-		if usage.PromptTokensDetails.CachedTokens > 0 {
-			result.UsageMetadata[UsageMetricCacheReadTokens] = int(usage.PromptTokensDetails.CachedTokens)
-		}
-	}
-
-	// Record whether the already-parsed response includes reasoning details.
-	if len(rawResp.Choices) > 0 && len(rawResp.Choices[0].Message.ReasoningDetails) > 0 {
+	if len(completion.Choices) > 0 && len(completion.Choices[0].Message.ReasoningDetails) > 0 {
 		result.UsageMetadata[OpenRouterUsageMetricReasoningDetailsAvailable] = true
 	}
 
 	var hasToolCalls bool
 
-	// Convert all choices to our Message type
-	for i, choice := range resp.Choices {
-		// Convert the message content
-		var blocks []Block
-
-		// Extract reasoning details from raw response for this choice FIRST
-		// Reasoning details should come before content blocks
-		if len(rawResp.Choices) > i && len(rawResp.Choices[i].Message.ReasoningDetails) > 0 {
-			for _, detail := range rawResp.Choices[i].Message.ReasoningDetails {
-				// Add reasoning details as Thinking blocks
-				var reasoningContent string
-				extraFields := map[string]interface{}{
-					OpenRouterExtraFieldReasoningType:   detail.Type,
-					OpenRouterExtraFieldReasoningFormat: detail.Format,
-					OpenRouterExtraFieldReasoningIndex:  detail.Index,
-				}
-
-				switch detail.Type {
-				case "reasoning.summary":
-					reasoningContent = detail.Summary
-				case "reasoning.text":
-					reasoningContent = detail.Text
-					if detail.Signature != "" {
-						extraFields[OpenRouterExtraFieldReasoningSignature] = detail.Signature
-					}
-				case "reasoning.encrypted":
-					reasoningContent = detail.Data
-				default:
-					continue
-				}
-
-				if reasoningContent != "" {
-					extraFields[ThinkingExtraFieldGeneratorKey] = ThinkingGeneratorOpenRouter
-					blocks = append(blocks, Block{
-						ID:           detail.ID,
-						BlockType:    Thinking,
-						ModalityType: Text,
-						MimeType:     "text/plain",
-						Content:      Str(reasoningContent),
-						ExtraFields:  extraFields,
-					})
-				}
+	for _, choice := range completion.Choices {
+		blocks := make([]Block, 0, 2)
+		for _, detail := range choice.Message.ReasoningDetails {
+			block, ok := openRouterReasoningBlock(detail)
+			if ok {
+				blocks = append(blocks, block)
 			}
 		}
-
-		// Handle text content AFTER reasoning blocks
-		if content := choice.Message.Content; content != "" {
-			blocks = append(blocks, Block{
-				BlockType:    Content,
-				ModalityType: Text,
-				MimeType:     "text/plain",
-				Content:      Str(content),
-			})
+		if content, ok := choice.Message.Content.Get(); ok && content != "" {
+			blocks = append(blocks, TextBlock(content))
 		}
-
-		// Handle tool calls
-		if toolCalls := choice.Message.ToolCalls; len(toolCalls) > 0 {
-			hasToolCalls = true
-			for _, toolCall := range toolCalls {
-				// Create a ToolCallInput with standardized format
-				toolUse := ToolCallInput{
-					Name: toolCall.Function.Name,
-				}
-
-				// Parse the arguments string into a map
-				if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &toolUse.Parameters); err != nil {
-					return Response{}, fmt.Errorf("failed to parse tool arguments: %w", err)
-				}
-
-				// Marshal back to JSON for consistent representation
-				toolUseJSON, err := json.Marshal(toolUse)
-				if err != nil {
-					return Response{}, fmt.Errorf("failed to marshal tool use: %w", err)
-				}
-
-				blocks = append(blocks, Block{
-					ID:           toolCall.ID,
-					BlockType:    ToolCall,
-					ModalityType: Text,
-					MimeType:     "application/json",
-					Content:      Str(toolUseJSON),
-				})
+		hasToolCalls = hasToolCalls || len(choice.Message.ToolCalls) > 0
+		for _, call := range choice.Message.ToolCalls {
+			block, err := openRouterToolCallBlock(call)
+			if err != nil {
+				return result, err
 			}
+			blocks = append(blocks, block)
 		}
-
-		result.Candidates = append(result.Candidates, Message{
-			Role:   Assistant,
-			Blocks: blocks,
-		})
+		result.Candidates = append(result.Candidates, Message{Role: Assistant, Blocks: blocks})
 	}
 
-	// Set finish reason
-	if len(resp.Choices) > 0 {
-		choice := resp.Choices[0]
-		// OpenRouter is OpenAI-compatible; refusal is an independent message field.
-		// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/
-		if choice.Message.Refusal != "" {
+	if len(completion.Choices) > 0 {
+		first := completion.Choices[0]
+		if refusal, ok := first.Message.Refusal.Get(); ok && refusal != "" {
 			result.FinishReason = ContentPolicyViolation
-			return result, ContentPolicyErr(choice.Message.Refusal)
+			return result, ContentPolicyErr(refusal)
 		}
-		switch choice.FinishReason {
-		case "stop":
-			result.FinishReason = EndTurn
-		case "length":
-			result.FinishReason = MaxGenerationLimit
-			return result, ErrMaxGenerationLimit
-		case "tool_calls":
-			result.FinishReason = ToolUse
-		case "content_filter":
-			// content_filter means output was omitted by the API's content filters.
-			// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/
-			result.FinishReason = ContentPolicyViolation
-			return result, ContentPolicyErr("content policy violation detected")
-		default:
-			result.FinishReason = Unknown
+		result.FinishReason, err = openRouterFinishReason(first.FinishReason.Or(""))
+		if err != nil {
+			return result, err
 		}
 	}
-
-	// Some providers return an EndTurn stop reason, despite being a tool call
 	if hasToolCalls && result.FinishReason == EndTurn {
 		result.FinishReason = ToolUse
 	}
-
 	return result, nil
 }
+
+// Stream implements StreamingGenerator.
+func (g *OpenRouterGenerator) Stream(ctx context.Context, generationRequest GenerationRequest) iter.Seq[StreamChunk] {
+	return func(yield func(StreamChunk) bool) {
+		if g.client == nil {
+			yield(StreamChunk{Err: fmt.Errorf("openrouter: client not initialized")})
+			return
+		}
+		if len(generationRequest.Dialog) == 0 {
+			yield(StreamChunk{Err: ErrEmptyDialog})
+			return
+		}
+		request, err := g.buildRequest(generationRequest)
+		if err != nil {
+			yield(StreamChunk{Err: err})
+			return
+		}
+		request.Stream = openrouter.NewOptBool(true)
+
+		rawResponse, err := g.client.CreateChatCompletion(ctx, request)
+		if err != nil {
+			yield(StreamChunk{Err: mapOpenRouterTransportError(err)})
+			return
+		}
+		stream, ok := rawResponse.(*openrouter.CreateChatCompletionOKTextEventStream)
+		if !ok {
+			if providerResponse, isJSON := rawResponse.(*openrouter.OpenRouterResponse); isJSON {
+				rawBody, _ := json.Marshal(providerResponse)
+				if errorEnvelope, hasError := providerResponse.GetErrorEnvelope(); hasError {
+					yield(StreamChunk{Err: mapOpenRouterErrorDetail(errorEnvelope.Error, errorEnvelope.Error.Code, string(rawBody))})
+					return
+				}
+			}
+			yield(StreamChunk{Err: fmt.Errorf("openrouter: expected event stream response, got %T", rawResponse)})
+			return
+		}
+		defer stream.Close()
+
+		var finalUsage openrouter.Usage
+		var hasFinalUsage bool
+		hasReasoningDetails := false
+		lastReasoningKey := make(map[int]string)
+		for {
+			event, err := stream.Next(ctx)
+			if err != nil {
+				yield(StreamChunk{Err: mapOpenRouterTransportError(err)})
+				return
+			}
+			if event.Data.IsCreateChatCompletionOKTextEventStreamEventData1() {
+				break
+			}
+			chunk, ok := event.Data.GetChatCompletionChunk()
+			if !ok {
+				yield(StreamChunk{Err: fmt.Errorf("openrouter: unexpected event data type %q", event.Data.Type)})
+				return
+			}
+			rawChunk, _ := json.Marshal(chunk)
+			if detail, ok := chunk.Error.Get(); ok {
+				yield(StreamChunk{Err: mapOpenRouterErrorDetail(detail, detail.Code, string(rawChunk))})
+				return
+			}
+			if usage, ok := chunk.Usage.Get(); ok {
+				finalUsage = usage
+				hasFinalUsage = true
+			}
+			for _, choice := range chunk.Choices {
+				if detail, ok := choice.Error.Get(); ok {
+					yield(StreamChunk{Err: mapOpenRouterErrorDetail(detail, detail.Code, string(rawChunk))})
+					return
+				}
+				if finishReason, ok := choice.FinishReason.Get(); ok {
+					if _, finishErr := openRouterFinishReason(finishReason); finishErr != nil {
+						yield(StreamChunk{Err: finishErr})
+						return
+					}
+				}
+				if refusal, ok := choice.Delta.Refusal.Get(); ok && refusal != "" {
+					yield(StreamChunk{Err: ContentPolicyErr(refusal)})
+					return
+				}
+				for _, detail := range choice.Delta.ReasoningDetails {
+					hasReasoningDetails = true
+					key := openRouterReasoningDetailKey(detail)
+					if previous, exists := lastReasoningKey[choice.Index]; exists && previous != key {
+						if !yield(StreamChunk{Block: SeparatorBlock(), CandidatesIndex: choice.Index}) {
+							return
+						}
+					}
+					lastReasoningKey[choice.Index] = key
+					if block, ok := openRouterReasoningBlock(detail); ok {
+						if !yield(StreamChunk{Block: block, CandidatesIndex: choice.Index}) {
+							return
+						}
+					}
+				}
+				if content, ok := choice.Delta.Content.Get(); ok && content != "" {
+					if !yield(StreamChunk{Block: TextBlock(content), CandidatesIndex: choice.Index}) {
+						return
+					}
+				}
+				for _, call := range choice.Delta.ToolCalls {
+					if name := call.Function.Name.Or(""); name != "" {
+						if !yield(StreamChunk{
+							Block: Block{
+								ID:           call.ID.Or(""),
+								BlockType:    ToolCall,
+								ModalityType: Text,
+								MimeType:     "text/plain",
+								Content:      Str(name),
+							},
+							CandidatesIndex: choice.Index,
+						}) {
+							return
+						}
+					}
+					if arguments := call.Function.Arguments.Or(""); arguments != "" {
+						if !yield(StreamChunk{
+							Block: Block{
+								BlockType:    ToolCall,
+								ModalityType: Text,
+								MimeType:     "text/plain",
+								Content:      Str(arguments),
+							},
+							CandidatesIndex: choice.Index,
+						}) {
+							return
+						}
+					}
+				}
+			}
+		}
+
+		metadata := make(Metadata)
+		if hasFinalUsage {
+			addOpenRouterUsageMetadata(metadata, finalUsage)
+		}
+		if hasReasoningDetails {
+			metadata[OpenRouterUsageMetricReasoningDetailsAvailable] = true
+		}
+		if len(metadata) > 0 {
+			yield(StreamChunk{Block: MetadataBlock(metadata), CandidatesIndex: 0})
+		}
+	}
+}
+
+func openRouterReasoningDetailKey(detail openrouter.ReasoningDetail) string {
+	if index, ok := detail.Index.Get(); ok {
+		return fmt.Sprintf("%s:%d", detail.Type, index)
+	}
+	return detail.Type + ":" + detail.ID.Or("")
+}
+
+func openRouterReasoningBlock(detail openrouter.ReasoningDetail) (Block, bool) {
+	var content string
+	switch detail.Type {
+	case "reasoning.summary":
+		content = detail.Summary.Or("")
+	case "reasoning.text":
+		content = detail.Text.Or("")
+	case "reasoning.encrypted":
+		content = detail.Data.Or("")
+	default:
+		return Block{}, false
+	}
+	if content == "" {
+		return Block{}, false
+	}
+	extraFields := map[string]interface{}{
+		ThinkingExtraFieldGeneratorKey:      ThinkingGeneratorOpenRouter,
+		OpenRouterExtraFieldReasoningType:   detail.Type,
+		OpenRouterExtraFieldReasoningFormat: detail.Format.Or(""),
+		OpenRouterExtraFieldReasoningIndex:  detail.Index.Or(0),
+	}
+	if signature := detail.Signature.Or(""); signature != "" {
+		extraFields[OpenRouterExtraFieldReasoningSignature] = signature
+	}
+	return Block{
+		ID:           detail.ID.Or(""),
+		BlockType:    Thinking,
+		ModalityType: Text,
+		MimeType:     "text/plain",
+		Content:      Str(content),
+		ExtraFields:  extraFields,
+	}, true
+}
+
+func openRouterToolCallBlock(call openrouter.ToolCall) (Block, error) {
+	parameters := make(map[string]any)
+	if strings.TrimSpace(call.Function.Arguments) != "" {
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &parameters); err != nil {
+			return Block{}, fmt.Errorf("openrouter: malformed tool arguments for %q: %w", call.Function.Name, err)
+		}
+	}
+	return ToolCallBlock(call.ID, call.Function.Name, parameters)
+}
+
+func openRouterFinishReason(reason string) (FinishReason, error) {
+	switch reason {
+	case "stop":
+		return EndTurn, nil
+	case "tool_calls":
+		return ToolUse, nil
+	case "length":
+		return MaxGenerationLimit, ErrMaxGenerationLimit
+	case "content_filter":
+		return ContentPolicyViolation, ContentPolicyErr("content policy violation detected")
+	case "error":
+		return Unknown, &ApiErr{
+			Provider: ProviderOpenRouter,
+			Kind:     APIErrorKindServer,
+			Message:  "generation stopped because OpenRouter reported an error",
+		}
+	default:
+		return Unknown, nil
+	}
+}
+
+func addOpenRouterUsageMetadata(metadata Metadata, usage openrouter.Usage) {
+	if promptTokens := usage.PromptTokens.Or(0); promptTokens > 0 {
+		metadata[UsageMetricInputTokens] = promptTokens
+	}
+	if completionTokens := usage.CompletionTokens.Or(0); completionTokens > 0 {
+		metadata[UsageMetricGenerationTokens] = completionTokens
+	}
+	if details, ok := usage.PromptTokensDetails.Get(); ok {
+		if cachedTokens := details.CachedTokens.Or(0); cachedTokens > 0 {
+			metadata[UsageMetricCacheReadTokens] = cachedTokens
+		}
+		if cacheWriteTokens := details.CacheWriteTokens.Or(0); cacheWriteTokens > 0 {
+			metadata[UsageMetricCacheWriteTokens] = cacheWriteTokens
+		}
+	}
+	if details, ok := usage.CompletionTokensDetails.Get(); ok {
+		if reasoningTokens := details.ReasoningTokens.Or(0); reasoningTokens > 0 {
+			metadata[UsageMetricReasoningTokens] = reasoningTokens
+		}
+	}
+}
+
+var _ Generator = (*OpenRouterGenerator)(nil)
+var _ StreamingGenerator = (*OpenRouterGenerator)(nil)

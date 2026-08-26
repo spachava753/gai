@@ -12,8 +12,7 @@ import (
 // SecuritySource is provider of security values (tokens, passwords, etc.).
 type SecuritySource interface {
 	// BearerAuth provides bearerAuth security value.
-	// Authenticate with Bearer <your DeepSeek API key>. Get keys at https://platform.deepseek.
-	// com/api_keys.
+	// Authenticate with Bearer . Get keys at https://platform.deepseek.com/api_keys.
 	BearerAuth(ctx context.Context, operationName OperationName) (BearerAuth, error)
 }
 

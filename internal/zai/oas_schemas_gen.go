@@ -3,10 +3,18 @@
 package zai
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"iter"
+	"net/http"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/go-faster/errors"
 	"github.com/go-faster/jx"
+	"github.com/ogen-go/ogen/sse"
 )
 
 func (s *ErrorStatusCode) Error() string {
@@ -161,6 +169,9 @@ func (s *ChatCompletionResponse) SetWebSearch(val []WebSearchObjectResponse) {
 	s.WebSearch = val
 }
 
+func (*ChatCompletionResponse) initSSEStream(sseConnectFunc, sseClientConfig) {}
+func (*ChatCompletionResponse) paasV4ChatCompletionsPostRes()                 {}
+
 type ChatCompletionResponseChoicesItem struct {
 	// Result index.
 	Index   OptInt                           `json:"index"`
@@ -204,9 +215,9 @@ func (s *ChatCompletionResponseChoicesItem) SetFinishReason(val OptString) {
 type ChatCompletionResponseMessage struct {
 	// Current conversation role, default is ‘assistant’ (model).
 	Role OptString `json:"role"`
-	// Current conversation content. Hits function is null, otherwise returns model inference result.
-	// For the GLM-4.5V series models, the output may contain the reasoning process tags `<think>
-	// </think>` or the text boundary tags `<|begin_of_box|> <|end_of_box|>`.
+	// Current conversation content. Hits function is null, otherwise returns model inference result. For
+	// the GLM-4.5V series models, the output may contain the reasoning process tags `<think> </think>` or
+	// the text boundary tags `<|begin_of_box|> <|end_of_box|>`.
 	Content OptString `json:"content"`
 	// Reasoning content, supports by GLM-4.5 series.
 	ReasoningContent OptString `json:"reasoning_content"`
@@ -389,22 +400,331 @@ func (s *ChatCompletionResponseUsagePromptTokensDetails) SetCachedTokens(val Opt
 	s.CachedTokens = val
 }
 
+// Ref: #/components/schemas/ChatCompletionStreamChoice
+type ChatCompletionStreamChoice struct {
+	// Result index.
+	Index int                       `json:"index"`
+	Delta ChatCompletionStreamDelta `json:"delta"`
+	// Reason for model inference termination.
+	FinishReason OptNilString `json:"finish_reason"`
+}
+
+// GetIndex returns the value of Index.
+func (s *ChatCompletionStreamChoice) GetIndex() int {
+	return s.Index
+}
+
+// GetDelta returns the value of Delta.
+func (s *ChatCompletionStreamChoice) GetDelta() ChatCompletionStreamDelta {
+	return s.Delta
+}
+
+// GetFinishReason returns the value of FinishReason.
+func (s *ChatCompletionStreamChoice) GetFinishReason() OptNilString {
+	return s.FinishReason
+}
+
+// SetIndex sets the value of Index.
+func (s *ChatCompletionStreamChoice) SetIndex(val int) {
+	s.Index = val
+}
+
+// SetDelta sets the value of Delta.
+func (s *ChatCompletionStreamChoice) SetDelta(val ChatCompletionStreamDelta) {
+	s.Delta = val
+}
+
+// SetFinishReason sets the value of FinishReason.
+func (s *ChatCompletionStreamChoice) SetFinishReason(val OptNilString) {
+	s.FinishReason = val
+}
+
+// Ref: #/components/schemas/ChatCompletionStreamDelta
+type ChatCompletionStreamDelta struct {
+	Role             OptString                      `json:"role"`
+	Content          OptString                      `json:"content"`
+	ReasoningContent OptString                      `json:"reasoning_content"`
+	Refusal          OptString                      `json:"refusal"`
+	ToolCalls        []ChatCompletionStreamToolCall `json:"tool_calls"`
+}
+
+// GetRole returns the value of Role.
+func (s *ChatCompletionStreamDelta) GetRole() OptString {
+	return s.Role
+}
+
+// GetContent returns the value of Content.
+func (s *ChatCompletionStreamDelta) GetContent() OptString {
+	return s.Content
+}
+
+// GetReasoningContent returns the value of ReasoningContent.
+func (s *ChatCompletionStreamDelta) GetReasoningContent() OptString {
+	return s.ReasoningContent
+}
+
+// GetRefusal returns the value of Refusal.
+func (s *ChatCompletionStreamDelta) GetRefusal() OptString {
+	return s.Refusal
+}
+
+// GetToolCalls returns the value of ToolCalls.
+func (s *ChatCompletionStreamDelta) GetToolCalls() []ChatCompletionStreamToolCall {
+	return s.ToolCalls
+}
+
+// SetRole sets the value of Role.
+func (s *ChatCompletionStreamDelta) SetRole(val OptString) {
+	s.Role = val
+}
+
+// SetContent sets the value of Content.
+func (s *ChatCompletionStreamDelta) SetContent(val OptString) {
+	s.Content = val
+}
+
+// SetReasoningContent sets the value of ReasoningContent.
+func (s *ChatCompletionStreamDelta) SetReasoningContent(val OptString) {
+	s.ReasoningContent = val
+}
+
+// SetRefusal sets the value of Refusal.
+func (s *ChatCompletionStreamDelta) SetRefusal(val OptString) {
+	s.Refusal = val
+}
+
+// SetToolCalls sets the value of ToolCalls.
+func (s *ChatCompletionStreamDelta) SetToolCalls(val []ChatCompletionStreamToolCall) {
+	s.ToolCalls = val
+}
+
+// Ref: #/components/schemas/ChatCompletionStreamPromptTokensDetails
+type ChatCompletionStreamPromptTokensDetails struct {
+	CachedTokens OptFloat64 `json:"cached_tokens"`
+}
+
+// GetCachedTokens returns the value of CachedTokens.
+func (s *ChatCompletionStreamPromptTokensDetails) GetCachedTokens() OptFloat64 {
+	return s.CachedTokens
+}
+
+// SetCachedTokens sets the value of CachedTokens.
+func (s *ChatCompletionStreamPromptTokensDetails) SetCachedTokens(val OptFloat64) {
+	s.CachedTokens = val
+}
+
+// Ref: #/components/schemas/ChatCompletionStreamResponse
+type ChatCompletionStreamResponse struct {
+	// Completion ID.
+	ID OptString `json:"id"`
+	// Request ID.
+	RequestID OptString `json:"request_id"`
+	// Request creation time, Unix timestamp in seconds.
+	Created OptInt `json:"created"`
+	// Model name.
+	Model   OptString                    `json:"model"`
+	Choices []ChatCompletionStreamChoice `json:"choices"`
+	Usage   OptChatCompletionStreamUsage `json:"usage"`
+}
+
+// GetID returns the value of ID.
+func (s *ChatCompletionStreamResponse) GetID() OptString {
+	return s.ID
+}
+
+// GetRequestID returns the value of RequestID.
+func (s *ChatCompletionStreamResponse) GetRequestID() OptString {
+	return s.RequestID
+}
+
+// GetCreated returns the value of Created.
+func (s *ChatCompletionStreamResponse) GetCreated() OptInt {
+	return s.Created
+}
+
+// GetModel returns the value of Model.
+func (s *ChatCompletionStreamResponse) GetModel() OptString {
+	return s.Model
+}
+
+// GetChoices returns the value of Choices.
+func (s *ChatCompletionStreamResponse) GetChoices() []ChatCompletionStreamChoice {
+	return s.Choices
+}
+
+// GetUsage returns the value of Usage.
+func (s *ChatCompletionStreamResponse) GetUsage() OptChatCompletionStreamUsage {
+	return s.Usage
+}
+
+// SetID sets the value of ID.
+func (s *ChatCompletionStreamResponse) SetID(val OptString) {
+	s.ID = val
+}
+
+// SetRequestID sets the value of RequestID.
+func (s *ChatCompletionStreamResponse) SetRequestID(val OptString) {
+	s.RequestID = val
+}
+
+// SetCreated sets the value of Created.
+func (s *ChatCompletionStreamResponse) SetCreated(val OptInt) {
+	s.Created = val
+}
+
+// SetModel sets the value of Model.
+func (s *ChatCompletionStreamResponse) SetModel(val OptString) {
+	s.Model = val
+}
+
+// SetChoices sets the value of Choices.
+func (s *ChatCompletionStreamResponse) SetChoices(val []ChatCompletionStreamChoice) {
+	s.Choices = val
+}
+
+// SetUsage sets the value of Usage.
+func (s *ChatCompletionStreamResponse) SetUsage(val OptChatCompletionStreamUsage) {
+	s.Usage = val
+}
+
+// Ref: #/components/schemas/ChatCompletionStreamToolCall
+type ChatCompletionStreamToolCall struct {
+	Index    int                                  `json:"index"`
+	ID       OptString                            `json:"id"`
+	Type     OptString                            `json:"type"`
+	Function ChatCompletionStreamToolCallFunction `json:"function"`
+}
+
+// GetIndex returns the value of Index.
+func (s *ChatCompletionStreamToolCall) GetIndex() int {
+	return s.Index
+}
+
+// GetID returns the value of ID.
+func (s *ChatCompletionStreamToolCall) GetID() OptString {
+	return s.ID
+}
+
+// GetType returns the value of Type.
+func (s *ChatCompletionStreamToolCall) GetType() OptString {
+	return s.Type
+}
+
+// GetFunction returns the value of Function.
+func (s *ChatCompletionStreamToolCall) GetFunction() ChatCompletionStreamToolCallFunction {
+	return s.Function
+}
+
+// SetIndex sets the value of Index.
+func (s *ChatCompletionStreamToolCall) SetIndex(val int) {
+	s.Index = val
+}
+
+// SetID sets the value of ID.
+func (s *ChatCompletionStreamToolCall) SetID(val OptString) {
+	s.ID = val
+}
+
+// SetType sets the value of Type.
+func (s *ChatCompletionStreamToolCall) SetType(val OptString) {
+	s.Type = val
+}
+
+// SetFunction sets the value of Function.
+func (s *ChatCompletionStreamToolCall) SetFunction(val ChatCompletionStreamToolCallFunction) {
+	s.Function = val
+}
+
+// Ref: #/components/schemas/ChatCompletionStreamToolCallFunction
+type ChatCompletionStreamToolCallFunction struct {
+	Name      OptString `json:"name"`
+	Arguments OptString `json:"arguments"`
+}
+
+// GetName returns the value of Name.
+func (s *ChatCompletionStreamToolCallFunction) GetName() OptString {
+	return s.Name
+}
+
+// GetArguments returns the value of Arguments.
+func (s *ChatCompletionStreamToolCallFunction) GetArguments() OptString {
+	return s.Arguments
+}
+
+// SetName sets the value of Name.
+func (s *ChatCompletionStreamToolCallFunction) SetName(val OptString) {
+	s.Name = val
+}
+
+// SetArguments sets the value of Arguments.
+func (s *ChatCompletionStreamToolCallFunction) SetArguments(val OptString) {
+	s.Arguments = val
+}
+
+// Ref: #/components/schemas/ChatCompletionStreamUsage
+type ChatCompletionStreamUsage struct {
+	PromptTokens        OptFloat64                                 `json:"prompt_tokens"`
+	CompletionTokens    OptFloat64                                 `json:"completion_tokens"`
+	TotalTokens         OptFloat64                                 `json:"total_tokens"`
+	PromptTokensDetails OptChatCompletionStreamPromptTokensDetails `json:"prompt_tokens_details"`
+}
+
+// GetPromptTokens returns the value of PromptTokens.
+func (s *ChatCompletionStreamUsage) GetPromptTokens() OptFloat64 {
+	return s.PromptTokens
+}
+
+// GetCompletionTokens returns the value of CompletionTokens.
+func (s *ChatCompletionStreamUsage) GetCompletionTokens() OptFloat64 {
+	return s.CompletionTokens
+}
+
+// GetTotalTokens returns the value of TotalTokens.
+func (s *ChatCompletionStreamUsage) GetTotalTokens() OptFloat64 {
+	return s.TotalTokens
+}
+
+// GetPromptTokensDetails returns the value of PromptTokensDetails.
+func (s *ChatCompletionStreamUsage) GetPromptTokensDetails() OptChatCompletionStreamPromptTokensDetails {
+	return s.PromptTokensDetails
+}
+
+// SetPromptTokens sets the value of PromptTokens.
+func (s *ChatCompletionStreamUsage) SetPromptTokens(val OptFloat64) {
+	s.PromptTokens = val
+}
+
+// SetCompletionTokens sets the value of CompletionTokens.
+func (s *ChatCompletionStreamUsage) SetCompletionTokens(val OptFloat64) {
+	s.CompletionTokens = val
+}
+
+// SetTotalTokens sets the value of TotalTokens.
+func (s *ChatCompletionStreamUsage) SetTotalTokens(val OptFloat64) {
+	s.TotalTokens = val
+}
+
+// SetPromptTokensDetails sets the value of PromptTokensDetails.
+func (s *ChatCompletionStreamUsage) SetPromptTokensDetails(val OptChatCompletionStreamPromptTokensDetails) {
+	s.PromptTokensDetails = val
+}
+
 // Ref: #/components/schemas/ChatCompletionTextRequest
 type ChatCompletionTextRequest struct {
 	// The model code to be called. GLM-5.1, GLM-5, GLM-5-Turbo are the latest flagship model series,
 	// foundational models specifically designed for agent applications.
 	Model ChatCompletionTextRequestModel `json:"model"`
 	// The current conversation message list as the model’s prompt input, provided in JSON array format,
-	//  e.g.,`{“role”: “user”, “content”: “Hello”}`. Possible message types include
-	// system messages, user messages, assistant messages, and tool messages. Note: The input must not
-	// consist of system messages or assistant messages only.
+	// e.g.,`{“role”: “user”, “content”: “Hello”}`. Possible message types include system
+	// messages, user messages, assistant messages, and tool messages. Note: The input must not consist of
+	// system messages or assistant messages only.
 	Messages []ChatCompletionTextRequestMessagesItem `json:"messages"`
 	// When do_sample is true, sampling strategy is enabled; when do_sample is false, sampling strategy
 	// parameters such as temperature and top_p will not take effect. Default value is `true`.
 	DoSample OptBool `json:"do_sample"`
-	// This parameter should be set to false or omitted when using synchronous call. It indicates that
-	// the model returns all content at once after generating all content. Default value is false. If set
-	// to true, the model will return the generated content in chunks via standard Event Stream. When the
+	// This parameter should be set to false or omitted when using synchronous call. It indicates that the
+	// model returns all content at once after generating all content. Default value is false. If set to
+	// true, the model will return the generated content in chunks via standard Event Stream. When the
 	// Event Stream ends, a `data: [DONE]` message will be returned.
 	Stream   OptBool         `json:"stream"`
 	Thinking OptChatThinking `json:"thinking"`
@@ -413,15 +733,17 @@ type ChatCompletionTextRequest struct {
 	// series default value is `0.6`, GLM-4-32B-0414-128K default value is `0.75`.
 	Temperature OptFloat32 `json:"temperature"`
 	// Another method of temperature sampling, value range is: `[0.01, 1.0]`. The GLM-5.1, GLM-5, GLM-4.7,
-	//  GLM-4.6, GLM-4.5 series default value is `0.95`, GLM-4-32B-0414-128K default value is `0.9`.
+	// GLM-4.6, GLM-4.5 series default value is `0.95`, GLM-4-32B-0414-128K default value is `0.9`.
 	TopP OptFloat32 `json:"top_p"`
-	// The maximum number of tokens for model output, the GLM-5.1, GLM-5, GLM-4.7, GLM-4.6 series
-	// supports 128K maximum output, the GLM-4.5 series supports 96K maximum output, the GLM-4.6v series
-	// supports 32K maximum output, the GLM-4.5v series supports 16K maximum output, GLM-4-32B-0414-128K
-	// supports 16K maximum output.
+	// The maximum number of tokens for model output, the GLM-5.1, GLM-5, GLM-4.7, GLM-4.6 series supports
+	// 128K maximum output, the GLM-4.5 series supports 96K maximum output, the GLM-4.6v series supports
+	// 32K maximum output, the GLM-4.5v series supports 16K maximum output, GLM-4-32B-0414-128K supports
+	// 16K maximum output.
 	MaxTokens OptInt `json:"max_tokens"`
 	// Whether to enable streaming response for Function Calls. Default value is false. Only supported by
-	// GLM-4.6 and above. Refer the [Stream Tool Call](/guides/tools/stream-tool).
+	// GLM-4.6 and above. Refer the [Stream Tool Call].
+	//
+	// [Stream Tool Call]: /guides/tools/stream-tool
 	ToolStream OptBool `json:"tool_stream"`
 	// A list of tools the model may call. Currently, only functions are supported as a tool. Use this to
 	// provide a list of functions the model may generate JSON inputs for. A max of 128 functions are
@@ -429,16 +751,15 @@ type ChatCompletionTextRequest struct {
 	Tools []ChatCompletionTextRequestToolsItem `json:"tools"`
 	// Controls how the model selects a tool.
 	ToolChoice OptChatCompletionTextRequestToolChoice `json:"tool_choice"`
-	// Stop word list. Generation stops when the model encounters any specified string. Currently, only
-	// one stop word is supported, in the format ["stop_word1"].
+	// Stop word list. Generation stops when the model encounters any specified string. Currently, only one
+	// stop word is supported, in the format ["stop_word1"].
 	Stop []string `json:"stop"`
-	// Specifies the response format of the model. Defaults to text. Supports two formats:{ "type":
-	// "text" } plain text mode, returns natural language text, { "type": "json_object" } JSON mode,
-	// returns valid JSON data. When using JSON mode, it’s recommended to clearly request JSON output
-	// in the prompt.
+	// Specifies the response format of the model. Defaults to text. Supports two formats:{ "type": "text"
+	// } plain text mode, returns natural language text, { "type": "json_object" } JSON mode, returns valid
+	// JSON data. When using JSON mode, it’s recommended to clearly request JSON output in the prompt.
 	ResponseFormat OptChatCompletionTextRequestResponseFormat `json:"response_format"`
-	// Passed by the user side, needs to be unique; used to distinguish each request, 6–64 characters.
-	// If not provided by the user side, the platform will generate one by default.
+	// Passed by the user side, needs to be unique; used to distinguish each request, 6–64 characters. If
+	// not provided by the user side, the platform will generate one by default.
 	RequestID OptString `json:"request_id"`
 	// Unique ID for the end user, 6–128 characters. Avoid using sensitive information.
 	UserID OptString `json:"user_id"`
@@ -596,7 +917,8 @@ func (s *ChatCompletionTextRequest) SetUserID(val OptString) {
 
 // ChatCompletionTextRequestMessagesItem represents sum type.
 type ChatCompletionTextRequestMessagesItem struct {
-	Type                                   ChatCompletionTextRequestMessagesItemType // switch on this field
+	// Type selects the active sum variant, switch on this field.
+	Type                                   ChatCompletionTextRequestMessagesItemType
 	ChatCompletionTextRequestMessagesItem0 ChatCompletionTextRequestMessagesItem0
 	ChatCompletionTextRequestMessagesItem1 ChatCompletionTextRequestMessagesItem1
 	ChatCompletionTextRequestMessagesItem2 ChatCompletionTextRequestMessagesItem2
@@ -1223,10 +1545,9 @@ func (s *ChatCompletionTextRequestModel) UnmarshalText(data []byte) error {
 	}
 }
 
-// Specifies the response format of the model. Defaults to text. Supports two formats:{ "type":
-// "text" } plain text mode, returns natural language text, { "type": "json_object" } JSON mode,
-// returns valid JSON data. When using JSON mode, it’s recommended to clearly request JSON output
-// in the prompt.
+// Specifies the response format of the model. Defaults to text. Supports two formats:{ "type": "text"
+// } plain text mode, returns natural language text, { "type": "json_object" } JSON mode, returns valid
+// JSON data. When using JSON mode, it’s recommended to clearly request JSON output in the prompt.
 type ChatCompletionTextRequestResponseFormat struct {
 	// Output format type: text for plain text, json_object for JSON-formatted output.
 	Type ChatCompletionTextRequestResponseFormatType `json:"type"`
@@ -1284,8 +1605,8 @@ func (s *ChatCompletionTextRequestResponseFormatType) UnmarshalText(data []byte)
 	}
 }
 
-// Used to control how the model selects which function to call. This is only applicable when the
-// tool type is function. The default value is auto, and only auto is supported.
+// Used to control how the model selects which function to call. This is only applicable when the tool
+// type is function. The default value is auto, and only auto is supported.
 type ChatCompletionTextRequestToolChoice string
 
 const (
@@ -1322,7 +1643,8 @@ func (s *ChatCompletionTextRequestToolChoice) UnmarshalText(data []byte) error {
 
 // ChatCompletionTextRequestToolsItem represents sum type.
 type ChatCompletionTextRequestToolsItem struct {
-	Type                ChatCompletionTextRequestToolsItemType // switch on this field
+	// Type selects the active sum variant, switch on this field.
+	Type                ChatCompletionTextRequestToolsItemType
 	FunctionToolSchema  FunctionToolSchema
 	RetrievalToolSchema RetrievalToolSchema
 	WebSearchToolSchema WebSearchToolSchema
@@ -1422,16 +1744,15 @@ type ChatCompletionVisionRequest struct {
 	// `AutoGLM-Phone-Multilingual` is mobile intelligent assistant model.
 	Model ChatCompletionVisionRequestModel `json:"model"`
 	// The current conversation message list as the model’s prompt input, provided in JSON array format,
-	//  e.g.,`{“role”: “user”, “content”: “Hello”}`. Possible message types include
-	// system messages, user messages. Note: The input must not consist of system or assistant messages
-	// only.
+	// e.g.,`{“role”: “user”, “content”: “Hello”}`. Possible message types include system
+	// messages, user messages. Note: The input must not consist of system or assistant messages only.
 	Messages []ChatCompletionVisionRequestMessagesItem `json:"messages"`
 	// When do_sample is true, sampling strategy is enabled; when do_sample is false, sampling strategy
 	// parameters such as temperature and top_p will not take effect. Default value is `true`.
 	DoSample OptBool `json:"do_sample"`
-	// This parameter should be set to false or omitted when using synchronous call. It indicates that
-	// the model returns all content at once after generating all content. Default value is false. If set
-	// to true, the model will return the generated content in chunks via standard Event Stream. When the
+	// This parameter should be set to false or omitted when using synchronous call. It indicates that the
+	// model returns all content at once after generating all content. Default value is false. If set to
+	// true, the model will return the generated content in chunks via standard Event Stream. When the
 	// Event Stream ends, a `data: [DONE]` message will be returned.
 	Stream   OptBool         `json:"stream"`
 	Thinking OptChatThinking `json:"thinking"`
@@ -1439,8 +1760,8 @@ type ChatCompletionVisionRequest struct {
 	// range: `[0.0, 1.0]`. The GLM-5V-Turbo, GLM-4.6V, GLM-4.5V series default value is `0.8`, the
 	// autoglm-phone-multilingual default value is `0.0`.
 	Temperature OptFloat32 `json:"temperature"`
-	// Another method of temperature sampling, value range is: `[0.01, 1.0]`, value range is: `[0.01, 1.
-	// 0]`. The GLM-5V-Turbo, GLM-4.6V, GLM-4.5V series default value is `0.6`, the
+	// Another method of temperature sampling, value range is: `[0.01, 1.0]`, value range is:
+	// `[0.01, 1.0]`. The GLM-5V-Turbo, GLM-4.6V, GLM-4.5V series default value is `0.6`, the
 	// autoglm-phone-multilingual default value is `0.85`.
 	TopP OptFloat32 `json:"top_p"`
 	// The maximum number of tokens for model output, the GLM-5V-Turbo supports 128K maximum output,
@@ -1448,16 +1769,16 @@ type ChatCompletionVisionRequest struct {
 	// autoglm-phone-multilingual supports 4K maximum output.
 	MaxTokens OptInt `json:"max_tokens"`
 	// A list of tools the model may call. Only support by GLM-4.6V series and autoglm-phone-multilingual.
-	//  Use this to provide a list of functions the model may generate JSON inputs for. A max of 128
+	// Use this to provide a list of functions the model may generate JSON inputs for. A max of 128
 	// functions are supported.
 	Tools []ChatCompletionVisionRequestToolsItem `json:"tools"`
 	// Controls how the model selects a tool.
 	ToolChoice OptChatCompletionVisionRequestToolChoice `json:"tool_choice"`
-	// Stop word list. Generation stops when the model encounters any specified string. Currently, only
-	// one stop word is supported, in the format ["stop_word1"].
+	// Stop word list. Generation stops when the model encounters any specified string. Currently, only one
+	// stop word is supported, in the format ["stop_word1"].
 	Stop []string `json:"stop"`
-	// Passed by the user side, needs to be unique; used to distinguish each request, 6–64 characters.
-	// If not provided by the user side, the platform will generate one by default.
+	// Passed by the user side, needs to be unique; used to distinguish each request, 6–64 characters. If
+	// not provided by the user side, the platform will generate one by default.
 	RequestID OptString `json:"request_id"`
 	// Unique ID for the end user, 6–128 characters. Avoid using sensitive information.
 	UserID OptString `json:"user_id"`
@@ -1595,7 +1916,8 @@ func (s *ChatCompletionVisionRequest) SetUserID(val OptString) {
 
 // ChatCompletionVisionRequestMessagesItem represents sum type.
 type ChatCompletionVisionRequestMessagesItem struct {
-	Type                                     ChatCompletionVisionRequestMessagesItemType // switch on this field
+	// Type selects the active sum variant, switch on this field.
+	Type                                     ChatCompletionVisionRequestMessagesItemType
 	ChatCompletionVisionRequestMessagesItem0 ChatCompletionVisionRequestMessagesItem0
 	ChatCompletionVisionRequestMessagesItem1 ChatCompletionVisionRequestMessagesItem1
 	ChatCompletionVisionRequestMessagesItem2 ChatCompletionVisionRequestMessagesItem2
@@ -1717,7 +2039,8 @@ func (s *ChatCompletionVisionRequestMessagesItem0) SetContent(val ChatCompletion
 
 // ChatCompletionVisionRequestMessagesItem0Content represents sum type.
 type ChatCompletionVisionRequestMessagesItem0Content struct {
-	Type                             ChatCompletionVisionRequestMessagesItem0ContentType // switch on this field
+	// Type selects the active sum variant, switch on this field.
+	Type                             ChatCompletionVisionRequestMessagesItem0ContentType
 	VisionMultimodalContentItemArray []VisionMultimodalContentItem
 	String                           string
 }
@@ -2012,8 +2335,8 @@ func (s *ChatCompletionVisionRequestModel) UnmarshalText(data []byte) error {
 	}
 }
 
-// Used to control how the model selects which function to call. This is only applicable when the
-// tool type is function. The default value is auto, and only auto is supported.
+// Used to control how the model selects which function to call. This is only applicable when the tool
+// type is function. The default value is auto, and only auto is supported.
 type ChatCompletionVisionRequestToolChoice string
 
 const (
@@ -2050,7 +2373,8 @@ func (s *ChatCompletionVisionRequestToolChoice) UnmarshalText(data []byte) error
 
 // ChatCompletionVisionRequestToolsItem represents sum type.
 type ChatCompletionVisionRequestToolsItem struct {
-	Type               ChatCompletionVisionRequestToolsItemType // switch on this field
+	// Type selects the active sum variant, switch on this field.
+	Type               ChatCompletionVisionRequestToolsItemType
 	FunctionToolSchema FunctionToolSchema
 }
 
@@ -2092,22 +2416,25 @@ func NewFunctionToolSchemaChatCompletionVisionRequestToolsItem(v FunctionToolSch
 // model enable the chain of thought.
 // Ref: #/components/schemas/ChatThinking
 type ChatThinking struct {
-	// Whether to enable the chain of thought(When enabled, GLM-5.1 GLM-5 GLM-5-Turbo GLM-5V-Turbo GLM-4.
-	// 7 GLM-4.5V will think compulsorily, while GLM-4.6, GLM-4.6V, GLM-4.5 and others will automatically
+	// Whether to enable the chain of thought(When enabled, GLM-5.1 GLM-5 GLM-5-Turbo GLM-5V-Turbo GLM-4.7
+	// GLM-4.5V will think compulsorily, while GLM-4.6, GLM-4.6V, GLM-4.5 and others will automatically
 	// determine whether to think), default: enabled.
 	Type OptChatThinkingType `json:"type"`
 	// Default value is True. Controls whether to clear `reasoning_content` from previous conversation
-	// turns. View more in [Thinking Mode](/guides/capabilities/thinking-mode).
-	// - `true` (default): For this request, the system ignores/removes `reasoning_content` from prior
-	// turns, and only keeps non-reasoning context (e.g., user/assistant visible text, tool calls, and
-	// tool results). This is recommended for general chat or lightweight tasks to reduce context length
-	// and cost.
-	// - `false`: Retains `reasoning_content` from prior turns and includes it in the context sent to the
-	// model. To enable Preserved Thinking, you must forward the full, unmodified, and correctly ordered
-	// historical `reasoning_content` in `messages`. Missing, truncated, rewritten, or reordered blocks
-	// may degrade performance or prevent the feature from taking effect.
-	// - Notes: This parameter only affects cross-turn historical thinking blocks; it does not change
-	// whether the model generates/returns thinking in the current turn.
+	// turns. View more in [Thinking Mode].
+	//
+	//  - `true` (default): For this request, the system ignores/removes `reasoning_content` from prior
+	//    turns, and only keeps non-reasoning context (e.g., user/assistant visible text, tool calls, and
+	//    tool results). This is recommended for general chat or lightweight tasks to reduce context length
+	//    and cost.
+	//  - `false`: Retains `reasoning_content` from prior turns and includes it in the context sent to the
+	//    model. To enable Preserved Thinking, you must forward the full, unmodified, and correctly ordered
+	//    historical `reasoning_content` in `messages`. Missing, truncated, rewritten, or reordered blocks
+	//    may degrade performance or prevent the feature from taking effect.
+	//  - Notes: This parameter only affects cross-turn historical thinking blocks; it does not change
+	//    whether the model generates/returns thinking in the current turn.
+	//
+	// [Thinking Mode]: /guides/capabilities/thinking-mode
 	ClearThinking OptBool `json:"clear_thinking"`
 }
 
@@ -2131,8 +2458,8 @@ func (s *ChatThinking) SetClearThinking(val OptBool) {
 	s.ClearThinking = val
 }
 
-// Whether to enable the chain of thought(When enabled, GLM-5.1 GLM-5 GLM-5-Turbo GLM-5V-Turbo GLM-4.
-// 7 GLM-4.5V will think compulsorily, while GLM-4.6, GLM-4.6V, GLM-4.5 and others will automatically
+// Whether to enable the chain of thought(When enabled, GLM-5.1 GLM-5 GLM-5-Turbo GLM-5V-Turbo GLM-4.7
+// GLM-4.5V will think compulsorily, while GLM-4.6, GLM-4.6V, GLM-4.5 and others will automatically
 // determine whether to think), default: enabled.
 type ChatThinkingType string
 
@@ -2621,6 +2948,98 @@ func (o OptChatCompletionResponseUsagePromptTokensDetails) Or(d ChatCompletionRe
 	return d
 }
 
+// NewOptChatCompletionStreamPromptTokensDetails returns new OptChatCompletionStreamPromptTokensDetails with value set to v.
+func NewOptChatCompletionStreamPromptTokensDetails(v ChatCompletionStreamPromptTokensDetails) OptChatCompletionStreamPromptTokensDetails {
+	return OptChatCompletionStreamPromptTokensDetails{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatCompletionStreamPromptTokensDetails is optional ChatCompletionStreamPromptTokensDetails.
+type OptChatCompletionStreamPromptTokensDetails struct {
+	Value ChatCompletionStreamPromptTokensDetails
+	Set   bool
+}
+
+// IsSet returns true if OptChatCompletionStreamPromptTokensDetails was set.
+func (o OptChatCompletionStreamPromptTokensDetails) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatCompletionStreamPromptTokensDetails) Reset() {
+	var v ChatCompletionStreamPromptTokensDetails
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatCompletionStreamPromptTokensDetails) SetTo(v ChatCompletionStreamPromptTokensDetails) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatCompletionStreamPromptTokensDetails) Get() (v ChatCompletionStreamPromptTokensDetails, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatCompletionStreamPromptTokensDetails) Or(d ChatCompletionStreamPromptTokensDetails) ChatCompletionStreamPromptTokensDetails {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptChatCompletionStreamUsage returns new OptChatCompletionStreamUsage with value set to v.
+func NewOptChatCompletionStreamUsage(v ChatCompletionStreamUsage) OptChatCompletionStreamUsage {
+	return OptChatCompletionStreamUsage{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatCompletionStreamUsage is optional ChatCompletionStreamUsage.
+type OptChatCompletionStreamUsage struct {
+	Value ChatCompletionStreamUsage
+	Set   bool
+}
+
+// IsSet returns true if OptChatCompletionStreamUsage was set.
+func (o OptChatCompletionStreamUsage) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatCompletionStreamUsage) Reset() {
+	var v ChatCompletionStreamUsage
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatCompletionStreamUsage) SetTo(v ChatCompletionStreamUsage) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatCompletionStreamUsage) Get() (v ChatCompletionStreamUsage, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatCompletionStreamUsage) Or(d ChatCompletionStreamUsage) ChatCompletionStreamUsage {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptChatCompletionTextRequestMessagesItem2ToolCallsItemFunction returns new OptChatCompletionTextRequestMessagesItem2ToolCallsItemFunction with value set to v.
 func NewOptChatCompletionTextRequestMessagesItem2ToolCallsItemFunction(v ChatCompletionTextRequestMessagesItem2ToolCallsItemFunction) OptChatCompletionTextRequestMessagesItem2ToolCallsItemFunction {
 	return OptChatCompletionTextRequestMessagesItem2ToolCallsItemFunction{
@@ -3035,6 +3454,74 @@ func (o OptInt) Or(d int) int {
 	return d
 }
 
+// NewOptNilString returns new OptNilString with value set to v.
+func NewOptNilString(v string) OptNilString {
+	return OptNilString{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilString is optional nullable string.
+type OptNilString struct {
+	Value string
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilString was set.
+func (o OptNilString) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilString) Reset() {
+	var v string
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilString) SetTo(v string) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilString) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilString) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v string
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilString) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilString) Get() (v string, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilString) Or(d string) string {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptString returns new OptString with value set to v.
 func NewOptString(v string) OptString {
 	return OptString{
@@ -3219,9 +3706,399 @@ func (o OptWebSearchObjectSearchRecencyFilter) Or(d WebSearchObjectSearchRecency
 	return d
 }
 
+// PaasV4ChatCompletionsPostOKTextEventStreamClient reads events from the PaasV4ChatCompletionsPostOKTextEventStream SSE stream.
+type PaasV4ChatCompletionsPostOKTextEventStreamClient interface {
+	sse.Client[PaasV4ChatCompletionsPostOKTextEventStreamEvent]
+}
+
+// PaasV4ChatCompletionsPostOKTextEventStream is a Server-Sent Events response stream.
+type PaasV4ChatCompletionsPostOKTextEventStream struct {
+	resp      *http.Response
+	decoder   *sse.Decoder
+	connect   sseConnectFunc
+	options   sseClientConfig
+	stateMu   sync.RWMutex
+	state     sse.State
+	latestErr error
+	closed    atomic.Bool
+	closeCh   chan struct{}
+	closeOnce sync.Once
+}
+
+func (s *PaasV4ChatCompletionsPostOKTextEventStream) initSSEStream(
+	connect sseConnectFunc,
+	options sseClientConfig,
+) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.resp != nil {
+		s.decoder = newSSEResponseDecoder(s.resp, options)
+	}
+	s.connect = connect
+	s.options = options
+	s.state = sse.StateOpen
+	s.latestErr = nil
+	s.closeCh = make(chan struct{})
+}
+
+// State returns the current stream state and the latest terminal or current reconnect error.
+func (s *PaasV4ChatCompletionsPostOKTextEventStream) State() (state sse.State, latestErr error) {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.state, s.latestErr
+}
+
+func (s *PaasV4ChatCompletionsPostOKTextEventStream) setState(state sse.State, latestErr error) {
+	s.stateMu.Lock()
+	s.state = state
+	s.latestErr = latestErr
+	s.stateMu.Unlock()
+}
+
+func (s *PaasV4ChatCompletionsPostOKTextEventStream) withCloseContext(ctx context.Context,
+) (context.Context, context.CancelFunc) {
+	reconnectCtx, cancel := context.WithCancel(ctx)
+	if s.closed.Load() {
+		cancel()
+		return reconnectCtx, func() {}
+	}
+	if s.closeCh == nil {
+		return reconnectCtx, cancel
+	}
+
+	go func() {
+		select {
+		case <-s.closeCh:
+			cancel()
+		case <-reconnectCtx.Done():
+		}
+	}()
+	return reconnectCtx, cancel
+}
+
+// Close closes the current stream and stops further reconnect attempts.
+func (s *PaasV4ChatCompletionsPostOKTextEventStream) Close() error {
+	if !s.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	s.stateMu.Lock()
+	resp := s.resp
+	s.resp = nil
+	s.decoder = nil
+	closeCh := s.closeCh
+	s.state = sse.StateClosed
+	s.latestErr = sse.ErrStreamClosed
+	s.stateMu.Unlock()
+
+	if closeCh != nil {
+		s.closeOnce.Do(func() {
+			close(closeCh)
+		})
+	}
+
+	if resp == nil || resp.Body == nil {
+		return nil
+	}
+	return resp.Body.Close()
+}
+
+// Next returns the next event from the stream, reconnecting when needed.
+func (s *PaasV4ChatCompletionsPostOKTextEventStream) Next(ctx context.Context,
+) (PaasV4ChatCompletionsPostOKTextEventStreamEvent, error) {
+	for {
+		s.stateMu.RLock()
+		resp, decoder, connect, options, latestErr := s.resp, s.decoder, s.connect, s.options, s.latestErr
+		s.stateMu.RUnlock()
+		if s.closed.Load() {
+			var event PaasV4ChatCompletionsPostOKTextEventStreamEvent
+			return event, sse.ErrStreamClosed
+		}
+		if decoder == nil {
+			// No decoder means the stream is already terminal.
+			if latestErr == nil {
+				latestErr = sse.ErrStreamClosed
+			}
+			s.setState(sse.StateClosed, latestErr)
+			var event PaasV4ChatCompletionsPostOKTextEventStreamEvent
+			return event, latestErr
+		}
+		raw, err := decoder.Decode()
+		if err == nil {
+			s.setState(sse.StateOpen, nil)
+			return s.decodeEvent(raw)
+		}
+		// Special case, on ErrEventTooLarge the current event is drained
+		// without closing the stream.
+		if errors.Is(err, sse.ErrEventTooLarge) {
+			s.setState(sse.StateOpen, err)
+			var event PaasV4ChatCompletionsPostOKTextEventStreamEvent
+			return event, err
+		}
+		if !sse.IsReconnectableError(err) {
+			s.setState(sse.StateClosed, err)
+			var event PaasV4ChatCompletionsPostOKTextEventStreamEvent
+			return event, err
+		}
+		if connect == nil {
+			// Without a reconnect function, a reconnectable read error
+			// becomes terminal.
+			s.setState(sse.StateClosed, sse.ErrStreamClosed)
+			var event PaasV4ChatCompletionsPostOKTextEventStreamEvent
+			return event, sse.ErrStreamClosed
+		}
+
+		s.setState(sse.StateConnecting, err)
+		reconnectCtx, cancel := s.withCloseContext(ctx)
+		nextResp, nextDecoder, err := reconnectSSE(reconnectCtx, resp, decoder, connect, options, s)
+		cancel()
+		if s.closed.Load() {
+			if nextResp != nil && nextResp.Body != nil {
+				_ = nextResp.Body.Close()
+			}
+			var event PaasV4ChatCompletionsPostOKTextEventStreamEvent
+			return event, sse.ErrStreamClosed
+		}
+		if err != nil {
+			s.stateMu.Lock()
+			s.resp = nil
+			s.decoder = nil
+			s.stateMu.Unlock()
+			s.setState(sse.StateClosed, err)
+			var event PaasV4ChatCompletionsPostOKTextEventStreamEvent
+			return event, err
+		}
+		s.stateMu.Lock()
+		s.resp = nextResp
+		s.decoder = nextDecoder
+		s.stateMu.Unlock()
+		s.setState(sse.StateOpen, nil)
+	}
+}
+
+// All iterates over stream events until the stream is closed, reconnecting when needed.
+func (s *PaasV4ChatCompletionsPostOKTextEventStream) All(ctx context.Context,
+) iter.Seq2[PaasV4ChatCompletionsPostOKTextEventStreamEvent, error] {
+	return func(yield func(PaasV4ChatCompletionsPostOKTextEventStreamEvent, error) bool) {
+		for {
+			event, err := s.Next(ctx)
+			if err != nil {
+				if !sse.IsReconnectableError(err) {
+					return
+				}
+				var zero PaasV4ChatCompletionsPostOKTextEventStreamEvent
+				if !yield(zero, err) {
+					return
+				}
+				continue
+			}
+			if !yield(event, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (s *PaasV4ChatCompletionsPostOKTextEventStream) decodeEvent(raw sse.Event,
+) (PaasV4ChatCompletionsPostOKTextEventStreamEvent, error) {
+	var data PaasV4ChatCompletionsPostOKTextEventStreamEventData
+	buf := []byte(raw.Data)
+	if !jx.Valid(buf) {
+		e := jx.GetEncoder()
+		e.Str(raw.Data)
+		buf = append([]byte(nil), e.Bytes()...)
+		jx.PutEncoder(e)
+	}
+	d := jx.DecodeBytes(buf)
+	if err := func() error {
+		if err := data.Decode(d); err != nil {
+			return err
+		}
+		if err := d.Skip(); err != io.EOF {
+			return errors.New("unexpected trailing data")
+		}
+		return nil
+	}(); err != nil {
+		var event PaasV4ChatCompletionsPostOKTextEventStreamEvent
+		return event, err
+	}
+	if err := func() error {
+		if err := data.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		var event PaasV4ChatCompletionsPostOKTextEventStreamEvent
+		return event, errors.Wrap(err, "validate")
+	}
+	event := PaasV4ChatCompletionsPostOKTextEventStreamEvent{
+		ID:   raw.ID,
+		Type: raw.Type,
+		Data: data,
+	}
+	if raw.Retry != nil {
+		event.Retry.SetTo(int((*raw.Retry) / time.Millisecond))
+	}
+	return event, nil
+}
+
+func (*PaasV4ChatCompletionsPostOKTextEventStream) paasV4ChatCompletionsPostRes() {}
+
+// PaasV4ChatCompletionsPostOKTextEventStreamEvent is a parsed Server-Sent Event.
+type PaasV4ChatCompletionsPostOKTextEventStreamEvent struct {
+	ID    string                                              `json:"id"`
+	Type  string                                              `json:"event"`
+	Data  PaasV4ChatCompletionsPostOKTextEventStreamEventData `json:"data"`
+	Retry OptInt                                              `json:"retry"`
+}
+
+// GetID returns the value of ID.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEvent) GetID() string {
+	return s.ID
+}
+
+// GetType returns the value of Type.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEvent) GetType() string {
+	return s.Type
+}
+
+// GetData returns the value of Data.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEvent) GetData() PaasV4ChatCompletionsPostOKTextEventStreamEventData {
+	return s.Data
+}
+
+// GetRetry returns the value of Retry.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEvent) GetRetry() OptInt {
+	return s.Retry
+}
+
+// SetID sets the value of ID.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEvent) SetID(val string) {
+	s.ID = val
+}
+
+// SetType sets the value of Type.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEvent) SetType(val string) {
+	s.Type = val
+}
+
+// SetData sets the value of Data.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEvent) SetData(val PaasV4ChatCompletionsPostOKTextEventStreamEventData) {
+	s.Data = val
+}
+
+// SetRetry sets the value of Retry.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEvent) SetRetry(val OptInt) {
+	s.Retry = val
+}
+
+// PaasV4ChatCompletionsPostOKTextEventStreamEventData represents sum type.
+type PaasV4ChatCompletionsPostOKTextEventStreamEventData struct {
+	// Type selects the active sum variant, switch on this field.
+	Type                                                 PaasV4ChatCompletionsPostOKTextEventStreamEventDataType
+	ChatCompletionStreamResponse                         ChatCompletionStreamResponse
+	PaasV4ChatCompletionsPostOKTextEventStreamEventData1 PaasV4ChatCompletionsPostOKTextEventStreamEventData1
+}
+
+// PaasV4ChatCompletionsPostOKTextEventStreamEventDataType is oneOf type of PaasV4ChatCompletionsPostOKTextEventStreamEventData.
+type PaasV4ChatCompletionsPostOKTextEventStreamEventDataType string
+
+// Possible values for PaasV4ChatCompletionsPostOKTextEventStreamEventDataType.
+const (
+	ChatCompletionStreamResponsePaasV4ChatCompletionsPostOKTextEventStreamEventData                         PaasV4ChatCompletionsPostOKTextEventStreamEventDataType = "ChatCompletionStreamResponse"
+	PaasV4ChatCompletionsPostOKTextEventStreamEventData1PaasV4ChatCompletionsPostOKTextEventStreamEventData PaasV4ChatCompletionsPostOKTextEventStreamEventDataType = "PaasV4ChatCompletionsPostOKTextEventStreamEventData1"
+)
+
+// IsChatCompletionStreamResponse reports whether PaasV4ChatCompletionsPostOKTextEventStreamEventData is ChatCompletionStreamResponse.
+func (s PaasV4ChatCompletionsPostOKTextEventStreamEventData) IsChatCompletionStreamResponse() bool {
+	return s.Type == ChatCompletionStreamResponsePaasV4ChatCompletionsPostOKTextEventStreamEventData
+}
+
+// IsPaasV4ChatCompletionsPostOKTextEventStreamEventData1 reports whether PaasV4ChatCompletionsPostOKTextEventStreamEventData is PaasV4ChatCompletionsPostOKTextEventStreamEventData1.
+func (s PaasV4ChatCompletionsPostOKTextEventStreamEventData) IsPaasV4ChatCompletionsPostOKTextEventStreamEventData1() bool {
+	return s.Type == PaasV4ChatCompletionsPostOKTextEventStreamEventData1PaasV4ChatCompletionsPostOKTextEventStreamEventData
+}
+
+// SetChatCompletionStreamResponse sets PaasV4ChatCompletionsPostOKTextEventStreamEventData to ChatCompletionStreamResponse.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEventData) SetChatCompletionStreamResponse(v ChatCompletionStreamResponse) {
+	s.Type = ChatCompletionStreamResponsePaasV4ChatCompletionsPostOKTextEventStreamEventData
+	s.ChatCompletionStreamResponse = v
+}
+
+// GetChatCompletionStreamResponse returns ChatCompletionStreamResponse and true boolean if PaasV4ChatCompletionsPostOKTextEventStreamEventData is ChatCompletionStreamResponse.
+func (s PaasV4ChatCompletionsPostOKTextEventStreamEventData) GetChatCompletionStreamResponse() (v ChatCompletionStreamResponse, ok bool) {
+	if !s.IsChatCompletionStreamResponse() {
+		return v, false
+	}
+	return s.ChatCompletionStreamResponse, true
+}
+
+// NewChatCompletionStreamResponsePaasV4ChatCompletionsPostOKTextEventStreamEventData returns new PaasV4ChatCompletionsPostOKTextEventStreamEventData from ChatCompletionStreamResponse.
+func NewChatCompletionStreamResponsePaasV4ChatCompletionsPostOKTextEventStreamEventData(v ChatCompletionStreamResponse) PaasV4ChatCompletionsPostOKTextEventStreamEventData {
+	var s PaasV4ChatCompletionsPostOKTextEventStreamEventData
+	s.SetChatCompletionStreamResponse(v)
+	return s
+}
+
+// SetPaasV4ChatCompletionsPostOKTextEventStreamEventData1 sets PaasV4ChatCompletionsPostOKTextEventStreamEventData to PaasV4ChatCompletionsPostOKTextEventStreamEventData1.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEventData) SetPaasV4ChatCompletionsPostOKTextEventStreamEventData1(v PaasV4ChatCompletionsPostOKTextEventStreamEventData1) {
+	s.Type = PaasV4ChatCompletionsPostOKTextEventStreamEventData1PaasV4ChatCompletionsPostOKTextEventStreamEventData
+	s.PaasV4ChatCompletionsPostOKTextEventStreamEventData1 = v
+}
+
+// GetPaasV4ChatCompletionsPostOKTextEventStreamEventData1 returns PaasV4ChatCompletionsPostOKTextEventStreamEventData1 and true boolean if PaasV4ChatCompletionsPostOKTextEventStreamEventData is PaasV4ChatCompletionsPostOKTextEventStreamEventData1.
+func (s PaasV4ChatCompletionsPostOKTextEventStreamEventData) GetPaasV4ChatCompletionsPostOKTextEventStreamEventData1() (v PaasV4ChatCompletionsPostOKTextEventStreamEventData1, ok bool) {
+	if !s.IsPaasV4ChatCompletionsPostOKTextEventStreamEventData1() {
+		return v, false
+	}
+	return s.PaasV4ChatCompletionsPostOKTextEventStreamEventData1, true
+}
+
+// NewPaasV4ChatCompletionsPostOKTextEventStreamEventData1PaasV4ChatCompletionsPostOKTextEventStreamEventData returns new PaasV4ChatCompletionsPostOKTextEventStreamEventData from PaasV4ChatCompletionsPostOKTextEventStreamEventData1.
+func NewPaasV4ChatCompletionsPostOKTextEventStreamEventData1PaasV4ChatCompletionsPostOKTextEventStreamEventData(v PaasV4ChatCompletionsPostOKTextEventStreamEventData1) PaasV4ChatCompletionsPostOKTextEventStreamEventData {
+	var s PaasV4ChatCompletionsPostOKTextEventStreamEventData
+	s.SetPaasV4ChatCompletionsPostOKTextEventStreamEventData1(v)
+	return s
+}
+
+// Sentinel indicating that the stream has completed.
+type PaasV4ChatCompletionsPostOKTextEventStreamEventData1 string
+
+const (
+	PaasV4ChatCompletionsPostOKTextEventStreamEventData1DONE PaasV4ChatCompletionsPostOKTextEventStreamEventData1 = "[DONE]"
+)
+
+// AllValues returns all PaasV4ChatCompletionsPostOKTextEventStreamEventData1 values.
+func (PaasV4ChatCompletionsPostOKTextEventStreamEventData1) AllValues() []PaasV4ChatCompletionsPostOKTextEventStreamEventData1 {
+	return []PaasV4ChatCompletionsPostOKTextEventStreamEventData1{
+		PaasV4ChatCompletionsPostOKTextEventStreamEventData1DONE,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s PaasV4ChatCompletionsPostOKTextEventStreamEventData1) MarshalText() ([]byte, error) {
+	switch s {
+	case PaasV4ChatCompletionsPostOKTextEventStreamEventData1DONE:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *PaasV4ChatCompletionsPostOKTextEventStreamEventData1) UnmarshalText(data []byte) error {
+	switch PaasV4ChatCompletionsPostOKTextEventStreamEventData1(data) {
+	case PaasV4ChatCompletionsPostOKTextEventStreamEventData1DONE:
+		*s = PaasV4ChatCompletionsPostOKTextEventStreamEventData1DONE
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // PaasV4ChatCompletionsPostReq represents sum type.
 type PaasV4ChatCompletionsPostReq struct {
-	Type                        PaasV4ChatCompletionsPostReqType // switch on this field
+	// Type selects the active sum variant, switch on this field.
+	Type                        PaasV4ChatCompletionsPostReqType
 	ChatCompletionTextRequest   ChatCompletionTextRequest
 	ChatCompletionVisionRequest ChatCompletionVisionRequest
 }
@@ -3291,12 +4168,12 @@ func NewChatCompletionVisionRequestPaasV4ChatCompletionsPostReq(v ChatCompletion
 type RetrievalObject struct {
 	// Knowledge base ID, created or obtained from the platform.
 	KnowledgeID string `json:"knowledge_id"`
-	// Prompt template for requesting the model, a custom request template containing placeholders `{{
-	// knowledge }}` and `{{ question }}`. Default template: Search for the answer to the question
+	// Prompt template for requesting the model, a custom request template containing placeholders
+	// `{{ knowledge }}` and `{{ question }}`. Default template: Search for the answer to the question
 	// `{{question}}` in the document `{{ knowledge }}`. If an answer is found, respond only using
-	// statements from the document; if no answer is found, use your own knowledge to answer and inform
-	// the user that the information is not from the document. Do not repeat the question, start the
-	// answer directly.
+	// statements from the document; if no answer is found, use your own knowledge to answer and inform the
+	// user that the information is not from the document. Do not repeat the question, start the answer
+	// directly.
 	PromptTemplate OptString `json:"prompt_template"`
 }
 
@@ -3383,7 +4260,8 @@ func (s *RetrievalToolSchemaType) UnmarshalText(data []byte) error {
 // Ref: #/components/schemas/VisionMultimodalContentItem
 // VisionMultimodalContentItem represents sum type.
 type VisionMultimodalContentItem struct {
-	Type                         VisionMultimodalContentItemType // switch on this field
+	// Type selects the active sum variant, switch on this field.
+	Type                         VisionMultimodalContentItemType
 	VisionMultimodalContentItem0 VisionMultimodalContentItem0
 	VisionMultimodalContentItem1 VisionMultimodalContentItem1
 	VisionMultimodalContentItem2 VisionMultimodalContentItem2
@@ -3711,8 +4589,8 @@ func (s *VisionMultimodalContentItem2Type) UnmarshalText(data []byte) error {
 
 // Video information.
 type VisionMultimodalContentItem2VideoURL struct {
-	// Video URL address.The video size is limited to within 200 MB, GLM-5V GLM4.6V series are limited to
-	// 2 videos, GLM4.5V limit 1 video, and the format supports `mp4`，`mkv`，`mov`.
+	// Video URL address.The video size is limited to within 200 MB, GLM-5V GLM4.6V series are limited to 2
+	// videos, GLM4.5V limit 1 video, and the format supports `mp4`，`mkv`，`mov`.
 	URL string `json:"url"`
 }
 
@@ -3809,55 +4687,34 @@ func (s *VisionMultimodalContentItem3Type) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/WebSearchObject
 type WebSearchObject struct {
-	// Whether to enable search functionality.
-	// Default is `false`. Set to true to `enable`.
+	// Whether to enable search functionality. Default is `false`. Set to true to `enable`.
 	Enable OptBool `json:"enable"`
-	// Type of search engine.
-	// Default is `search_pro_jina`. Supports: `search_pro_jina`.
+	// Type of search engine. Default is `search_pro_jina`. Supports: `search_pro_jina`.
 	SearchEngine WebSearchObjectSearchEngine `json:"search_engine"`
 	// Force trigger a search.
 	SearchQuery OptString `json:"search_query"`
-	// Number of returned results
-	// Range: `1-50`, max `50` results per search
-	// Default is `10`
-	// Supported engines: `search_pro_jina`.
+	// Number of returned results Range: `1-50`, max `50` results per search Default is `10` Supported
+	// engines: `search_pro_jina`.
 	Count OptInt `json:"count"`
 	// Limits search results to specified whitelisted domains. Whitelist: input domains directly (e.g.,
-	// www.example.com)
-	// Supported engines: `search_pro_jina`.
+	// http://www.example.com) Supported engines: `search_pro_jina`.
 	SearchDomainFilter OptString `json:"search_domain_filter"`
-	// Limits search to a specific time range.
-	// Default is `noLimit`
-	// Values:
-	// `oneDay`, within a day
-	// `oneWeek`, within a week
-	// `oneMonth`, within a month
-	// `oneYear`, within a year
-	// `noLimit`, no limit (default)
-	// Supported engines: `search_pro_jina`.
+	// Limits search to a specific time range. Default is `noLimit` Values: `oneDay`, within a day
+	// `oneWeek`, within a week `oneMonth`, within a month `oneYear`, within a year `noLimit`, no limit
+	// (default) Supported engines: `search_pro_jina`.
 	SearchRecencyFilter OptWebSearchObjectSearchRecencyFilter `json:"search_recency_filter"`
-	// Number of characters for webpage summaries.
-	// Default is `medium`
-	// `medium`: Balanced mode for most queries. 400-600 characters
-	// `high`: Maximizes context for comprehensive answers, 2500 characters.
+	// Number of characters for webpage summaries. Default is `medium` `medium`: Balanced mode for most
+	// queries. 400-600 characters `high`: Maximizes context for comprehensive answers, 2500 characters.
 	ContentSize OptWebSearchObjectContentSize `json:"content_size"`
 	// Specifies whether search results are shown before or after model response. Options: `before`,
 	// `after`. Default is `after`.
 	ResultSequence OptWebSearchObjectResultSequence `json:"result_sequence"`
-	// Whether to return search results in the response.
-	// Default is `false`.
+	// Whether to return search results in the response. Default is `false`.
 	SearchResult OptBool `json:"search_result"`
-	// Whether to force model response based on search result.
-	// Default is `false`.
+	// Whether to force model response based on search result. Default is `false`.
 	RequireSearch OptBool `json:"require_search"`
-	// Prompt to customize how search results are processed.
-	// Default Prompt:
-	// `You are an intelligent Q&A expert with the ability to synthesize information, recognize time,
-	// understand semantics, and clean contradictory data. The current date is {{current_date}}. Use this
-	// as the only time reference. Based on the following information, provide a comprehensive and
-	// accurate answer to the user's question.Only extract valuable content for the answer. Ensure the
-	// answer is timely and authoritative. State the answer directly without citing data sources or
-	// internal processes.`.
+	// Prompt to customize how search results are processed. Default Prompt:
+	// `You are an intelligent Q&A expert with the ability to synthesize information, recognize time, understand semantics, and clean contradictory data. The current date is {{current_date}}. Use this as the only time reference. Based on the following information, provide a comprehensive and accurate answer to the user's question.Only extract valuable content for the answer. Ensure the answer is timely and authoritative. State the answer directly without citing data sources or internal processes.`.
 	SearchPrompt OptString `json:"search_prompt"`
 }
 
@@ -3971,10 +4828,8 @@ func (s *WebSearchObject) SetSearchPrompt(val OptString) {
 	s.SearchPrompt = val
 }
 
-// Number of characters for webpage summaries.
-// Default is `medium`
-// `medium`: Balanced mode for most queries. 400-600 characters
-// `high`: Maximizes context for comprehensive answers, 2500 characters.
+// Number of characters for webpage summaries. Default is `medium` `medium`: Balanced mode for most
+// queries. 400-600 characters `high`: Maximizes context for comprehensive answers, 2500 characters.
 type WebSearchObjectContentSize string
 
 const (
@@ -4147,8 +5002,7 @@ func (s *WebSearchObjectResultSequence) UnmarshalText(data []byte) error {
 	}
 }
 
-// Type of search engine.
-// Default is `search_pro_jina`. Supports: `search_pro_jina`.
+// Type of search engine. Default is `search_pro_jina`. Supports: `search_pro_jina`.
 type WebSearchObjectSearchEngine string
 
 const (
@@ -4183,15 +5037,9 @@ func (s *WebSearchObjectSearchEngine) UnmarshalText(data []byte) error {
 	}
 }
 
-// Limits search to a specific time range.
-// Default is `noLimit`
-// Values:
-// `oneDay`, within a day
-// `oneWeek`, within a week
-// `oneMonth`, within a month
-// `oneYear`, within a year
-// `noLimit`, no limit (default)
-// Supported engines: `search_pro_jina`.
+// Limits search to a specific time range. Default is `noLimit` Values: `oneDay`, within a day
+// `oneWeek`, within a week `oneMonth`, within a month `oneYear`, within a year `noLimit`, no limit
+// (default) Supported engines: `search_pro_jina`.
 type WebSearchObjectSearchRecencyFilter string
 
 const (

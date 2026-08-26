@@ -307,10 +307,11 @@ A provider generator keeps only what it needs to send a request:
 | `OpenAiGenerator` | completion service | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `AnthropicGenerator` | message service | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `GeminiGenerator` | Gemini client | `Generator`, `StreamingGenerator`, `TokenCounter` |
-| `CerebrasGenerator` | HTTP client, endpoint, API key | `Generator` |
-| `OpenRouterGenerator` | completion service | `Generator` |
+| `CerebrasGenerator` | generated client | `Generator`, `StreamingGenerator` |
+| `OpenRouterGenerator` | generated client | `Generator`, `StreamingGenerator` |
 | `ResponsesGenerator` | Responses service | `Generator`, `StreamingGenerator` |
-| `ZaiGenerator` | generated clients and API transport | `Generator`, `StreamingGenerator` |
+| `ZaiGenerator` | generated client | `Generator`, `StreamingGenerator` |
+| `DeepSeekGenerator` | generated client | `Generator`, `StreamingGenerator` |
 
 Constructors set up those connections. They do not choose a model, install tools, or store instructions. Every call gets that data from `GenerationRequest`.
 

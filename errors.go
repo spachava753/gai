@@ -107,6 +107,7 @@ type Provider string
 const (
 	ProviderAnthropic  Provider = "anthropic"
 	ProviderCerebras   Provider = "cerebras"
+	ProviderDeepSeek   Provider = "deepseek"
 	ProviderGemini     Provider = "gemini"
 	ProviderOpenAI     Provider = "openai"
 	ProviderOpenRouter Provider = "openrouter"

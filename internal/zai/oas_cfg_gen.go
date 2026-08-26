@@ -59,6 +59,7 @@ type clientConfig struct {
 	// A list of callbacks for modifying response.
 	ResponseEditors []ResponseEditor
 	Client          ht.Client
+	sseCfg          sseClientConfig
 }
 
 // ClientOption is client config option.
@@ -150,6 +151,13 @@ func WithClient(client ht.Client) ClientOption {
 		if client != nil {
 			cfg.Client = client
 		}
+	})
+}
+
+// WithSSEClientOptions configures default SSE client behavior.
+func WithSSEClientOptions(opts ...SSEClientOption) ClientOption {
+	return optionFunc[clientConfig](func(cfg *clientConfig) {
+		cfg.sseCfg.apply(opts...)
 	})
 }
 

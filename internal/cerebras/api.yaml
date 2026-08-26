@@ -1,0 +1,443 @@
+openapi: 3.0.3
+info:
+  title: Cerebras Inference API
+  description: Cerebras Chat Completions API used by the GAI adapter.
+  version: 1.0.0
+servers:
+  - url: https://api.cerebras.ai
+security:
+  - bearerAuth: []
+paths:
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      description: Creates a chat completion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: Successful response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+            text/event-stream:
+              x-ogen-sse-event-shape: data-only
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ChatCompletionChunk"
+                  - type: string
+                    enum:
+                      - "[DONE]"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    ChatCompletionRequest:
+      type: object
+      required:
+        - model
+        - messages
+      properties:
+        model:
+          type: string
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Message"
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+        max_completion_tokens:
+          type: integer
+          minimum: 1
+        stop:
+          $ref: "#/components/schemas/Stop"
+        tools:
+          type: array
+          maxItems: 128
+          items:
+            $ref: "#/components/schemas/FunctionTool"
+        tool_choice:
+          $ref: "#/components/schemas/ToolChoice"
+        reasoning_effort:
+          $ref: "#/components/schemas/ReasoningEffort"
+        stream:
+          type: boolean
+    Stop:
+      oneOf:
+        - type: string
+        - type: array
+          maxItems: 4
+          items:
+            type: string
+    ReasoningEffort:
+      type: string
+      enum:
+        - low
+        - medium
+        - high
+        - none
+    ToolChoice:
+      oneOf:
+        - $ref: "#/components/schemas/ToolChoiceMode"
+        - $ref: "#/components/schemas/ToolChoiceObject"
+    ToolChoiceMode:
+      type: string
+      enum:
+        - none
+        - auto
+        - required
+    ToolChoiceObject:
+      type: object
+      required:
+        - type
+        - function
+      properties:
+        type:
+          type: string
+          enum:
+            - function
+        function:
+          type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+    FunctionTool:
+      type: object
+      required:
+        - type
+        - function
+      properties:
+        type:
+          type: string
+          enum:
+            - function
+        function:
+          $ref: "#/components/schemas/FunctionObject"
+    FunctionObject:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          pattern: "^[a-zA-Z0-9_-]+$"
+        description:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: {}
+    Message:
+      oneOf:
+        - $ref: "#/components/schemas/SystemMessage"
+        - $ref: "#/components/schemas/UserMessage"
+        - $ref: "#/components/schemas/AssistantMessage"
+        - $ref: "#/components/schemas/ToolMessage"
+      discriminator:
+        propertyName: role
+        mapping:
+          system: "#/components/schemas/SystemMessage"
+          user: "#/components/schemas/UserMessage"
+          assistant: "#/components/schemas/AssistantMessage"
+          tool: "#/components/schemas/ToolMessage"
+    SystemMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum:
+            - system
+        content:
+          type: string
+    UserMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum:
+            - user
+        content:
+          type: string
+    AssistantMessage:
+      type: object
+      required:
+        - role
+      properties:
+        role:
+          type: string
+          enum:
+            - assistant
+        content:
+          type: string
+          nullable: true
+        reasoning:
+          type: string
+          nullable: true
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolCall"
+    ToolMessage:
+      type: object
+      required:
+        - role
+        - content
+        - tool_call_id
+      properties:
+        role:
+          type: string
+          enum:
+            - tool
+        content:
+          type: string
+        tool_call_id:
+          type: string
+    ToolCall:
+      type: object
+      required:
+        - id
+        - type
+        - function
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - function
+        function:
+          $ref: "#/components/schemas/ToolCallFunction"
+    ToolCallFunction:
+      type: object
+      required:
+        - name
+        - arguments
+      properties:
+        name:
+          type: string
+        arguments:
+          type: string
+    ChatCompletionResponse:
+      type: object
+      required:
+        - id
+        - object
+        - created
+        - model
+        - choices
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum:
+            - chat.completion
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        system_fingerprint:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatChoice"
+        usage:
+          $ref: "#/components/schemas/Usage"
+    ChatChoice:
+      type: object
+      required:
+        - index
+        - finish_reason
+        - message
+      properties:
+        index:
+          type: integer
+        finish_reason:
+          type: string
+          enum:
+            - stop
+            - length
+            - content_filter
+            - tool_calls
+        message:
+          $ref: "#/components/schemas/ResponseMessage"
+    ResponseMessage:
+      type: object
+      required:
+        - role
+      properties:
+        role:
+          type: string
+          enum:
+            - assistant
+        content:
+          type: string
+          nullable: true
+        reasoning:
+          type: string
+          nullable: true
+        refusal:
+          type: string
+          nullable: true
+        tool_calls:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ToolCall"
+    ChatCompletionChunk:
+      type: object
+      required:
+        - id
+        - object
+        - created
+        - model
+        - choices
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum:
+            - chat.completion.chunk
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        system_fingerprint:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatCompletionChunkChoice"
+        usage:
+          $ref: "#/components/schemas/Usage"
+    ChatCompletionChunkChoice:
+      type: object
+      required:
+        - index
+        - delta
+      properties:
+        index:
+          type: integer
+        delta:
+          $ref: "#/components/schemas/ChatCompletionChunkDelta"
+        finish_reason:
+          type: string
+          nullable: true
+          enum:
+            - stop
+            - length
+            - content_filter
+            - tool_calls
+    ChatCompletionChunkDelta:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - assistant
+        content:
+          type: string
+          nullable: true
+        reasoning:
+          type: string
+          nullable: true
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatCompletionChunkToolCall"
+    ChatCompletionChunkToolCall:
+      type: object
+      required:
+        - index
+        - function
+      properties:
+        index:
+          type: integer
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - function
+        function:
+          $ref: "#/components/schemas/ChatCompletionChunkToolCallFunction"
+    ChatCompletionChunkToolCallFunction:
+      type: object
+      properties:
+        name:
+          type: string
+        arguments:
+          type: string
+    Usage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        prompt_tokens_details:
+          $ref: "#/components/schemas/PromptTokensDetails"
+        completion_tokens_details:
+          $ref: "#/components/schemas/CompletionTokensDetails"
+    PromptTokensDetails:
+      type: object
+      properties:
+        cached_tokens:
+          type: integer
+    CompletionTokensDetails:
+      type: object
+      properties:
+        reasoning_tokens:
+          type: integer
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+    ErrorDetail:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+        type:
+          type: string
+        code:
+          type: string
+        param:
+          type: string

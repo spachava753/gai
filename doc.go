@@ -1,8 +1,8 @@
 // Package gai provides a unified interface for interacting with various large language model (LLM) providers.
 //
 // The package abstracts away provider-specific implementations, allowing you to write code that works
-// with multiple AI providers (OpenAI, Anthropic, Google Gemini) without changing your core logic.
-// It supports text, image, audio, and PDF modalities (provider dependent), tool integration with
+// with OpenAI, Anthropic, Google Gemini, Cerebras, OpenRouter, ZAI, and DeepSeek without changing
+// your core logic. It supports text, image, audio, and PDF modalities (provider dependent), tool integration with
 // JSON Schema-based parameters, callback-based tool execution, automatic fallback strategies for
 // reliability, standardized error types for better error handling, and detailed usage metrics.
 //
@@ -347,6 +347,7 @@
 // Available generator constants:
 //   - ThinkingGeneratorAnthropic - Anthropic Claude models with extended thinking
 //   - ThinkingGeneratorCerebras - Cerebras models with reasoning
+//   - ThinkingGeneratorDeepSeek - DeepSeek models with reasoning
 //   - ThinkingGeneratorGemini - Google Gemini models with thinking
 //   - ThinkingGeneratorOpenRouter - OpenRouter with reasoning models
 //   - ThinkingGeneratorResponses - OpenAI Responses API with reasoning
@@ -452,6 +453,24 @@
 //		APIKey: "your-api-key",
 //	})
 //	generator := gai.NewGeminiGenerator(client)
+//
+// Cerebras: The Cerebras implementation supports streaming text generation, function tools,
+// and replayable reasoning content. Pass nil to use the generated client and leave apiKey
+// empty to read CEREBRAS_API_KEY.
+//
+//	generator := gai.NewCerebrasGenerator(nil, "")
+//
+// OpenRouter: The OpenRouter implementation supports streaming text generation with multimodal input,
+// function tools, and replayable reasoning details. Pass nil to use the generated client
+// and leave apiKey empty to read OPENROUTER_API_KEY.
+//
+//	generator := gai.NewOpenRouterGenerator(nil, "")
+//
+// DeepSeek: The DeepSeek implementation supports text generation, streaming, function tools,
+// and replayable reasoning content. Pass nil to use the generated client and leave apiKey empty
+// to read DEEPSEEK_API_KEY.
+//
+//	generator := gai.NewDeepSeekGenerator(nil, "")
 //
 // For every provider, set the model and system instructions on GenerationRequest.
 // Constructors retain only clients, credentials, endpoints, and other execution dependencies.

@@ -151,6 +151,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChatCompletionResponse"
+            text/event-stream:
+              x-ogen-sse-event-shape: data-only
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ChatCompletionStreamResponse"
+                  - type: string
+                    description: Sentinel indicating that the stream has completed.
+                    enum:
+                      - "[DONE]"
         default:
           description: The request has failed.
           content:
@@ -704,6 +713,96 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WebSearchObjectResponse"
+    ChatCompletionStreamResponse:
+      type: object
+      required:
+        - choices
+      properties:
+        id:
+          type: string
+          description: Completion ID.
+        request_id:
+          type: string
+          description: Request ID.
+        created:
+          type: integer
+          description: Request creation time, Unix timestamp in seconds.
+        model:
+          type: string
+          description: Model name.
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatCompletionStreamChoice"
+        usage:
+          $ref: "#/components/schemas/ChatCompletionStreamUsage"
+    ChatCompletionStreamChoice:
+      type: object
+      required:
+        - index
+        - delta
+      properties:
+        index:
+          type: integer
+          description: Result index.
+        delta:
+          $ref: "#/components/schemas/ChatCompletionStreamDelta"
+        finish_reason:
+          type: string
+          nullable: true
+          description: Reason for model inference termination.
+    ChatCompletionStreamDelta:
+      type: object
+      properties:
+        role:
+          type: string
+        content:
+          type: string
+        reasoning_content:
+          type: string
+        refusal:
+          type: string
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatCompletionStreamToolCall"
+    ChatCompletionStreamToolCall:
+      type: object
+      required:
+        - index
+        - function
+      properties:
+        index:
+          type: integer
+        id:
+          type: string
+        type:
+          type: string
+        function:
+          $ref: "#/components/schemas/ChatCompletionStreamToolCallFunction"
+    ChatCompletionStreamToolCallFunction:
+      type: object
+      properties:
+        name:
+          type: string
+        arguments:
+          type: string
+    ChatCompletionStreamUsage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: number
+        completion_tokens:
+          type: number
+        total_tokens:
+          type: number
+        prompt_tokens_details:
+          $ref: "#/components/schemas/ChatCompletionStreamPromptTokensDetails"
+    ChatCompletionStreamPromptTokensDetails:
+      type: object
+      properties:
+        cached_tokens:
+          type: number
     Error:
       required:
         - code
