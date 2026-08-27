@@ -16,6 +16,7 @@ GAI is a Go library for interacting with LLM providers, including OpenAI, Anthro
 - Tests: colocated `*_test.go` for each area, plus provider-specific tests
 - Samples: `sample.jpg`, `sample.pdf`, `sample.wav` for multimodal tests/examples
 - Scripts: `scripts/` includes docs-generation helper
+- Tracked hooks: `.githooks/pre-commit` runs LAAS against hand-written packages and excludes generated OGEN clients
 - `README.md` is generated from `doc.go` via `go run ./scripts/generate-readme.go`; do not edit `README.md` directly or hand-patch generated output
 - `design.md` records the generator interfaces, shared types, state ownership, and rationale implemented by the current release
 
@@ -26,11 +27,12 @@ Conventions
 
 ## Build, test, and development commands
 
-Requirements: Go 1.26+.
+Requirements: Go 1.26.6+.
 
 Common commands
 - Install deps: `go mod download`
-- Lint (if golangci-lint installed): `golangci-lint run` (optional)
+- Lint: `go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|openrouter|zai)$' ./...`
+- Lint with golangci-lint if installed: `golangci-lint run` (optional)
 - Run tests (all, live API tests skipped): `go test ./...`
 - Run live API tests only when explicitly requested by the user: `LIVE_TESTS=1 go test ./...` (also requires the relevant provider API keys)
 - Run tests with race: `go test -race ./...`
@@ -151,6 +153,7 @@ When adding new configuration
 
 ## Git and contribution workflow
 
+- Activate the tracked pre-commit hook after cloning: `git config --local core.hooksPath .githooks`
 - Default branch: `main`; use feature branches for changes
 - Keep commits small, focused, and with descriptive messages
 - This module is pre-`v1.0.0`; breaking API changes are acceptable when they improve the package, though they should still be intentional and documented in code/tests/docs as appropriate
@@ -159,7 +162,8 @@ When adding new configuration
 
 ## Development environment
 
-- Go 1.26+
+- Go 1.26.6+
+- LAAS is pinned as a Go tool and runs through the tracked pre-commit hook
 - Optional tools: `golangci-lint`, `rg` (ripgrep)
 
 ## Parsing notes for agentic tools

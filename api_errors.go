@@ -15,6 +15,7 @@ type apiErrorMessage struct {
 	Error   *apiErrorMessage `json:"error"`
 }
 
+// classifyHTTPStatus groups standard HTTP failures into retry and fallback categories shared by provider adapters.
 func classifyHTTPStatus(statusCode int) APIErrorKind {
 	switch statusCode {
 	case 0:

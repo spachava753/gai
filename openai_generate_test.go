@@ -48,7 +48,7 @@ func (d *openAIStreamDecoder) Event() oaissestream.Event { return d.cur }
 func (d *openAIStreamDecoder) Close() error              { return nil }
 func (d *openAIStreamDecoder) Err() error                { return nil }
 
-func TestOpenAIGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
+func testOpenAIGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	client := &mockChatCompletionService{response: &oai.ChatCompletion{
 		Choices: []oai.ChatCompletionChoice{{
 			FinishReason: "stop",
@@ -73,7 +73,7 @@ func TestOpenAIGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	}
 }
 
-func TestOpenAIGenerateReturnsContentPolicyErrorForContentFilter(t *testing.T) {
+func testOpenAIGenerateReturnsContentPolicyErrorForContentFilter(t *testing.T) {
 	client := &mockChatCompletionService{response: &oai.ChatCompletion{
 		Choices: []oai.ChatCompletionChoice{{FinishReason: "content_filter"}},
 	}}
@@ -95,7 +95,7 @@ func TestOpenAIGenerateReturnsContentPolicyErrorForContentFilter(t *testing.T) {
 	}
 }
 
-func TestOpenAIStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
+func testOpenAIStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	client := &mockChatCompletionService{streamEvents: []oaissestream.Event{{
 		Data: []byte(`{"id":"chatcmpl_123","object":"chat.completion.chunk","created":0,"model":"gpt-5","choices":[{"index":0,"delta":{"refusal":"I cannot help with that."},"finish_reason":""}]}`),
 	}}}

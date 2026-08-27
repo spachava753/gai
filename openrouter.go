@@ -223,6 +223,7 @@ type OpenRouterGenerator struct {
 	client *openrouter.Client
 }
 
+// classifyOpenRouterError maps typed router and upstream failures before falling back to the HTTP status.
 func classifyOpenRouterError(statusCode int, errorType string) APIErrorKind {
 	switch errorType {
 	case "authentication":
@@ -326,6 +327,7 @@ type openRouterGenerationOptions struct {
 	ThinkingBudget      string
 }
 
+// parseOpenRouterGenerationOptions validates common and router-specific option types into one immutable snapshot.
 func parseOpenRouterGenerationOptions(values GenerationOptions) (*openRouterGenerationOptions, error) {
 	options := &openRouterGenerationOptions{}
 
@@ -627,6 +629,7 @@ func buildOpenRouterMessages(request GenerationRequest) ([]openrouter.Message, e
 	return messages, nil
 }
 
+// buildOpenRouterUserMessage validates and converts ordered text, image, audio, and file blocks.
 func buildOpenRouterUserMessage(blocks []Block) (openrouter.UserMessage, error) {
 	if len(blocks) == 0 {
 		return openrouter.UserMessage{}, fmt.Errorf("openrouter: user message must have at least one block")
@@ -690,6 +693,7 @@ func buildOpenRouterUserMessage(blocks []Block) (openrouter.UserMessage, error) 
 	}, nil
 }
 
+// buildOpenRouterAssistantMessage collects visible text, replayable reasoning details, and validated tool calls.
 func buildOpenRouterAssistantMessage(blocks []Block) (openrouter.AssistantMessage, error) {
 	message := openrouter.AssistantMessage{Role: openrouter.AssistantMessageRoleAssistant}
 	var content strings.Builder
@@ -764,6 +768,7 @@ func buildOpenRouterToolMessage(blocks []Block) (openrouter.ToolMessage, error) 
 	return openrouter.ToolMessage{Role: openrouter.ToolMessageRoleTool, Content: content.String(), ToolCallID: toolCallID}, nil
 }
 
+// buildRequest converts request state and validates router-specific ranges, enums, and structured objects.
 func (g *OpenRouterGenerator) buildRequest(request GenerationRequest) (*openrouter.ChatCompletionRequest, error) {
 	options, err := parseOpenRouterGenerationOptions(request.Options)
 	if err != nil {
@@ -1212,7 +1217,10 @@ func (g *OpenRouterGenerator) Stream(ctx context.Context, generationRequest Gene
 				}
 				for _, detail := range choice.Delta.ReasoningDetails {
 					hasReasoningDetails = true
-					key := openRouterReasoningDetailKey(detail)
+					key := detail.Type + ":" + detail.ID.Or("")
+					if index, ok := detail.Index.Get(); ok {
+						key = fmt.Sprintf("%s:%d", detail.Type, index)
+					}
 					if previous, exists := lastReasoningKey[choice.Index]; exists && previous != key {
 						if !yieldBlock(SeparatorBlock(), choice.Index, nil) {
 							return
@@ -1282,13 +1290,6 @@ func (g *OpenRouterGenerator) Stream(ctx context.Context, generationRequest Gene
 	}
 }
 
-func openRouterReasoningDetailKey(detail openrouter.ReasoningDetail) string {
-	if index, ok := detail.Index.Get(); ok {
-		return fmt.Sprintf("%s:%d", detail.Type, index)
-	}
-	return detail.Type + ":" + detail.ID.Or("")
-}
-
 func openRouterReasoningBlock(detail openrouter.ReasoningDetail) (Block, bool) {
 	var content string
 	switch detail.Type {
@@ -1354,6 +1355,7 @@ func openRouterFinishReason(reason string) (FinishReason, error) {
 	}
 }
 
+// addOpenRouterUsageMetadata records common token counts and preserves native cost, cache, and server-tool breakdowns.
 func addOpenRouterUsageMetadata(metadata Metadata, usage openrouter.Usage) {
 	if promptTokens := usage.PromptTokens.Or(0); promptTokens > 0 {
 		metadata[UsageMetricInputTokens] = promptTokens

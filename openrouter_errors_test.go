@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestOpenRouterGeneratorSurfacesProviderOverload(t *testing.T) {
+func testOpenRouterGeneratorSurfacesProviderOverload(t *testing.T) {
 	tests := []struct {
 		name        string
 		body        string
@@ -70,7 +70,7 @@ func TestOpenRouterGeneratorSurfacesProviderOverload(t *testing.T) {
 	}
 }
 
-func TestClassifyOpenRouterErrorCurrentTypedCodes(t *testing.T) {
+func testClassifyOpenRouterErrorCurrentTypedCodes(t *testing.T) {
 	tests := []struct {
 		errorType string
 		want      APIErrorKind

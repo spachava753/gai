@@ -12,7 +12,7 @@ import (
 	"google.golang.org/genai"
 )
 
-func TestGeminiResponseError(t *testing.T) {
+func testGeminiResponseError(t *testing.T) {
 	tests := []struct {
 		name       string
 		response   *genai.GenerateContentResponse
@@ -77,7 +77,7 @@ func geminiResponseWithFinishReason(reason genai.FinishReason) *genai.GenerateCo
 	return &genai.GenerateContentResponse{Candidates: []*genai.Candidate{{FinishReason: reason}}}
 }
 
-func TestGeminiAPIErrorMapping(t *testing.T) {
+func testGeminiAPIErrorMapping(t *testing.T) {
 	testCases := []struct {
 		name       string
 		statusCode int

@@ -15,7 +15,38 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
-func TestResponsesGeneratorBuildParamsServiceTier(t *testing.T) {
+func TestEventAPIAdapterScenarios(t *testing.T) {
+	t.Run("ResponsesErrorEventClassification", testResponsesErrorEventClassification)
+	t.Run("ResponsesFailureClassification", testResponsesFailureClassification)
+	t.Run("ResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase", testResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase)
+	t.Run("ResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhaseWithoutTextContent", testResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhaseWithoutTextContent)
+	t.Run("ResponsesGeneratorBuildInputItemsRejectsInvalidAssistantMessagePhase", testResponsesGeneratorBuildInputItemsRejectsInvalidAssistantMessagePhase)
+	t.Run("ResponsesGeneratorBuildParamsServiceTier", testResponsesGeneratorBuildParamsServiceTier)
+	t.Run("ResponsesGeneratorGeneratePreservesAssistantMessagePhase", testResponsesGeneratorGeneratePreservesAssistantMessagePhase)
+	t.Run("ResponsesGeneratorGeneratePreservesAssistantToolOnlyPhaseRoundTrip", testResponsesGeneratorGeneratePreservesAssistantToolOnlyPhaseRoundTrip)
+	t.Run("ResponsesGeneratorGenerateReturnsContentPolicyFinishReason", testResponsesGeneratorGenerateReturnsContentPolicyFinishReason)
+	t.Run("ResponsesGeneratorGenerateReturnsFailedResponseError", testResponsesGeneratorGenerateReturnsFailedResponseError)
+	t.Run("ResponsesGeneratorStreamRetriesServerOverloadSSEError", testResponsesGeneratorStreamRetriesServerOverloadSSEError)
+	t.Run("ResponsesGenerator/Generate", testResponsesGenerator_Generate)
+	t.Run("ResponsesGenerator/Generate/Thinking/Logging", testResponsesGenerator_Generate_Thinking_Logging)
+	t.Run("ResponsesGenerator/Generate/image", testResponsesGenerator_Generate_image)
+	t.Run("ResponsesGenerator/Generate/pdf", testResponsesGenerator_Generate_pdf)
+	t.Run("ResponsesGenerator/Generate/thinking", testResponsesGenerator_Generate_thinking)
+	t.Run("ResponsesGenerator/ReasoningTokenPreservation/Generate", testResponsesGenerator_ReasoningTokenPreservation_Generate)
+	t.Run("ResponsesGenerator/ReasoningTokenPreservation/Stream", testResponsesGenerator_ReasoningTokenPreservation_Stream)
+	t.Run("ResponsesGenerator/RequestTools", testResponsesGenerator_RequestTools)
+	t.Run("ResponsesGenerator/RequestTools/parallelToolUse", testResponsesGenerator_RequestTools_parallelToolUse)
+	t.Run("ResponsesGenerator/StatelessToolCallWithReasoning", testResponsesGenerator_StatelessToolCallWithReasoning)
+	t.Run("ResponsesGenerator/StreamMetadata", testResponsesGenerator_StreamMetadata)
+	t.Run("ResponsesGenerator/Stream/Thinking/Logging", testResponsesGenerator_Stream_Thinking_Logging)
+	t.Run("ResponsesGenerator/Stream/thinking", testResponsesGenerator_Stream_thinking)
+	t.Run("ResponsesGenerator/StreamingAdapter/LiveThinkingSummaryFormatting", testResponsesGenerator_StreamingAdapter_LiveThinkingSummaryFormatting)
+	t.Run("ResponsesGenerator/StreamingToolCallWithReasoning", testResponsesGenerator_StreamingToolCallWithReasoning)
+	t.Run("ResponsesProviderOptionHelpers", testResponsesProviderOptionHelpers)
+	t.Run("ResponsesStreamingAdapterPreservesReasoningSummaryParts", testResponsesStreamingAdapterPreservesReasoningSummaryParts)
+}
+
+func testResponsesGeneratorBuildParamsServiceTier(t *testing.T) {
 	withServiceTier := func(value any) GenerationOptions {
 		return GenerationOptions{ResponsesServiceTierParam: value}
 	}
@@ -69,7 +100,7 @@ func TestResponsesGeneratorBuildParamsServiceTier(t *testing.T) {
 	}
 }
 
-func TestResponsesProviderOptionHelpers(t *testing.T) {
+func testResponsesProviderOptionHelpers(t *testing.T) {
 	generator := NewResponsesGenerator(nil)
 	params, err := generator.buildParams(nil, GenerationRequest{
 		Model: "gpt-5",
@@ -111,7 +142,7 @@ func TestResponsesProviderOptionHelpers(t *testing.T) {
 	}
 }
 
-func TestResponsesGenerator_Generate_pdf(t *testing.T) {
+func testResponsesGenerator_Generate_pdf(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	pdfBytes, err := os.ReadFile("sample.pdf")
 	if err != nil {
@@ -148,7 +179,7 @@ func TestResponsesGenerator_Generate_pdf(t *testing.T) {
 		}
 	}
 }
-func TestResponsesGenerator_Generate_image(t *testing.T) {
+func testResponsesGenerator_Generate_image(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
@@ -204,7 +235,7 @@ func TestResponsesGenerator_Generate_image(t *testing.T) {
 		}
 	}
 }
-func TestResponsesGenerator_Generate(t *testing.T) {
+func testResponsesGenerator_Generate(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses)
@@ -221,7 +252,7 @@ func TestResponsesGenerator_Generate(t *testing.T) {
 		t.Fatal("expected at least one item")
 	}
 }
-func TestResponsesGenerator_Generate_thinking(t *testing.T) {
+func testResponsesGenerator_Generate_thinking(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses)
@@ -257,7 +288,7 @@ func TestResponsesGenerator_Generate_thinking(t *testing.T) {
 		t.Fatal("expected at least one item")
 	}
 }
-func TestResponsesGenerator_RequestTools(t *testing.T) {
+func testResponsesGenerator_RequestTools(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses)
@@ -316,7 +347,7 @@ func TestResponsesGenerator_RequestTools(t *testing.T) {
 		}
 	}
 }
-func TestResponsesGenerator_RequestTools_parallelToolUse(t *testing.T) {
+func testResponsesGenerator_RequestTools_parallelToolUse(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses)
@@ -382,7 +413,7 @@ func TestResponsesGenerator_RequestTools_parallelToolUse(t *testing.T) {
 // the ResponsesGenerator for stateless multi-turn conversation. The adapter
 // compresses streaming chunks into complete Response objects, making it easy
 // to append the assistant's response to the dialog for subsequent turns.
-func TestStreamingAdapter_responses(t *testing.T) {
+func testStreamingAdapter_responses(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	// Create the generator and wrap it with StreamingAdapter.
@@ -418,7 +449,7 @@ func TestStreamingAdapter_responses(t *testing.T) {
 // call chunks into complete blocks, preserving IDs and Thinking block ExtraFields
 // so the dialog can be passed back for subsequent turns without any manual chunk
 // reconstruction.
-func TestStreamingAdapter_responses_toolUse(t *testing.T) {
+func testStreamingAdapter_responses_toolUse(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses)
@@ -492,7 +523,7 @@ func TestStreamingAdapter_responses_toolUse(t *testing.T) {
 // block carries usage information. This example also shows how to build a
 // dialog-ready assistant message from the streamed blocks using
 // compressStreamingBlocks (via StreamingAdapter) for a follow-up turn.
-func TestResponsesGenerator_Stream_thinking(t *testing.T) {
+func testResponsesGenerator_Stream_thinking(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses)

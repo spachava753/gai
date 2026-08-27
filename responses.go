@@ -267,6 +267,7 @@ func mergeResponsesMessagePhase(extraFields map[string]interface{}, phase string
 	return merged, nil
 }
 
+// convertToolsToResponses validates function declarations while translating them to SDK parameters.
 func convertToolsToResponses(tools []Tool) ([]responses.ToolUnionParam, error) {
 	converted := make([]responses.ToolUnionParam, 0, len(tools))
 	seen := make(map[string]struct{}, len(tools))
@@ -315,6 +316,7 @@ type responsesGenerationOptions struct {
 	ThoughtSummary      *responses.ReasoningSummary
 }
 
+// parseResponsesGenerationOptions validates common and Responses-specific values into typed settings.
 func parseResponsesGenerationOptions(values GenerationOptions) (*responsesGenerationOptions, error) {
 	options := &responsesGenerationOptions{}
 
@@ -798,6 +800,7 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (message 
 	return message, hasToolCalls, refusal, nil
 }
 
+// Generate validates the request, executes one Responses API call, and translates its output and usage.
 func (r *ResponsesGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if r.client == nil {
 		return Response{}, fmt.Errorf("responses: client not initialized")
@@ -870,6 +873,7 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, request GenerationReq
 	return result, nil
 }
 
+// Stream validates the request and converts Responses events into ordered stream chunks.
 func (r *ResponsesGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if r.client == nil {

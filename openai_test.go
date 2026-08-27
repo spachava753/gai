@@ -387,7 +387,30 @@ func TestToOpenAIMessage(t *testing.T) {
 	}
 }
 
-func TestOpenAiGenerator_Generate_image(t *testing.T) {
+func TestOpenAIAdapterScenarios(t *testing.T) {
+	t.Run("OpenAIErrorMappingUsesHTTPStatus", testOpenAIErrorMappingUsesHTTPStatus)
+	t.Run("OpenAIGenerateReturnsContentPolicyErrorForContentFilter", testOpenAIGenerateReturnsContentPolicyErrorForContentFilter)
+	t.Run("OpenAIGenerateReturnsContentPolicyErrorForRefusal", testOpenAIGenerateReturnsContentPolicyErrorForRefusal)
+	t.Run("OpenAIStreamReturnsContentPolicyErrorForRefusal", testOpenAIStreamReturnsContentPolicyErrorForRefusal)
+	t.Run("OpenAiGeneratorUsesRequestScopedState", testOpenAiGeneratorUsesRequestScopedState)
+	t.Run("OpenAiGenerator/Count", testOpenAiGenerator_Count)
+	t.Run("OpenAiGenerator/Count/Example", testOpenAiGenerator_Count_Example)
+	t.Run("OpenAiGenerator/Generate", testOpenAiGenerator_Generate)
+	t.Run("OpenAiGenerator/Generate/audio", testOpenAiGenerator_Generate_audio)
+	t.Run("OpenAiGenerator/Generate/image", testOpenAiGenerator_Generate_image)
+	t.Run("OpenAiGenerator/Generate/openRouter", testOpenAiGenerator_Generate_openRouter)
+	t.Run("OpenAiGenerator/Generate/pdf", testOpenAiGenerator_Generate_pdf)
+	t.Run("OpenAiGenerator/Generate/thinking", testOpenAiGenerator_Generate_thinking)
+	t.Run("OpenAiGenerator/RequestTools", testOpenAiGenerator_RequestTools)
+	t.Run("OpenAiGenerator/RequestTools/openRouter", testOpenAiGenerator_RequestTools_openRouter)
+	t.Run("OpenAiGenerator/RequestTools/openRouterParallelToolUse", testOpenAiGenerator_RequestTools_openRouterParallelToolUse)
+	t.Run("OpenAiGenerator/RequestTools/parallelToolUse", testOpenAiGenerator_RequestTools_parallelToolUse)
+	t.Run("OpenAiGenerator/Stream", testOpenAiGenerator_Stream)
+	t.Run("OpenAiGenerator/Stream/parallelToolUse", testOpenAiGenerator_Stream_parallelToolUse)
+	t.Run("OpenAiGenerator/calculateImageTokens", testOpenAiGenerator_calculateImageTokens)
+}
+
+func testOpenAiGenerator_Generate_image(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
@@ -436,7 +459,7 @@ func TestOpenAiGenerator_Generate_image(t *testing.T) {
 		t.Fatalf("content does not contain Crood")
 	}
 }
-func TestOpenAiGenerator_Generate_audio(t *testing.T) {
+func testOpenAiGenerator_Generate_audio(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	audioBytes, err := os.ReadFile("sample.wav")
 	if err != nil {
@@ -483,7 +506,7 @@ func TestOpenAiGenerator_Generate_audio(t *testing.T) {
 		}
 	}
 }
-func TestOpenAiGenerator_Generate(t *testing.T) {
+func testOpenAiGenerator_Generate(t *testing.T) {
 	// Create an OpenAI client
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := oai.NewClient(
@@ -528,7 +551,7 @@ func TestOpenAiGenerator_Generate(t *testing.T) {
 		t.Fatal("expected at least one item")
 	}
 }
-func TestOpenAiGenerator_Stream(t *testing.T) {
+func testOpenAiGenerator_Stream(t *testing.T) {
 	// Create an OpenAI client
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := oai.NewClient(
@@ -564,7 +587,7 @@ func TestOpenAiGenerator_Stream(t *testing.T) {
 	if len(blocks) == 2 && len(blocks[0]) > 1 && len(blocks[1]) > 1 {
 	}
 }
-func TestOpenAiGenerator_Generate_openRouter(t *testing.T) {
+func testOpenAiGenerator_Generate_openRouter(t *testing.T) {
 	// Create an OpenAI client for open router
 	client := oai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1/"),
@@ -599,7 +622,7 @@ func TestOpenAiGenerator_Generate_openRouter(t *testing.T) {
 		t.Fatal("expected at least one item")
 	}
 }
-func TestOpenAiGenerator_Generate_thinking(t *testing.T) {
+func testOpenAiGenerator_Generate_thinking(t *testing.T) {
 	requireLiveAPIKey(t, "OPENAI_API_KEY")
 	// Create an OpenAI client
 	client := oai.NewClient()
@@ -653,7 +676,7 @@ func TestOpenAiGenerator_Generate_thinking(t *testing.T) {
 		t.Fatal("expected at least one item")
 	}
 }
-func TestOpenAiGenerator_RequestTools(t *testing.T) {
+func testOpenAiGenerator_RequestTools(t *testing.T) {
 	requireLiveAPIKey(t, "OPENAI_API_KEY")
 	// Create an OpenAI client
 	client := oai.NewClient(option.WithBaseURL("https://gateway.ai.cloudflare.com/v1/4eee6dd2fdc8cebc7802c5a638f460fe/cpe/openai/"))
@@ -719,7 +742,7 @@ func TestOpenAiGenerator_RequestTools(t *testing.T) {
 		t.Fatal("expected non-empty content")
 	}
 }
-func TestOpenAiGenerator_Stream_parallelToolUse(t *testing.T) {
+func testOpenAiGenerator_Stream_parallelToolUse(t *testing.T) {
 	// Create an OpenAI client
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	client := oai.NewClient(
@@ -857,7 +880,7 @@ func TestOpenAiGenerator_Stream_parallelToolUse(t *testing.T) {
 	if len(blocks) > 1 {
 	}
 }
-func TestOpenAiGenerator_RequestTools_parallelToolUse(t *testing.T) {
+func testOpenAiGenerator_RequestTools_parallelToolUse(t *testing.T) {
 	requireLiveAPIKey(t, "OPENAI_API_KEY")
 	// Create an OpenAI client
 	client := oai.NewClient()
@@ -936,7 +959,7 @@ func TestOpenAiGenerator_RequestTools_parallelToolUse(t *testing.T) {
 		t.Fatal("expected non-empty content")
 	}
 }
-func TestOpenAiGenerator_RequestTools_openRouter(t *testing.T) {
+func testOpenAiGenerator_RequestTools_openRouter(t *testing.T) {
 	// Define request tools
 	tickerTool := Tool{
 		Name:        "get_stock_price",
@@ -1005,7 +1028,7 @@ func TestOpenAiGenerator_RequestTools_openRouter(t *testing.T) {
 		t.Fatal("expected non-empty content")
 	}
 }
-func TestOpenAiGenerator_RequestTools_openRouterParallelToolUse(t *testing.T) {
+func testOpenAiGenerator_RequestTools_openRouterParallelToolUse(t *testing.T) {
 	// Create an OpenAI client
 	client := oai.NewClient(
 		option.WithBaseURL("https://openrouter.ai/api/v1/"),
@@ -1085,7 +1108,7 @@ func TestOpenAiGenerator_RequestTools_openRouterParallelToolUse(t *testing.T) {
 		t.Fatal("expected non-empty content")
 	}
 }
-func TestOpenAiGenerator_Count_Example(t *testing.T) {
+func testOpenAiGenerator_Count_Example(t *testing.T) {
 	// Create an OpenAI client
 	client := oai.NewClient()
 	// Create a generator
@@ -1137,7 +1160,7 @@ func TestOpenAiGenerator_Count_Example(t *testing.T) {
 		t.Fatal("expected non-zero token count")
 	}
 }
-func TestOpenAiGenerator_Generate_pdf(t *testing.T) {
+func testOpenAiGenerator_Generate_pdf(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
 	pdfBytes, err := os.ReadFile("sample.pdf")
 	if err != nil {

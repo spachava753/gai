@@ -33,7 +33,24 @@ func newLiveOpenRouterGenerator(t *testing.T, apiKey string) *OpenRouterGenerato
 	return generator
 }
 
-func TestOpenRouterGeneratorUsesGeneratedJSONClient(t *testing.T) {
+func TestRouterAdapterScenarios(t *testing.T) {
+	t.Run("OpenRouterBuildRequestRejectsInvalidProviderOptions", testOpenRouterBuildRequestRejectsInvalidProviderOptions)
+	t.Run("OpenRouterBuildRequestReplaysReasoningAndMultimodalInput", testOpenRouterBuildRequestReplaysReasoningAndMultimodalInput)
+	t.Run("OpenRouterGenerateReturnsContentPolicyErrorForContentFilter", testOpenRouterGenerateReturnsContentPolicyErrorForContentFilter)
+	t.Run("OpenRouterGenerateReturnsContentPolicyErrorForRefusal", testOpenRouterGenerateReturnsContentPolicyErrorForRefusal)
+	t.Run("OpenRouterGeneratedOverloadMapping", testOpenRouterGeneratedOverloadMapping)
+	t.Run("OpenRouterGeneratorSurfacesProviderOverload", testOpenRouterGeneratorSurfacesProviderOverload)
+	t.Run("OpenRouterGeneratorUsesGeneratedJSONClient", testOpenRouterGeneratorUsesGeneratedJSONClient)
+	t.Run("OpenRouterGeneratorUsesGeneratedSSEClient", testOpenRouterGeneratorUsesGeneratedSSEClient)
+	t.Run("OpenRouterGenerator/Generate", testOpenRouterGenerator_Generate)
+	t.Run("OpenRouterGenerator/Generate/image", testOpenRouterGenerator_Generate_image)
+	t.Run("OpenRouterGenerator/Generate/invalidModel", testOpenRouterGenerator_Generate_invalidModel)
+	t.Run("OpenRouterGenerator/Generate/reasoningModel", testOpenRouterGenerator_Generate_reasoningModel)
+	t.Run("OpenRouterGenerator/RequestTools", testOpenRouterGenerator_RequestTools)
+	t.Run("OpenRouterStreamMapsMidstreamError", testOpenRouterStreamMapsMidstreamError)
+}
+
+func testOpenRouterGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	requests := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/chat/completions" {
@@ -235,7 +252,7 @@ func TestOpenRouterGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	}
 }
 
-func TestOpenRouterBuildRequestRejectsInvalidProviderOptions(t *testing.T) {
+func testOpenRouterBuildRequestRejectsInvalidProviderOptions(t *testing.T) {
 	tests := []struct {
 		name    string
 		options GenerationOptions
@@ -276,7 +293,7 @@ func TestOpenRouterBuildRequestRejectsInvalidProviderOptions(t *testing.T) {
 	}
 }
 
-func TestOpenRouterGeneratorUsesGeneratedSSEClient(t *testing.T) {
+func testOpenRouterGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request["stream"] != true {
@@ -385,7 +402,7 @@ func TestOpenRouterGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	}
 }
 
-func TestOpenRouterStreamMapsMidstreamError(t *testing.T) {
+func testOpenRouterStreamMapsMidstreamError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(
@@ -415,7 +432,7 @@ func TestOpenRouterStreamMapsMidstreamError(t *testing.T) {
 	}
 }
 
-func TestOpenRouterBuildRequestReplaysReasoningAndMultimodalInput(t *testing.T) {
+func testOpenRouterBuildRequestReplaysReasoningAndMultimodalInput(t *testing.T) {
 	toolCall, err := ToolCallBlock("call_1", "get_weather", map[string]any{"city": "Paris"})
 	if err != nil {
 		t.Fatalf("create tool call: %v", err)
@@ -483,7 +500,7 @@ func TestOpenRouterBuildRequestReplaysReasoningAndMultimodalInput(t *testing.T) 
 	}
 }
 
-func TestOpenRouterGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
+func testOpenRouterGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -510,7 +527,7 @@ func TestOpenRouterGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	}
 }
 
-func TestOpenRouterGenerateReturnsContentPolicyErrorForContentFilter(t *testing.T) {
+func testOpenRouterGenerateReturnsContentPolicyErrorForContentFilter(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -537,7 +554,7 @@ func TestOpenRouterGenerateReturnsContentPolicyErrorForContentFilter(t *testing.
 	}
 }
 
-func TestOpenRouterGenerator_Generate(t *testing.T) {
+func testOpenRouterGenerator_Generate(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	gen := newLiveOpenRouterGenerator(t, apiKey)
 	dialog := Dialog{
@@ -573,7 +590,7 @@ func TestOpenRouterGenerator_Generate(t *testing.T) {
 		t.Fatal("expected at least one item")
 	}
 }
-func TestOpenRouterGenerator_Generate_image(t *testing.T) {
+func testOpenRouterGenerator_Generate_image(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	imgBytes, err := os.ReadFile("sample.jpg")
 	if err != nil {
@@ -620,7 +637,7 @@ func TestOpenRouterGenerator_Generate_image(t *testing.T) {
 		t.Fatalf("content does not contain Crood")
 	}
 }
-func TestOpenRouterGenerator_RequestTools(t *testing.T) {
+func testOpenRouterGenerator_RequestTools(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	gen := newLiveOpenRouterGenerator(t, apiKey)
 	// Define a request tool
@@ -686,7 +703,7 @@ func TestOpenRouterGenerator_RequestTools(t *testing.T) {
 		}
 	}
 }
-func TestOpenRouterGenerator_Generate_reasoningModel(t *testing.T) {
+func testOpenRouterGenerator_Generate_reasoningModel(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	// Use a reasoning model through OpenRouter.
 	gen := newLiveOpenRouterGenerator(t, apiKey)
@@ -778,7 +795,7 @@ func TestOpenRouterGenerator_Generate_reasoningModel(t *testing.T) {
 		}
 	}
 }
-func TestOpenRouterGenerator_Generate_invalidModel(t *testing.T) {
+func testOpenRouterGenerator_Generate_invalidModel(t *testing.T) {
 	// This example demonstrates handling of invalid model IDs with OpenRouter.
 	// OpenRouter returns a 400 status code with error details in the response body
 	// for invalid requests like nonsense model IDs.

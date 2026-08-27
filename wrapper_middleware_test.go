@@ -130,7 +130,7 @@ func (m *MockBaseGenerator) Count(ctx context.Context, request GenerationRequest
 
 // --- Tests ---
 
-func TestMiddlewareStack_Generate(t *testing.T) {
+func testMiddlewareStack_Generate(t *testing.T) {
 	tracker := &CallTracker{}
 	base := &MockBaseGenerator{tracker: tracker, tokenCount: 100}
 
@@ -172,7 +172,7 @@ func TestMiddlewareStack_Generate(t *testing.T) {
 	t.Logf("Generate call order: %s", strings.Join(calls, " -> "))
 }
 
-func TestMiddlewareStack_Count(t *testing.T) {
+func testMiddlewareStack_Count(t *testing.T) {
 	tracker := &CallTracker{}
 	base := &MockBaseGenerator{tracker: tracker, tokenCount: 42}
 
@@ -218,7 +218,7 @@ func TestMiddlewareStack_Count(t *testing.T) {
 	t.Logf("Count call order: %s", strings.Join(calls, " -> "))
 }
 
-func TestMiddlewareStack_BothMethods(t *testing.T) {
+func testMiddlewareStack_BothMethods(t *testing.T) {
 	tracker := &CallTracker{}
 	base := &MockBaseGenerator{tracker: tracker, tokenCount: 99}
 

@@ -15,6 +15,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+// geminiResponseError inspects prompt feedback and candidate finish reasons before accepting a response as usable.
 func geminiResponseError(response *genai.GenerateContentResponse) error {
 	if response == nil {
 		return errors.New("gemini: empty generation response")
@@ -57,6 +58,7 @@ func geminiResponseError(response *genai.GenerateContentResponse) error {
 	}
 }
 
+// classifyGeminiError prefers structured Google reason codes, then falls back to HTTP status classification.
 func classifyGeminiError(apiErr genai.APIError) APIErrorKind {
 	for _, detail := range apiErr.Details {
 		reason, _ := detail["reason"].(string)
@@ -222,6 +224,7 @@ type geminiGenerationOptions struct {
 	ThinkingBudget      string
 }
 
+// parseGeminiGenerationOptions validates common option values and records the typed Gemini configuration.
 func parseGeminiGenerationOptions(values GenerationOptions) (*geminiGenerationOptions, error) {
 	options := &geminiGenerationOptions{}
 
@@ -550,6 +553,7 @@ func (g *GeminiGenerator) Generate(ctx context.Context, request GenerationReques
 	return result, nil
 }
 
+// Stream builds the request inside the iterator and translates Gemini parts, tool calls, usage, and failures in order.
 func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {

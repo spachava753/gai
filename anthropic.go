@@ -64,22 +64,6 @@ type AnthropicGenerator struct {
 	client AnthropicSvc
 }
 
-// convertToolToAnthropic converts our tool definition to Anthropic's format
-func convertToolToAnthropic(tool Tool) a.ToolParam {
-	var inputSchema a.ToolInputSchemaParam
-	if tool.InputSchema != nil {
-		inputSchema = a.ToolInputSchemaParam{
-			Properties: tool.InputSchema.Properties,
-			Required:   tool.InputSchema.Required,
-		}
-	}
-	return a.ToolParam{
-		Name:        tool.Name,
-		Description: a.String(tool.Description),
-		InputSchema: inputSchema,
-	}
-}
-
 func convertToolsToAnthropic(tools []Tool) ([]a.ToolParam, error) {
 	converted := make([]a.ToolParam, 0, len(tools))
 	seen := make(map[string]struct{}, len(tools))
@@ -94,7 +78,19 @@ func convertToolsToAnthropic(tools []Tool) ([]a.ToolParam, error) {
 			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool already provided")}
 		}
 		seen[tool.Name] = struct{}{}
-		converted = append(converted, convertToolToAnthropic(tool))
+
+		var inputSchema a.ToolInputSchemaParam
+		if tool.InputSchema != nil {
+			inputSchema = a.ToolInputSchemaParam{
+				Properties: tool.InputSchema.Properties,
+				Required:   tool.InputSchema.Required,
+			}
+		}
+		converted = append(converted, a.ToolParam{
+			Name:        tool.Name,
+			Description: a.String(tool.Description),
+			InputSchema: inputSchema,
+		})
 	}
 	return converted, nil
 }
@@ -109,6 +105,7 @@ type anthropicGenerationOptions struct {
 	ThinkingBudget      string
 }
 
+// parseAnthropicGenerationOptions validates recognized option values and records a typed request snapshot.
 func parseAnthropicGenerationOptions(values GenerationOptions) (*anthropicGenerationOptions, error) {
 	options := &anthropicGenerationOptions{}
 
@@ -409,6 +406,7 @@ func anthropicStopError(reason a.StopReason, details a.RefusalStopDetails) error
 	}
 }
 
+// Generate validates request state, performs one Anthropic call, and normalizes content, tools, usage, and errors.
 func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("anthropic: client not initialized")
@@ -640,6 +638,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationReq
 	return result, nil
 }
 
+// Stream validates request state inside the iterator and translates Anthropic events into ordered blocks and errors.
 func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {

@@ -30,7 +30,22 @@ func newLiveCerebrasGenerator(t *testing.T, apiKey string) *CerebrasGenerator {
 	return generator
 }
 
-func TestCerebrasGeneratorUsesGeneratedJSONClient(t *testing.T) {
+func TestCerebrasAdapterScenarios(t *testing.T) {
+	t.Run("CerebrasBuildRequestRejectsInvalidProviderOptions", testCerebrasBuildRequestRejectsInvalidProviderOptions)
+	t.Run("CerebrasBuildRequestRejectsUnsupportedImageInput", testCerebrasBuildRequestRejectsUnsupportedImageInput)
+	t.Run("CerebrasBuildRequestReplaysThinking", testCerebrasBuildRequestReplaysThinking)
+	t.Run("CerebrasBuildRequestSupportsImageInput", testCerebrasBuildRequestSupportsImageInput)
+	t.Run("CerebrasGeneratorMapsGeneratedError", testCerebrasGeneratorMapsGeneratedError)
+	t.Run("CerebrasGeneratorReturnsContentPolicyError", testCerebrasGeneratorReturnsContentPolicyError)
+	t.Run("CerebrasGeneratorUsesGeneratedJSONClient", testCerebrasGeneratorUsesGeneratedJSONClient)
+	t.Run("CerebrasGeneratorUsesGeneratedSSEClient", testCerebrasGeneratorUsesGeneratedSSEClient)
+	t.Run("CerebrasGenerator/Generate", testCerebrasGenerator_Generate)
+	t.Run("CerebrasGenerator/Generate/reasoning/gemma", testCerebrasGenerator_Generate_reasoning_gemma)
+	t.Run("CerebrasGenerator/Generate/reasoning/gptoss", testCerebrasGenerator_Generate_reasoning_gptoss)
+	t.Run("CerebrasGenerator/RequestTools", testCerebrasGenerator_RequestTools)
+}
+
+func testCerebrasGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	requests := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
@@ -206,7 +221,7 @@ func TestCerebrasGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	}
 }
 
-func TestCerebrasBuildRequestSupportsImageInput(t *testing.T) {
+func testCerebrasBuildRequestSupportsImageInput(t *testing.T) {
 	request, err := (&CerebrasGenerator{}).buildRequest(GenerationRequest{
 		Model: "gemma-4-31b",
 		Dialog: Dialog{{Role: User, Blocks: []Block{
@@ -246,7 +261,7 @@ func TestCerebrasBuildRequestSupportsImageInput(t *testing.T) {
 	}
 }
 
-func TestCerebrasBuildRequestRejectsUnsupportedImageInput(t *testing.T) {
+func testCerebrasBuildRequestRejectsUnsupportedImageInput(t *testing.T) {
 	_, err := (&CerebrasGenerator{}).buildRequest(GenerationRequest{
 		Model: "gemma-4-31b",
 		Dialog: Dialog{{Role: User, Blocks: []Block{{
@@ -258,7 +273,7 @@ func TestCerebrasBuildRequestRejectsUnsupportedImageInput(t *testing.T) {
 	}
 }
 
-func TestCerebrasBuildRequestRejectsInvalidProviderOptions(t *testing.T) {
+func testCerebrasBuildRequestRejectsInvalidProviderOptions(t *testing.T) {
 	tests := []struct {
 		name    string
 		options GenerationOptions
@@ -299,7 +314,7 @@ func TestCerebrasBuildRequestRejectsInvalidProviderOptions(t *testing.T) {
 	}
 }
 
-func TestCerebrasGeneratorUsesGeneratedSSEClient(t *testing.T) {
+func testCerebrasGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request["stream"] != true {
@@ -399,7 +414,7 @@ func TestCerebrasGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	}
 }
 
-func TestCerebrasGeneratorReturnsContentPolicyError(t *testing.T) {
+func testCerebrasGeneratorReturnsContentPolicyError(t *testing.T) {
 	tests := []struct {
 		name       string
 		choiceJSON string
@@ -445,7 +460,7 @@ func TestCerebrasGeneratorReturnsContentPolicyError(t *testing.T) {
 	}
 }
 
-func TestCerebrasGeneratorMapsGeneratedError(t *testing.T) {
+func testCerebrasGeneratorMapsGeneratedError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -467,7 +482,7 @@ func TestCerebrasGeneratorMapsGeneratedError(t *testing.T) {
 	}
 }
 
-func TestCerebrasBuildRequestReplaysThinking(t *testing.T) {
+func testCerebrasBuildRequestReplaysThinking(t *testing.T) {
 	toolCall, err := ToolCallBlock("call_1", "get_weather", map[string]any{"city": "Paris"})
 	if err != nil {
 		t.Fatalf("create tool call: %v", err)
@@ -497,7 +512,7 @@ func TestCerebrasBuildRequestReplaysThinking(t *testing.T) {
 	}
 }
 
-func TestCerebrasGenerator_Generate(t *testing.T) {
+func testCerebrasGenerator_Generate(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	gen := newLiveCerebrasGenerator(t, apiKey)
 	dialog := Dialog{
@@ -518,7 +533,7 @@ func TestCerebrasGenerator_Generate(t *testing.T) {
 		t.Fatalf("empty response: %+v", resp)
 	}
 }
-func TestCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
+func testCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	// Use gpt-oss-120b model which supports reasoning with reasoning_effort parameter
 	gen := newLiveCerebrasGenerator(t, apiKey)
@@ -603,7 +618,7 @@ func TestCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
 		}
 	}
 }
-func TestCerebrasGenerator_Generate_reasoning_gemma(t *testing.T) {
+func testCerebrasGenerator_Generate_reasoning_gemma(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	// Gemma supports reasoning through the reasoning_effort parameter.
 	gen := newLiveCerebrasGenerator(t, apiKey)
@@ -688,7 +703,7 @@ func TestCerebrasGenerator_Generate_reasoning_gemma(t *testing.T) {
 		}
 	}
 }
-func TestCerebrasGenerator_RequestTools(t *testing.T) {
+func testCerebrasGenerator_RequestTools(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	cgen := newLiveCerebrasGenerator(t, apiKey)
 	instructions := `You are a helpful assistant that returns the price of a stock and nothing else.

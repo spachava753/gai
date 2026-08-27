@@ -8,7 +8,12 @@ import (
 	"github.com/spachava753/gai"
 )
 
-func TestFallbackGenerator_Generate_Example(t *testing.T) {
+func TestFallbackUsageScenarios(t *testing.T) {
+	t.Run("FallbackGenerator/Generate/Example", testFallbackGenerator_Generate_Example)
+	t.Run("FallbackGenerator/Generate/customFallbackConfig", testFallbackGenerator_Generate_customFallbackConfig)
+}
+
+func testFallbackGenerator_Generate_Example(t *testing.T) {
 	// This example shows how to create a fallback generator that first tries a primary generator,
 	// and if that fails with rate limiting or 5xx errors, falls back to a secondary generator.
 
@@ -56,7 +61,7 @@ func TestFallbackGenerator_Generate_Example(t *testing.T) {
 	}
 }
 
-func TestFallbackGenerator_Generate_customFallbackConfig(t *testing.T) {
+func testFallbackGenerator_Generate_customFallbackConfig(t *testing.T) {
 	// This example shows how to create a fallback generator with a custom configuration
 	// that falls back on specific HTTP status codes including 400 errors.
 

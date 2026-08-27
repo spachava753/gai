@@ -11,7 +11,22 @@ import (
 	"time"
 )
 
-func TestGeminiGenerator_Generate(t *testing.T) {
+func TestGoogleAdapterScenarios(t *testing.T) {
+	t.Run("GeminiAPIErrorMapping", testGeminiAPIErrorMapping)
+	t.Run("GeminiGenerator/Count", testGeminiGenerator_Count)
+	t.Run("GeminiGenerator/Generate", testGeminiGenerator_Generate)
+	t.Run("GeminiGenerator/Generate/audio", testGeminiGenerator_Generate_audio)
+	t.Run("GeminiGenerator/Generate/image", testGeminiGenerator_Generate_image)
+	t.Run("GeminiGenerator/Generate/pdf", testGeminiGenerator_Generate_pdf)
+	t.Run("GeminiGenerator/RequestTools", testGeminiGenerator_RequestTools)
+	t.Run("GeminiGenerator/RequestTools/parallelToolUse", testGeminiGenerator_RequestTools_parallelToolUse)
+	t.Run("GeminiGenerator/RequestTools/parallelToolUse/multimedia", testGeminiGenerator_RequestTools_parallelToolUse_multimedia)
+	t.Run("GeminiGenerator/Stream", testGeminiGenerator_Stream)
+	t.Run("GeminiGenerator/Stream/parallelToolUse", testGeminiGenerator_Stream_parallelToolUse)
+	t.Run("GeminiResponseError", testGeminiResponseError)
+}
+
+func testGeminiGenerator_Generate(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
@@ -36,7 +51,7 @@ func TestGeminiGenerator_Generate(t *testing.T) {
 	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
 	}
 }
-func TestGeminiGenerator_Stream(t *testing.T) {
+func testGeminiGenerator_Stream(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
@@ -69,7 +84,7 @@ func TestGeminiGenerator_Stream(t *testing.T) {
 	}
 	requireTextContains(t, content.String(), "Paris")
 }
-func TestGeminiGenerator_RequestTools(t *testing.T) {
+func testGeminiGenerator_RequestTools(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
@@ -205,7 +220,7 @@ When a user asks for the server time, always call the server time tool, don't us
 	}
 	requireTextContains(t, requireContentBlock(t, requireBlock(t, requireCandidate(t, response), 0)), "MSFT", "300", "UTC")
 }
-func TestGeminiGenerator_Generate_image(t *testing.T) {
+func testGeminiGenerator_Generate_image(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	// ---
 	// This example assumes that sample.jpg is present in the current directory.
@@ -268,7 +283,7 @@ func TestGeminiGenerator_Generate_image(t *testing.T) {
 		t.Fatalf("content does not contain Crood")
 	}
 }
-func TestGeminiGenerator_Generate_audio(t *testing.T) {
+func testGeminiGenerator_Generate_audio(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	audioBytes, err := os.ReadFile("sample.wav")
 	if err != nil {
@@ -319,7 +334,7 @@ func TestGeminiGenerator_Generate_audio(t *testing.T) {
 		}
 	}
 }
-func TestGeminiGenerator_RequestTools_parallelToolUse(t *testing.T) {
+func testGeminiGenerator_RequestTools_parallelToolUse(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
@@ -364,7 +379,7 @@ func TestGeminiGenerator_RequestTools_parallelToolUse(t *testing.T) {
 	requireToolCallWithParam(t, calls, "get_stock_price", "ticker", "MSFT")
 	requireToolCallWithParam(t, calls, "get_stock_price", "ticker", "TSLA")
 }
-func TestGeminiGenerator_Stream_parallelToolUse(t *testing.T) {
+func testGeminiGenerator_Stream_parallelToolUse(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
@@ -416,7 +431,7 @@ func TestGeminiGenerator_Stream_parallelToolUse(t *testing.T) {
 		t.Fatal("expected at least one streamed tool call")
 	}
 }
-func TestGeminiGenerator_Count(t *testing.T) {
+func testGeminiGenerator_Count(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
@@ -490,7 +505,7 @@ func TestGeminiGenerator_Count(t *testing.T) {
 		t.Fatal("expected non-zero token count")
 	}
 }
-func TestGeminiGenerator_Generate_pdf(t *testing.T) {
+func testGeminiGenerator_Generate_pdf(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(
@@ -534,7 +549,7 @@ func TestGeminiGenerator_Generate_pdf(t *testing.T) {
 		}
 	}
 }
-func TestGeminiGenerator_RequestTools_parallelToolUse_multimedia(t *testing.T) {
+func testGeminiGenerator_RequestTools_parallelToolUse_multimedia(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")
 	ctx := context.Background()
 	client, err := genai.NewClient(

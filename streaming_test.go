@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestStreamingAdapterBlockCompression(t *testing.T) {
+func testStreamingAdapterBlockCompression(t *testing.T) {
 	t.Run("compresses consecutive thinking blocks into one", func(t *testing.T) {
 		blocks := []Block{
 			{BlockType: Thinking, Content: Str("I think ")},
@@ -167,7 +167,7 @@ func TestStreamingAdapterBlockCompression(t *testing.T) {
 	})
 }
 
-func TestStreamingAdapterPreservesResponseExtraFields(t *testing.T) {
+func testStreamingAdapterPreservesResponseExtraFields(t *testing.T) {
 	adapter := &StreamingAdapter{S: &mockStreamingGenerator{chunks: []StreamChunk{
 		{
 			Block:               TextBlock("hello"),
@@ -188,7 +188,7 @@ func TestStreamingAdapterPreservesResponseExtraFields(t *testing.T) {
 	}
 }
 
-func TestStreamingAdapterRejectsConflictingResponseExtraFields(t *testing.T) {
+func testStreamingAdapterRejectsConflictingResponseExtraFields(t *testing.T) {
 	adapter := &StreamingAdapter{S: &mockStreamingGenerator{chunks: []StreamChunk{
 		{Block: TextBlock("hello"), ResponseExtraFields: map[string]interface{}{"request_id": "req_1"}},
 		{Block: TextBlock(" world"), ResponseExtraFields: map[string]interface{}{"request_id": "req_2"}},
@@ -200,7 +200,7 @@ func TestStreamingAdapterRejectsConflictingResponseExtraFields(t *testing.T) {
 	}
 }
 
-func TestStreamChunkErrorIsNotSerialized(t *testing.T) {
+func testStreamChunkErrorIsNotSerialized(t *testing.T) {
 	chunk := StreamChunk{
 		Block: TextBlock("partial"),
 		Err:   errors.New("sensitive failure"),

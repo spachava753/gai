@@ -146,6 +146,7 @@ func waitForRetry(ctx context.Context, delay time.Duration) error {
 	}
 }
 
+// retry repeats retryable operations with configured delays until success, cancellation, or exhaustion.
 func retry[T any](ctx context.Context, operation func() (T, error), config RetryConfig) (T, error) {
 	startedAt := time.Now()
 

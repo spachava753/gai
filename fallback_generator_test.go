@@ -17,7 +17,14 @@ func (m *mockGenerator) Generate(ctx context.Context, request GenerationRequest)
 	return m.response, m.err
 }
 
-func TestNewFallbackGenerator(t *testing.T) {
+func TestFactoryDefaultScenarios(t *testing.T) {
+	t.Run("NewFallbackGenerator", testNewFallbackGenerator)
+	t.Run("NewGenerationOptions", testNewGenerationOptions)
+	t.Run("NewHTTPStatusFallbackConfig", testNewHTTPStatusFallbackConfig)
+	t.Run("NewRateLimitOnlyFallbackConfig", testNewRateLimitOnlyFallbackConfig)
+}
+
+func testNewFallbackGenerator(t *testing.T) {
 	tests := []struct {
 		name       string
 		generators []Generator
@@ -60,7 +67,12 @@ func TestNewFallbackGenerator(t *testing.T) {
 	}
 }
 
-func TestFallbackGenerator_Generate(t *testing.T) {
+func TestFallbackCompositionScenarios(t *testing.T) {
+	t.Run("FallbackGenerator", testFallbackGenerator)
+	t.Run("FallbackGenerator/Generate", testFallbackGenerator_Generate)
+}
+
+func testFallbackGenerator_Generate(t *testing.T) {
 	// Create a successful response for testing
 	successResponse := Response{
 		Candidates: []Message{
@@ -293,7 +305,7 @@ func TestFallbackGenerator_Generate(t *testing.T) {
 	}
 }
 
-func TestNewHTTPStatusFallbackConfig(t *testing.T) {
+func testNewHTTPStatusFallbackConfig(t *testing.T) {
 	config := NewHTTPStatusFallbackConfig(400, 429)
 
 	// Should fallback on rate limit API errors.
@@ -320,7 +332,7 @@ func TestNewHTTPStatusFallbackConfig(t *testing.T) {
 	}
 }
 
-func TestNewRateLimitOnlyFallbackConfig(t *testing.T) {
+func testNewRateLimitOnlyFallbackConfig(t *testing.T) {
 	config := NewRateLimitOnlyFallbackConfig()
 
 	// Should fallback on rate limit API errors.
@@ -339,7 +351,7 @@ func TestNewRateLimitOnlyFallbackConfig(t *testing.T) {
 	}
 }
 
-func TestFallbackGenerator(t *testing.T) {
+func testFallbackGenerator(t *testing.T) {
 	openAIGen := &mockGenerator{response: Response{Candidates: []Message{{Role: Assistant, Blocks: []Block{TextBlock("Response from OpenAI")}}}}}
 	anthropicGen := &mockGenerator{response: Response{Candidates: []Message{{Role: Assistant, Blocks: []Block{TextBlock("Response from Anthropic")}}}}}
 

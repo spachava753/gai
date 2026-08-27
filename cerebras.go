@@ -268,6 +268,7 @@ type cerebrasGenerationOptions struct {
 	ThinkingBudget      string
 }
 
+// parseCerebrasGenerationOptions validates common and native option types before request construction.
 func parseCerebrasGenerationOptions(values GenerationOptions) (*cerebrasGenerationOptions, error) {
 	options := &cerebrasGenerationOptions{}
 
@@ -371,6 +372,7 @@ func parseCerebrasGenerationOptions(values GenerationOptions) (*cerebrasGenerati
 	return options, nil
 }
 
+// buildCerebrasMessages prepends instructions and converts each dialog role into its matching provider message.
 func buildCerebrasMessages(request GenerationRequest) ([]cerebras.Message, error) {
 	messages := make([]cerebras.Message, 0, len(request.Dialog)+1)
 	instructions, err := joinedTextInstructions(request.Instructions)
@@ -466,6 +468,7 @@ func cerebrasUserContent(blocks []Block) (cerebras.UserMessageContent, error) {
 	return cerebras.NewUserContentPartArrayUserMessageContent(parts), nil
 }
 
+// buildCerebrasAssistantMessage collects visible text, reasoning, and validated tool calls into one assistant turn.
 func buildCerebrasAssistantMessage(blocks []Block) (cerebras.AssistantMessage, error) {
 	message := cerebras.AssistantMessage{Role: cerebras.AssistantMessageRoleAssistant}
 	var content strings.Builder
@@ -516,6 +519,7 @@ func buildCerebrasAssistantMessage(blocks []Block) (cerebras.AssistantMessage, e
 	return message, nil
 }
 
+// buildRequest converts request-scoped messages, tools, and validated options into the generated Cerebras type.
 func (g *CerebrasGenerator) buildRequest(request GenerationRequest) (*cerebras.ChatCompletionRequest, error) {
 	options, err := parseCerebrasGenerationOptions(request.Options)
 	if err != nil {

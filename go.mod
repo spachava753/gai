@@ -1,6 +1,6 @@
 module github.com/spachava753/gai
 
-go 1.26.0
+go 1.26.6
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.66.0
@@ -26,6 +26,7 @@ require (
 	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
+	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-faster/yaml v0.4.6 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -42,6 +43,7 @@ require (
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
+	github.com/spachava753/laas v0.0.0-20260827064109-d631d923c35e // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
@@ -68,4 +70,7 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-tool github.com/ogen-go/ogen/cmd/ogen
+tool (
+	github.com/ogen-go/ogen/cmd/ogen
+	github.com/spachava753/laas/cmd/laas
+)

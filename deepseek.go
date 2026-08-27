@@ -86,6 +86,7 @@ type deepSeekGenerationOptions struct {
 	ReasoningEffort     string
 }
 
+// parseDeepSeekGenerationOptions validates recognized options and records a typed snapshot for request building.
 func parseDeepSeekGenerationOptions(values GenerationOptions) (*deepSeekGenerationOptions, error) {
 	options := &deepSeekGenerationOptions{}
 
@@ -190,6 +191,7 @@ func convertToolsToDeepSeek(tools []Tool) ([]deepseek.FunctionTool, error) {
 	return converted, nil
 }
 
+// buildDeepSeekMessages prepends instructions and converts each role while preserving reasoning needed for tool replay.
 func buildDeepSeekMessages(dialog Dialog, instructions string) ([]deepseek.Message, error) {
 	messages := make([]deepseek.Message, 0, len(dialog)+1)
 	if instructions != "" {
@@ -257,6 +259,7 @@ func deepSeekTextContent(blocks []Block, role string) (string, error) {
 	return content.String(), nil
 }
 
+// buildDeepSeekAssistantMessage collects visible text, replayable reasoning, and validated function calls.
 func buildDeepSeekAssistantMessage(blocks []Block) (deepseek.AssistantMessage, error) {
 	message := deepseek.AssistantMessage{Role: deepseek.AssistantMessageRoleAssistant}
 	var content strings.Builder
@@ -307,6 +310,7 @@ func buildDeepSeekAssistantMessage(blocks []Block) (deepseek.AssistantMessage, e
 	return message, nil
 }
 
+// buildRequest converts request-scoped state into the generated DeepSeek request and validates provider enums.
 func (g *DeepSeekGenerator) buildRequest(generationRequest GenerationRequest, stream bool) (*deepseek.ChatCompletionRequest, error) {
 	options, err := parseDeepSeekGenerationOptions(generationRequest.Options)
 	if err != nil {

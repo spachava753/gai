@@ -57,7 +57,16 @@ func newLiveZaiGenerator(t *testing.T, apiKey string) *ZaiGenerator {
 	return generator
 }
 
-func TestZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
+func TestGLMAdapterScenarios(t *testing.T) {
+	t.Run("ZaiFinishReasonNetworkError", testZaiFinishReasonNetworkError)
+	t.Run("ZaiGenerator", testZaiGenerator)
+	t.Run("ZaiGeneratorMapsGeneratedErrors", testZaiGeneratorMapsGeneratedErrors)
+	t.Run("ZaiGeneratorUsesGeneratedJSONClient", testZaiGeneratorUsesGeneratedJSONClient)
+	t.Run("ZaiGeneratorUsesGeneratedSSEClient", testZaiGeneratorUsesGeneratedSSEClient)
+	t.Run("ZaiRejectsUnsupportedToolChoice", testZaiRejectsUnsupportedToolChoice)
+}
+
+func testZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/paas/v4/chat/completions" {
 			http.Error(w, "unexpected request", http.StatusNotFound)
@@ -160,7 +169,7 @@ func TestZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	}
 }
 
-func TestZaiGeneratorUsesGeneratedJSONClient(t *testing.T) {
+func testZaiGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Stream bool `json:"stream"`
@@ -204,7 +213,7 @@ func TestZaiGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	}
 }
 
-func TestZaiGeneratorMapsGeneratedErrors(t *testing.T) {
+func testZaiGeneratorMapsGeneratedErrors(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
@@ -237,7 +246,7 @@ func TestZaiGeneratorMapsGeneratedErrors(t *testing.T) {
 	}
 }
 
-func TestZaiFinishReasonNetworkError(t *testing.T) {
+func testZaiFinishReasonNetworkError(t *testing.T) {
 	finishReason, err := zaiFinishReason("network_error")
 	var apiErr *ApiErr
 	if finishReason != Unknown || !errors.As(err, &apiErr) {
@@ -248,7 +257,7 @@ func TestZaiFinishReasonNetworkError(t *testing.T) {
 	}
 }
 
-func TestZaiRejectsUnsupportedToolChoice(t *testing.T) {
+func testZaiRejectsUnsupportedToolChoice(t *testing.T) {
 	for _, choice := range []string{ToolChoiceToolsRequired, "calculate"} {
 		t.Run(choice, func(t *testing.T) {
 			_, _, err := (&ZaiGenerator{}).buildRequest(GenerationRequest{
@@ -265,7 +274,7 @@ func TestZaiRejectsUnsupportedToolChoice(t *testing.T) {
 	}
 }
 
-func TestZaiGenerator(t *testing.T) {
+func testZaiGenerator(t *testing.T) {
 	t.Run("Generate", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := newLiveZaiGenerator(t, apiKey)

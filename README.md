@@ -1,7 +1,7 @@
 # gai - Go for AI
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)
+![Go Version](https://img.shields.io/badge/Go-1.26.6+-00ADD8.svg)
 
 Package gai provides a unified interface for interacting with various large language model (LLM) providers.
 

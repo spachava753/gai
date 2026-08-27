@@ -79,13 +79,37 @@ func constantRetryConfig(delay time.Duration) gai.RetryConfig {
 	}
 }
 
-func stoppingRetryConfig() gai.RetryConfig {
-	return gai.RetryConfig{
-		Backoff: func(uint) (time.Duration, bool) { return 0, false },
-	}
+func TestRetryPolicyScenarios(t *testing.T) {
+	t.Run("RetryGenerator/Count/UnderlyingDoesNotImplementTokenCounter", testRetryGenerator_Count_UnderlyingDoesNotImplementTokenCounter)
+	t.Run("RetryGenerator/Count/UnderlyingImplementsTokenCounter", testRetryGenerator_Count_UnderlyingImplementsTokenCounter)
+	t.Run("RetryGenerator/Generate/BackoffCanStopRetries", testRetryGenerator_Generate_BackoffCanStopRetries)
+	t.Run("RetryGenerator/Generate/BackoffSequenceContinuesAcrossRetryAfter", testRetryGenerator_Generate_BackoffSequenceContinuesAcrossRetryAfter)
+	t.Run("RetryGenerator/Generate/ContextCancelled/BeforeFirstCall", testRetryGenerator_Generate_ContextCancelled_BeforeFirstCall)
+	t.Run("RetryGenerator/Generate/ContextCancelled/DuringBackoff", testRetryGenerator_Generate_ContextCancelled_DuringBackoff)
+	t.Run("RetryGenerator/Generate/ContextCancelled/DuringOperation", testRetryGenerator_Generate_ContextCancelled_DuringOperation)
+	t.Run("RetryGenerator/Generate/DoesNotRetryCanceledOrNonRetryableAPIErrors", testRetryGenerator_Generate_DoesNotRetryCanceledOrNonRetryableAPIErrors)
+	t.Run("RetryGenerator/Generate/HonorsRetryAfter", testRetryGenerator_Generate_HonorsRetryAfter)
+	t.Run("RetryGenerator/Generate/MaxRetriesExceeded/WithMaxElapsedTime", testRetryGenerator_Generate_MaxRetriesExceeded_WithMaxElapsedTime)
+	t.Run("RetryGenerator/Generate/MaxRetriesExceeded/WithMaxTries", testRetryGenerator_Generate_MaxRetriesExceeded_WithMaxTries)
+	t.Run("RetryGenerator/Generate/PermanentError", testRetryGenerator_Generate_PermanentError)
+	t.Run("RetryGenerator/Generate/PermanentError/ContextCanceledByGenerator", testRetryGenerator_Generate_PermanentError_ContextCanceledByGenerator)
+	t.Run("RetryGenerator/Generate/RetryAfterDoesNotOverrideStoppingBackoff", testRetryGenerator_Generate_RetryAfterDoesNotOverrideStoppingBackoff)
+	t.Run("RetryGenerator/Generate/RetryAfterRespectsMaxElapsedTime", testRetryGenerator_Generate_RetryAfterRespectsMaxElapsedTime)
+	t.Run("RetryGenerator/Generate/RetryAfterReturnsOriginalError", testRetryGenerator_Generate_RetryAfterReturnsOriginalError)
+	t.Run("RetryGenerator/Generate/RetryAndSucceed", testRetryGenerator_Generate_RetryAndSucceed)
+	t.Run("RetryGenerator/Generate/SuccessFirstAttempt", testRetryGenerator_Generate_SuccessFirstAttempt)
+	t.Run("RetryGenerator/Generate/UsesBackoffWithoutRetryAfter", testRetryGenerator_Generate_UsesBackoffWithoutRetryAfter)
+	t.Run("RetryGenerator/Generate/UsesIndependentBackoffStatePerCall", testRetryGenerator_Generate_UsesIndependentBackoffStatePerCall)
+	t.Run("RetryGenerator/Generate/WithExplicitDefaultConfig", testRetryGenerator_Generate_WithExplicitDefaultConfig)
+	t.Run("RetryGenerator/Generate/ZeroMaxElapsedTimeHasNoLimit", testRetryGenerator_Generate_ZeroMaxElapsedTimeHasNoLimit)
+	t.Run("RetryGenerator/Stream/ContextCancelled/BeforeFirstAttempt", testRetryGenerator_Stream_ContextCancelled_BeforeFirstAttempt)
+	t.Run("RetryGenerator/Stream/DoesNotRetryAfterFirstChunk", testRetryGenerator_Stream_DoesNotRetryAfterFirstChunk)
+	t.Run("RetryGenerator/Stream/RetryAndSucceedBeforeFirstChunk", testRetryGenerator_Stream_RetryAndSucceedBeforeFirstChunk)
+	t.Run("RetryGenerator/Stream/SuccessFirstAttempt", testRetryGenerator_Stream_SuccessFirstAttempt)
+	t.Run("RetryGenerator/Stream/UnderlyingDoesNotImplementStreamingGenerator", testRetryGenerator_Stream_UnderlyingDoesNotImplementStreamingGenerator)
 }
 
-func TestRetryGenerator_Generate_SuccessFirstAttempt(t *testing.T) {
+func testRetryGenerator_Generate_SuccessFirstAttempt(t *testing.T) {
 	m := &mockGenerator{
 		GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 			return gai.Response{Candidates: []gai.Message{{Role: gai.Assistant, Blocks: []gai.Block{gai.TextBlock("Hello")}}}}, nil
@@ -105,7 +129,7 @@ func TestRetryGenerator_Generate_SuccessFirstAttempt(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Generate_UsesIndependentBackoffStatePerCall(t *testing.T) {
+func testRetryGenerator_Generate_UsesIndependentBackoffStatePerCall(t *testing.T) {
 	retryableErr := &gai.ApiErr{
 		Provider:   gai.ProviderOpenAI,
 		Kind:       gai.APIErrorKindRateLimit,
@@ -167,7 +191,7 @@ func TestRetryGenerator_Generate_UsesIndependentBackoffStatePerCall(t *testing.T
 	}
 }
 
-func TestRetryGenerator_Generate_RetryAndSucceed(t *testing.T) {
+func testRetryGenerator_Generate_RetryAndSucceed(t *testing.T) {
 	testCases := []struct {
 		name          string
 		retriableErr  error
@@ -230,7 +254,7 @@ func TestRetryGenerator_Generate_RetryAndSucceed(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Generate_HonorsRetryAfter(t *testing.T) {
+func testRetryGenerator_Generate_HonorsRetryAfter(t *testing.T) {
 	retryAfter := 5 * time.Millisecond
 	retryableErr := &gai.ApiErr{
 		Provider:           gai.ProviderOpenAI,
@@ -273,7 +297,7 @@ func TestRetryGenerator_Generate_HonorsRetryAfter(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Generate_RetryAfterDoesNotOverrideStoppingBackoff(t *testing.T) {
+func testRetryGenerator_Generate_RetryAfterDoesNotOverrideStoppingBackoff(t *testing.T) {
 	retryAfter := time.Duration(0)
 	retryableErr := &gai.ApiErr{
 		Kind:               gai.APIErrorKindRateLimit,
@@ -302,13 +326,18 @@ func TestRetryGenerator_Generate_RetryAfterDoesNotOverrideStoppingBackoff(t *tes
 	}
 }
 
-func TestRetryGenerator_Generate_BackoffCanStopRetries(t *testing.T) {
+func testRetryGenerator_Generate_BackoffCanStopRetries(t *testing.T) {
 	tests := []struct {
 		name   string
 		config gai.RetryConfig
 	}{
 		{name: "no backoff configured"},
-		{name: "backoff stops", config: stoppingRetryConfig()},
+		{
+			name: "backoff stops",
+			config: gai.RetryConfig{
+				Backoff: func(uint) (time.Duration, bool) { return 0, false },
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -332,7 +361,7 @@ func TestRetryGenerator_Generate_BackoffCanStopRetries(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Generate_UsesBackoffWithoutRetryAfter(t *testing.T) {
+func testRetryGenerator_Generate_UsesBackoffWithoutRetryAfter(t *testing.T) {
 	fallbackDelay := 3 * time.Millisecond
 	retryableErr := &gai.ApiErr{
 		Provider:   gai.ProviderOpenAI,
@@ -366,7 +395,7 @@ func TestRetryGenerator_Generate_UsesBackoffWithoutRetryAfter(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Generate_BackoffSequenceContinuesAcrossRetryAfter(t *testing.T) {
+func testRetryGenerator_Generate_BackoffSequenceContinuesAcrossRetryAfter(t *testing.T) {
 	retryAfter := time.Duration(0)
 	fallbackErr := &gai.ApiErr{Kind: gai.APIErrorKindRateLimit}
 	hintedErr := &gai.ApiErr{
@@ -403,7 +432,7 @@ func TestRetryGenerator_Generate_BackoffSequenceContinuesAcrossRetryAfter(t *tes
 	}
 }
 
-func TestRetryGenerator_Generate_RetryAfterReturnsOriginalError(t *testing.T) {
+func testRetryGenerator_Generate_RetryAfterReturnsOriginalError(t *testing.T) {
 	retryAfter := time.Duration(0)
 	expectedErr := &gai.ApiErr{
 		Provider:           gai.ProviderOpenAI,
@@ -423,7 +452,7 @@ func TestRetryGenerator_Generate_RetryAfterReturnsOriginalError(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Generate_RetryAfterRespectsMaxElapsedTime(t *testing.T) {
+func testRetryGenerator_Generate_RetryAfterRespectsMaxElapsedTime(t *testing.T) {
 	retryAfter := time.Hour
 	expectedErr := &gai.ApiErr{
 		Provider:           gai.ProviderOpenAI,
@@ -455,7 +484,7 @@ func TestRetryGenerator_Generate_RetryAfterRespectsMaxElapsedTime(t *testing.T) 
 	}
 }
 
-func TestRetryGenerator_Generate_ZeroMaxElapsedTimeHasNoLimit(t *testing.T) {
+func testRetryGenerator_Generate_ZeroMaxElapsedTimeHasNoLimit(t *testing.T) {
 	retryAfter := 2 * time.Minute
 	expectedErr := &gai.ApiErr{
 		Provider:           gai.ProviderOpenAI,
@@ -490,7 +519,7 @@ func TestRetryGenerator_Generate_ZeroMaxElapsedTimeHasNoLimit(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Generate_PermanentError(t *testing.T) {
+func testRetryGenerator_Generate_PermanentError(t *testing.T) {
 	permanentErr := errors.New("permanent error")
 	m := &mockGenerator{
 		GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
@@ -510,7 +539,7 @@ func TestRetryGenerator_Generate_PermanentError(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Generate_DoesNotRetryCanceledOrNonRetryableAPIErrors(t *testing.T) {
+func testRetryGenerator_Generate_DoesNotRetryCanceledOrNonRetryableAPIErrors(t *testing.T) {
 	tests := []struct {
 		name string
 		err  *gai.ApiErr
@@ -555,7 +584,7 @@ func TestRetryGenerator_Generate_DoesNotRetryCanceledOrNonRetryableAPIErrors(t *
 	}
 }
 
-func TestRetryGenerator_Generate_ContextCancelled_DuringBackoff(t *testing.T) {
+func testRetryGenerator_Generate_ContextCancelled_DuringBackoff(t *testing.T) {
 	m := &mockGenerator{}
 	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 		return gai.Response{}, &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "rate limited"}
@@ -580,7 +609,7 @@ func TestRetryGenerator_Generate_ContextCancelled_DuringBackoff(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Generate_ContextCancelled_BeforeFirstCall(t *testing.T) {
+func testRetryGenerator_Generate_ContextCancelled_BeforeFirstCall(t *testing.T) {
 	m := &mockGenerator{}
 	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
 		t.Error("Generate should not have been called")
@@ -600,7 +629,7 @@ func TestRetryGenerator_Generate_ContextCancelled_BeforeFirstCall(t *testing.T) 
 	}
 }
 
-func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxElapsedTime(t *testing.T) {
+func testRetryGenerator_Generate_MaxRetriesExceeded_WithMaxElapsedTime(t *testing.T) {
 	expectedErr := &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "persistent rate limit"}
 	m := &mockGenerator{}
 	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
@@ -628,7 +657,7 @@ func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxElapsedTime(t *testin
 	}
 }
 
-func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxTries(t *testing.T) {
+func testRetryGenerator_Generate_MaxRetriesExceeded_WithMaxTries(t *testing.T) {
 	expectedErr := &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindRateLimit, StatusCode: http.StatusTooManyRequests, Message: "persistent rate limit again"}
 	m := &mockGenerator{}
 	var attempts uint
@@ -655,7 +684,7 @@ func TestRetryGenerator_Generate_MaxRetriesExceeded_WithMaxTries(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Stream_SuccessFirstAttempt(t *testing.T) {
+func testRetryGenerator_Stream_SuccessFirstAttempt(t *testing.T) {
 	m := &mockGenerator{
 		StreamFunc: func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
 			return func(yield func(gai.StreamChunk) bool) {
@@ -675,7 +704,7 @@ func TestRetryGenerator_Stream_SuccessFirstAttempt(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Stream_RetryAndSucceedBeforeFirstChunk(t *testing.T) {
+func testRetryGenerator_Stream_RetryAndSucceedBeforeFirstChunk(t *testing.T) {
 	retryAfter := time.Duration(0)
 	retriableErr := &gai.ApiErr{
 		Provider:           gai.ProviderOpenAI,
@@ -711,7 +740,7 @@ func TestRetryGenerator_Stream_RetryAndSucceedBeforeFirstChunk(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Stream_DoesNotRetryAfterFirstChunk(t *testing.T) {
+func testRetryGenerator_Stream_DoesNotRetryAfterFirstChunk(t *testing.T) {
 	retriableErr := &gai.ApiErr{Provider: gai.ProviderOpenAI, Kind: gai.APIErrorKindServer, StatusCode: http.StatusInternalServerError, Message: "temporary upstream failure"}
 	m := &mockGenerator{}
 	m.StreamFunc = func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
@@ -736,7 +765,7 @@ func TestRetryGenerator_Stream_DoesNotRetryAfterFirstChunk(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Stream_ContextCancelled_BeforeFirstAttempt(t *testing.T) {
+func testRetryGenerator_Stream_ContextCancelled_BeforeFirstAttempt(t *testing.T) {
 	m := &mockGenerator{}
 	m.StreamFunc = func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
 		t.Fatal("Stream should not have been called")
@@ -758,7 +787,7 @@ func TestRetryGenerator_Stream_ContextCancelled_BeforeFirstAttempt(t *testing.T)
 	}
 }
 
-func TestRetryGenerator_Stream_UnderlyingDoesNotImplementStreamingGenerator(t *testing.T) {
+func testRetryGenerator_Stream_UnderlyingDoesNotImplementStreamingGenerator(t *testing.T) {
 	type nonStreamingGenerator struct{ gai.Generator }
 	underlying := &nonStreamingGenerator{Generator: &mockGenerator{}}
 	rg := gai.NewRetryGenerator(underlying, gai.RetryConfig{})
@@ -776,7 +805,7 @@ func TestRetryGenerator_Stream_UnderlyingDoesNotImplementStreamingGenerator(t *t
 	}
 }
 
-func TestRetryGenerator_Count_UnderlyingImplementsTokenCounter(t *testing.T) {
+func testRetryGenerator_Count_UnderlyingImplementsTokenCounter(t *testing.T) {
 	expectedCount := uint(123)
 	m := &mockGenerator{
 		CountFunc: func(ctx context.Context, request gai.GenerationRequest) (uint, error) {
@@ -794,7 +823,7 @@ func TestRetryGenerator_Count_UnderlyingImplementsTokenCounter(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Count_UnderlyingDoesNotImplementTokenCounter(t *testing.T) {
+func testRetryGenerator_Count_UnderlyingDoesNotImplementTokenCounter(t *testing.T) {
 	type nonCountingGenerator struct{ gai.Generator }
 	underlying := &nonCountingGenerator{Generator: &mockGenerator{}}
 	rg := gai.NewRetryGenerator(underlying, gai.RetryConfig{})
@@ -809,7 +838,7 @@ func TestRetryGenerator_Count_UnderlyingDoesNotImplementTokenCounter(t *testing.
 	}
 }
 
-func TestRetryGenerator_Generate_WithExplicitDefaultConfig(t *testing.T) {
+func testRetryGenerator_Generate_WithExplicitDefaultConfig(t *testing.T) {
 	m := &mockGenerator{}
 	callCount := 0
 	m.GenerateFunc = func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {
@@ -833,7 +862,7 @@ func TestRetryGenerator_Generate_WithExplicitDefaultConfig(t *testing.T) {
 	}
 }
 
-func TestRetryGenerator_Generate_ContextCancelled_DuringOperation(t *testing.T) {
+func testRetryGenerator_Generate_ContextCancelled_DuringOperation(t *testing.T) {
 	opDuration := 100 * time.Millisecond
 	cancelDelay := 20 * time.Millisecond
 
@@ -861,7 +890,7 @@ func TestRetryGenerator_Generate_ContextCancelled_DuringOperation(t *testing.T) 
 	}
 }
 
-func TestRetryGenerator_Generate_PermanentError_ContextCanceledByGenerator(t *testing.T) {
+func testRetryGenerator_Generate_PermanentError_ContextCanceledByGenerator(t *testing.T) {
 	genErr := context.Canceled
 	m := &mockGenerator{
 		GenerateFunc: func(ctx context.Context, request gai.GenerationRequest) (gai.Response, error) {

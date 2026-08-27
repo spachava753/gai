@@ -29,7 +29,24 @@ Assistant: MSFT
 </example>
 `
 
-func TestAnthropicGenerator_Generate(t *testing.T) {
+func TestClaudeAdapterScenarios(t *testing.T) {
+	t.Run("AnthropicErrorClassification", testAnthropicErrorClassification)
+	t.Run("AnthropicGenerateReturnsContentPolicyErrorForRefusal", testAnthropicGenerateReturnsContentPolicyErrorForRefusal)
+	t.Run("AnthropicGeneratorStreamRetriesOverloadedSSEError", testAnthropicGeneratorStreamRetriesOverloadedSSEError)
+	t.Run("AnthropicGenerator/Count", testAnthropicGenerator_Count)
+	t.Run("AnthropicGenerator/Count/IncludesTools", testAnthropicGenerator_Count_IncludesTools)
+	t.Run("AnthropicGenerator/Generate", testAnthropicGenerator_Generate)
+	t.Run("AnthropicGenerator/Generate/image", testAnthropicGenerator_Generate_image)
+	t.Run("AnthropicGenerator/Generate/pdf", testAnthropicGenerator_Generate_pdf)
+	t.Run("AnthropicGenerator/Generate/thinking", testAnthropicGenerator_Generate_thinking)
+	t.Run("AnthropicGenerator/RequestTools", testAnthropicGenerator_RequestTools)
+	t.Run("AnthropicGenerator/RequestTools/parallelToolUse", testAnthropicGenerator_RequestTools_parallelToolUse)
+	t.Run("AnthropicGenerator/Stream", testAnthropicGenerator_Stream)
+	t.Run("AnthropicGenerator/Stream/parallelToolUse", testAnthropicGenerator_Stream_parallelToolUse)
+	t.Run("AnthropicStreamReturnsContentPolicyErrorForRefusal", testAnthropicStreamReturnsContentPolicyErrorForRefusal)
+}
+
+func testAnthropicGenerator_Generate(t *testing.T) {
 	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
@@ -79,7 +96,7 @@ func TestAnthropicGenerator_Generate(t *testing.T) {
 		t.Fatal("expected at least one item")
 	}
 }
-func TestAnthropicGenerator_Stream(t *testing.T) {
+func testAnthropicGenerator_Stream(t *testing.T) {
 	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
@@ -115,7 +132,7 @@ func TestAnthropicGenerator_Stream(t *testing.T) {
 	if len(blocks) > 0 {
 	}
 }
-func TestAnthropicGenerator_Generate_thinking(t *testing.T) {
+func testAnthropicGenerator_Generate_thinking(t *testing.T) {
 	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
@@ -171,7 +188,7 @@ func TestAnthropicGenerator_Generate_thinking(t *testing.T) {
 		t.Fatal("expected at least one item")
 	}
 }
-func TestAnthropicGenerator_Generate_image(t *testing.T) {
+func testAnthropicGenerator_Generate_image(t *testing.T) {
 	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// This example assumes that sample.jpg is present in the current directory.
 	imgBytes, err := os.ReadFile("sample.jpg")
@@ -219,7 +236,7 @@ func TestAnthropicGenerator_Generate_image(t *testing.T) {
 		t.Fatalf("content does not contain Crood")
 	}
 }
-func TestAnthropicGenerator_RequestTools(t *testing.T) {
+func testAnthropicGenerator_RequestTools(t *testing.T) {
 	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
@@ -301,7 +318,7 @@ Only output the price, like
 		t.Fatal("expected non-empty content")
 	}
 }
-func TestAnthropicGenerator_RequestTools_parallelToolUse(t *testing.T) {
+func testAnthropicGenerator_RequestTools_parallelToolUse(t *testing.T) {
 	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
@@ -382,7 +399,7 @@ func TestAnthropicGenerator_RequestTools_parallelToolUse(t *testing.T) {
 		t.Fatal("expected non-empty content")
 	}
 }
-func TestAnthropicGenerator_Stream_parallelToolUse(t *testing.T) {
+func testAnthropicGenerator_Stream_parallelToolUse(t *testing.T) {
 	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
@@ -540,7 +557,7 @@ func TestAnthropicGenerator_Stream_parallelToolUse(t *testing.T) {
 	if len(blocks) > 0 {
 	}
 }
-func TestAnthropicGenerator_Count(t *testing.T) {
+func testAnthropicGenerator_Count(t *testing.T) {
 	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// Create an Anthropic client
 	client := a.NewClient()
@@ -592,7 +609,7 @@ func TestAnthropicGenerator_Count(t *testing.T) {
 		t.Fatal("expected non-zero token count")
 	}
 }
-func TestAnthropicGenerator_Generate_pdf(t *testing.T) {
+func testAnthropicGenerator_Generate_pdf(t *testing.T) {
 	requireLiveAPIKey(t, "ANTHROPIC_API_KEY")
 	// This example assumes that sample.pdf is present in the current directory.
 	pdfBytes, err := os.ReadFile("sample.pdf")

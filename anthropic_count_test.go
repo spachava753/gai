@@ -52,7 +52,7 @@ func (m *mockAnthropicSvc) CountTokens(ctx context.Context, params a.MessageCoun
 	}, nil
 }
 
-func TestAnthropicGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
+func testAnthropicGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	service := &mockAnthropicSvc{response: &a.Message{
 		StopReason: a.StopReasonRefusal,
 		StopDetails: a.RefusalStopDetails{
@@ -71,7 +71,7 @@ func TestAnthropicGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	assertContentPolicyErrorContains(t, err, "Request violates policy.")
 }
 
-func TestAnthropicStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
+func testAnthropicStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	service := &mockAnthropicSvc{streamEvents: []ssestream.Event{{
 		Type: "message_delta",
 		Data: []byte(`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"general_harms","explanation":"Request violates policy."}},"usage":{"output_tokens":1}}`),
@@ -91,7 +91,7 @@ func TestAnthropicStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	assertContentPolicyErrorContains(t, gotErr, "Request violates policy.")
 }
 
-func TestAnthropicGeneratorStreamRetriesOverloadedSSEError(t *testing.T) {
+func testAnthropicGeneratorStreamRetriesOverloadedSSEError(t *testing.T) {
 	const streamPayload = `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
 
 	newStream := func(data string) *ssestream.Stream[a.MessageStreamEventUnion] {
@@ -195,7 +195,7 @@ func (d *anthropicStreamDecoder) Event() ssestream.Event { return d.cur }
 func (d *anthropicStreamDecoder) Close() error           { return nil }
 func (d *anthropicStreamDecoder) Err() error             { return nil }
 
-func TestAnthropicGenerator_Count_IncludesTools(t *testing.T) {
+func testAnthropicGenerator_Count_IncludesTools(t *testing.T) {
 	// Create a mock Anthropic service
 	mockSvc := &mockAnthropicSvc{}
 

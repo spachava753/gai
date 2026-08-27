@@ -58,7 +58,16 @@ func TestParseRetryAfter(t *testing.T) {
 	}
 }
 
-func TestAPIErrorRetryAfter(t *testing.T) {
+func TestTransportFailureScenarios(t *testing.T) {
+	t.Run("APIErrorRetryAfter", testAPIErrorRetryAfter)
+	t.Run("APIErrorRetryable", testAPIErrorRetryable)
+	t.Run("ClassifyHTTPStatus", testClassifyHTTPStatus)
+	t.Run("ClassifyOpenRouterErrorCurrentTypedCodes", testClassifyOpenRouterErrorCurrentTypedCodes)
+	t.Run("HTTPAPIErrorNormalization", testHTTPAPIErrorNormalization)
+	t.Run("HTTPAPIErrorRetryAfter", testHTTPAPIErrorRetryAfter)
+}
+
+func testAPIErrorRetryAfter(t *testing.T) {
 	var nilError *ApiErr
 	if _, ok := nilError.RetryAfter(); ok {
 		t.Fatal("nil ApiErr reports a retry delay")
@@ -74,7 +83,7 @@ func TestAPIErrorRetryAfter(t *testing.T) {
 	}
 }
 
-func TestAPIErrorRetryable(t *testing.T) {
+func testAPIErrorRetryable(t *testing.T) {
 	tests := []struct {
 		name      string
 		apiErr    *ApiErr
@@ -103,7 +112,7 @@ func TestAPIErrorRetryable(t *testing.T) {
 	}
 }
 
-func TestClassifyHTTPStatus(t *testing.T) {
+func testClassifyHTTPStatus(t *testing.T) {
 	tests := []struct {
 		statusCode int
 		want       APIErrorKind
@@ -130,7 +139,7 @@ func TestClassifyHTTPStatus(t *testing.T) {
 	}
 }
 
-func TestHTTPAPIErrorNormalization(t *testing.T) {
+func testHTTPAPIErrorNormalization(t *testing.T) {
 	tests := []struct {
 		name          string
 		provider      Provider
@@ -198,7 +207,7 @@ func TestHTTPAPIErrorNormalization(t *testing.T) {
 	}
 }
 
-func TestHTTPAPIErrorRetryAfter(t *testing.T) {
+func testHTTPAPIErrorRetryAfter(t *testing.T) {
 	const body = `{"error":{"message":"rate limited"}}`
 	responseBody := &trackingReadCloser{Reader: strings.NewReader(body)}
 	response := &http.Response{
@@ -269,7 +278,7 @@ func TestRetryAfterFromResponseValidation(t *testing.T) {
 	}
 }
 
-func TestAnthropicErrorClassification(t *testing.T) {
+func testAnthropicErrorClassification(t *testing.T) {
 	tests := []struct {
 		name       string
 		statusCode int
@@ -302,7 +311,7 @@ func TestAnthropicErrorClassification(t *testing.T) {
 	}
 }
 
-func TestOpenAIErrorMappingUsesHTTPStatus(t *testing.T) {
+func testOpenAIErrorMappingUsesHTTPStatus(t *testing.T) {
 	var cause oai.Error
 	if err := json.Unmarshal([]byte(`{"code":"invalid_api_key","message":"Invalid API key"}`), &cause); err != nil {
 		t.Fatalf("unmarshal SDK error: %v", err)
@@ -325,7 +334,7 @@ func TestOpenAIErrorMappingUsesHTTPStatus(t *testing.T) {
 	}
 }
 
-func TestOpenRouterGeneratedOverloadMapping(t *testing.T) {
+func testOpenRouterGeneratedOverloadMapping(t *testing.T) {
 	cause := &openrouterapi.ErrorEnvelopeStatusCodeWithHeaders{
 		StatusCode: http.StatusServiceUnavailable,
 		RetryAfter: openrouterapi.NewOptString("11"),
@@ -357,7 +366,7 @@ func TestOpenRouterGeneratedOverloadMapping(t *testing.T) {
 	}
 }
 
-func TestResponsesFailureClassification(t *testing.T) {
+func testResponsesFailureClassification(t *testing.T) {
 	tests := []struct {
 		code oairesponses.ResponseErrorCode
 		want APIErrorKind
@@ -383,7 +392,7 @@ func TestResponsesFailureClassification(t *testing.T) {
 	}
 }
 
-func TestResponsesErrorEventClassification(t *testing.T) {
+func testResponsesErrorEventClassification(t *testing.T) {
 	tests := []struct {
 		code string
 		want APIErrorKind

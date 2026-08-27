@@ -40,7 +40,12 @@ func errorCallback(ctx context.Context, params SimpleParams) (string, error) {
 	return "", fmt.Errorf("deliberate error")
 }
 
-func TestToolCallBackFunc_Call(t *testing.T) {
+func TestCallbackDispatchScenarios(t *testing.T) {
+	t.Run("ToolCallBackFunc/Call", testToolCallBackFunc_Call)
+	t.Run("ToolCallBackFunc/DirectExecution", testToolCallBackFunc_DirectExecution)
+}
+
+func testToolCallBackFunc_Call(t *testing.T) {
 	tests := []struct {
 		name        string
 		callback    ToolCallback
@@ -134,7 +139,7 @@ func TestToolCallBackFunc_Call(t *testing.T) {
 
 // TestToolCallBackFunc_DirectExecution tests that ToolCallBackFunc creates
 // tool-result messages when called with decoded tool parameters.
-func TestToolCallBackFunc_DirectExecution(t *testing.T) {
+func testToolCallBackFunc_DirectExecution(t *testing.T) {
 	// Create a tool and its parameter type
 	type GreetParams struct {
 		Name string `json:"name"`

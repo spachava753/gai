@@ -21,7 +21,26 @@ func (f streamingGeneratorFunc) Stream(ctx context.Context, request GenerationRe
 // ExampleStreamingAdapter demonstrates how to use StreamingAdapter to convert
 // a StreamingGenerator to a regular Generator. This is useful when you want to
 // use streaming internally but present a non-streaming interface to users.
-func TestStreamingAdapter(t *testing.T) {
+func TestStreamAssemblyScenarios(t *testing.T) {
+	t.Run("StreamChunkErrorIsNotSerialized", testStreamChunkErrorIsNotSerialized)
+	t.Run("StreamingAdapter", testStreamingAdapter)
+	t.Run("StreamingAdapterBlockCompression", testStreamingAdapterBlockCompression)
+	t.Run("StreamingAdapterGeneratePreservesMessageExtraFields", testStreamingAdapterGeneratePreservesMessageExtraFields)
+	t.Run("StreamingAdapterGeneratePreservesToolOnlyMessageExtraFieldsForReplay", testStreamingAdapterGeneratePreservesToolOnlyMessageExtraFieldsForReplay)
+	t.Run("StreamingAdapterPreservesResponseExtraFields", testStreamingAdapterPreservesResponseExtraFields)
+	t.Run("StreamingAdapterRejectsConflictingResponseExtraFields", testStreamingAdapterRejectsConflictingResponseExtraFields)
+	t.Run("StreamingAdapterStopsOnErrorChunk", testStreamingAdapterStopsOnErrorChunk)
+	t.Run("StreamingAdapter/customUsage", testStreamingAdapter_customUsage)
+	t.Run("StreamingAdapter/errorHandling", testStreamingAdapter_errorHandling)
+	t.Run("StreamingAdapter/multipleBlocks", testStreamingAdapter_multipleBlocks)
+	t.Run("StreamingAdapter/parallelToolCalls", testStreamingAdapter_parallelToolCalls)
+	t.Run("StreamingAdapter/responses", testStreamingAdapter_responses)
+	t.Run("StreamingAdapter/responses/toolUse", testStreamingAdapter_responses_toolUse)
+	t.Run("StreamingAdapter/separatorBlocksAreInternal", testStreamingAdapter_separatorBlocksAreInternal)
+	t.Run("StreamingAdapter/withTools", testStreamingAdapter_withTools)
+}
+
+func testStreamingAdapter(t *testing.T) {
 	requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient()
@@ -44,7 +63,7 @@ func TestStreamingAdapter(t *testing.T) {
 
 // ExampleStreamingAdapter_withTools demonstrates using StreamingAdapter with tool calls.
 // The adapter handles the compression of streaming tool call chunks into complete tool calls.
-func TestStreamingAdapter_withTools(t *testing.T) {
+func testStreamingAdapter_withTools(t *testing.T) {
 	requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient()
@@ -93,7 +112,7 @@ func TestStreamingAdapter_withTools(t *testing.T) {
 
 // ExampleStreamingAdapter_errorHandling demonstrates how StreamingAdapter handles
 // errors that occur during streaming.
-func TestStreamingAdapter_errorHandling(t *testing.T) {
+func testStreamingAdapter_errorHandling(t *testing.T) {
 	client := openai.NewClient()
 	gen := NewOpenAiGenerator(&client.Chat.Completions)
 	adapter := StreamingAdapter{S: gen}
@@ -107,7 +126,7 @@ func TestStreamingAdapter_errorHandling(t *testing.T) {
 	}
 }
 
-func TestStreamingAdapterStopsOnErrorChunk(t *testing.T) {
+func testStreamingAdapterStopsOnErrorChunk(t *testing.T) {
 	wantErr := errors.New("stream failed")
 	continuedAfterError := false
 	generator := streamingGeneratorFunc(func(context.Context, GenerationRequest) iter.Seq[StreamChunk] {
@@ -132,7 +151,7 @@ func TestStreamingAdapterStopsOnErrorChunk(t *testing.T) {
 // ExampleStreamingAdapter_multipleBlocks demonstrates how StreamingAdapter handles
 // responses with multiple blocks of different types, showing the compression of
 // consecutive blocks of the same type.
-func TestStreamingAdapter_multipleBlocks(t *testing.T) {
+func testStreamingAdapter_multipleBlocks(t *testing.T) {
 	mockGen := &mockStreamingGenerator{
 		chunks: []StreamChunk{
 			{Block: Block{BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str("The weather in ")}, CandidatesIndex: 0},
@@ -159,7 +178,7 @@ func TestStreamingAdapter_multipleBlocks(t *testing.T) {
 	}
 }
 
-func TestStreamingAdapter_separatorBlocksAreInternal(t *testing.T) {
+func testStreamingAdapter_separatorBlocksAreInternal(t *testing.T) {
 	mockGen := &mockStreamingGenerator{
 		chunks: []StreamChunk{
 			{Block: Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str("first "), ExtraFields: map[string]interface{}{"item": "first"}}},
@@ -203,7 +222,7 @@ func TestStreamingAdapter_separatorBlocksAreInternal(t *testing.T) {
 
 // ExampleStreamingAdapter_parallelToolCalls demonstrates how StreamingAdapter handles
 // parallel tool calls, showing the compression of multiple tool call chunks.
-func TestStreamingAdapter_parallelToolCalls(t *testing.T) {
+func testStreamingAdapter_parallelToolCalls(t *testing.T) {
 	requireLiveAPIKey(t, "OPENAI_API_KEY")
 
 	client := openai.NewClient()
@@ -249,7 +268,7 @@ func TestStreamingAdapter_parallelToolCalls(t *testing.T) {
 
 // ExampleStreamingAdapter_customUsage shows how to create a custom generator
 // that implements StreamingGenerator and use it with StreamingAdapter.
-func TestStreamingAdapter_customUsage(t *testing.T) {
+func testStreamingAdapter_customUsage(t *testing.T) {
 	customGen := &customStreamingGenerator{systemPrompt: "You are a helpful assistant."}
 	adapter := StreamingAdapter{S: customGen}
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Hello!")}}}

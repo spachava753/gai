@@ -27,7 +27,15 @@ func newLiveDeepSeekGenerator(t *testing.T, apiKey string) *DeepSeekGenerator {
 	return generator
 }
 
-func TestDeepSeekGeneratorUsesGeneratedJSONClient(t *testing.T) {
+func TestDeepSeekAdapterScenarios(t *testing.T) {
+	t.Run("DeepSeekBuildRequestReplaysThinking", testDeepSeekBuildRequestReplaysThinking)
+	t.Run("DeepSeekGeneratorLive", testDeepSeekGeneratorLive)
+	t.Run("DeepSeekGeneratorMapsGeneratedError", testDeepSeekGeneratorMapsGeneratedError)
+	t.Run("DeepSeekGeneratorUsesGeneratedJSONClient", testDeepSeekGeneratorUsesGeneratedJSONClient)
+	t.Run("DeepSeekGeneratorUsesGeneratedSSEClient", testDeepSeekGeneratorUsesGeneratedSSEClient)
+}
+
+func testDeepSeekGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	requests := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/chat/completions" {
@@ -152,7 +160,7 @@ func TestDeepSeekGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	}
 }
 
-func TestDeepSeekGeneratorUsesGeneratedSSEClient(t *testing.T) {
+func testDeepSeekGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request["stream"] != true {
@@ -232,7 +240,7 @@ func TestDeepSeekGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	}
 }
 
-func TestDeepSeekGeneratorMapsGeneratedError(t *testing.T) {
+func testDeepSeekGeneratorMapsGeneratedError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -253,7 +261,7 @@ func TestDeepSeekGeneratorMapsGeneratedError(t *testing.T) {
 	}
 }
 
-func TestDeepSeekBuildRequestReplaysThinking(t *testing.T) {
+func testDeepSeekBuildRequestReplaysThinking(t *testing.T) {
 	toolCall, err := ToolCallBlock("call_1", "get_weather", map[string]any{"city": "Paris"})
 	if err != nil {
 		t.Fatalf("create tool call: %v", err)
@@ -282,7 +290,7 @@ func TestDeepSeekBuildRequestReplaysThinking(t *testing.T) {
 	}
 }
 
-func TestDeepSeekGeneratorLive(t *testing.T) {
+func testDeepSeekGeneratorLive(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "DEEPSEEK_API_KEY")
 	generator := newLiveDeepSeekGenerator(t, apiKey)
 	request := GenerationRequest{

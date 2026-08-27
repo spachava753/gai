@@ -164,6 +164,7 @@ type openAIGenerationOptions struct {
 	ThinkingBudget      string
 }
 
+// parseOpenAIGenerationOptions validates common option values and records the typed Chat Completions configuration.
 func parseOpenAIGenerationOptions(values GenerationOptions) (*openAIGenerationOptions, error) {
 	options := &openAIGenerationOptions{}
 
@@ -744,6 +745,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationReques
 	return result, nil
 }
 
+// Stream builds the request inside the iterator and emits ordered content, tools, audio, usage, and terminal failures.
 func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {
@@ -1097,7 +1099,6 @@ var _ OpenAICompletionService = (*oai.ChatCompletionService)(nil)
 //   - The number of tokens as an integer
 //   - An error if dimensions cannot be determined or if calculation fails
 func (g *OpenAiGenerator) calculateImageTokens(block Block, model string) (int, error) {
-	// PDFs are not supported for token counting
 	if block.MimeType == "application/pdf" {
 		return 0, fmt.Errorf("PDF token counting is not supported")
 	}
@@ -1315,7 +1316,6 @@ func getTokensForModel(model string) (baseTokens, tileTokens int) {
 // from image data or ExtraFields. PDF counting is unsupported because providers
 // convert PDFs to images server-side and do not expose exact dimensions.
 func (g *OpenAiGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
-	// Check for context cancellation
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()

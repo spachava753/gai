@@ -165,6 +165,7 @@ type zaiGenerationOptions struct {
 	ClearThinking       bool
 }
 
+// parseZaiGenerationOptions validates common and Z.AI-specific values into typed request settings.
 func parseZaiGenerationOptions(values GenerationOptions) (*zaiGenerationOptions, error) {
 	options := &zaiGenerationOptions{ThinkingEnabled: true, ClearThinking: true}
 
@@ -214,6 +215,7 @@ func parseZaiGenerationOptions(values GenerationOptions) (*zaiGenerationOptions,
 	return options, nil
 }
 
+// buildTextMessages translates instructions and dialog blocks into Z.AI text-completion messages.
 func (g *ZaiGenerator) buildTextMessages(dialog Dialog, instructions string) ([]zai.ChatCompletionTextRequestMessagesItem, error) {
 	var messages []zai.ChatCompletionTextRequestMessagesItem
 
@@ -467,7 +469,7 @@ func zaiImageURL(block Block) string {
 		return url
 	}
 	content := strings.TrimSpace(block.Content.String())
-	if isZaiURL(content) {
+	if strings.HasPrefix(content, "http://") || strings.HasPrefix(content, "https://") || strings.HasPrefix(content, "data:") {
 		return content
 	}
 	return "data:" + block.MimeType + ";base64," + content
@@ -499,10 +501,6 @@ func zaiURLField(block Block) string {
 	return ""
 }
 
-func isZaiURL(s string) bool {
-	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "data:")
-}
-
 func isZaiRemoteURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
@@ -512,8 +510,10 @@ func (g *ZaiGenerator) buildRequest(generationRequest GenerationRequest, stream 
 	if err != nil {
 		return zai.PaasV4ChatCompletionsPostReq{}, zai.PaasV4ChatCompletionsPostParams{}, err
 	}
-	if err := validateZaiOutputModalities(options); err != nil {
-		return zai.PaasV4ChatCompletionsPostReq{}, zai.PaasV4ChatCompletionsPostParams{}, err
+	for _, modality := range options.OutputModalities {
+		if modality != Text {
+			return zai.PaasV4ChatCompletionsPostReq{}, zai.PaasV4ChatCompletionsPostParams{}, UnsupportedOutputModalityErr(modality.String())
+		}
 	}
 	tools, err := convertToolsToZai(generationRequest.Tools)
 	if err != nil {
@@ -554,15 +554,6 @@ func validateZaiToolChoice(choice string) error {
 	default:
 		return InvalidToolChoiceErr("Z.AI does not support named tool choice")
 	}
-}
-
-func validateZaiOutputModalities(options *zaiGenerationOptions) error {
-	for _, m := range options.OutputModalities {
-		if m != Text {
-			return UnsupportedOutputModalityErr(m.String())
-		}
-	}
-	return nil
 }
 
 func (g *ZaiGenerator) buildTextRequest(model string, dialog Dialog, instructions string, tools []zai.FunctionToolSchema, options *zaiGenerationOptions, stream bool) (zai.ChatCompletionTextRequest, error) {
@@ -766,10 +757,14 @@ func (g *ZaiGenerator) Generate(ctx context.Context, generationRequest Generatio
 		result.ExtraFields[ZaiResponseExtraFieldWebSearchResults] = zaiWebSearchResults(resp.WebSearch)
 	}
 	if usage, ok := resp.Usage.Get(); ok {
+		var cachedTokens float64
+		if details, ok := usage.PromptTokensDetails.Get(); ok {
+			cachedTokens = optFloat64(details.CachedTokens)
+		}
 		addZaiUsageMetadata(result.UsageMetadata, zaiUsage{
 			PromptTokens:     optFloat64(usage.PromptTokens),
 			CompletionTokens: optFloat64(usage.CompletionTokens),
-			CachedTokens:     optCachedTokens(usage.PromptTokensDetails),
+			CachedTokens:     cachedTokens,
 		})
 	}
 
@@ -1007,13 +1002,6 @@ func addZaiUsageMetadata(metadata Metadata, usage zaiUsage) {
 func optFloat64(v zai.OptFloat64) float64 {
 	if f, ok := v.Get(); ok {
 		return f
-	}
-	return 0
-}
-
-func optCachedTokens(v zai.OptChatCompletionResponseUsagePromptTokensDetails) float64 {
-	if details, ok := v.Get(); ok {
-		return optFloat64(details.CachedTokens)
 	}
 	return 0
 }

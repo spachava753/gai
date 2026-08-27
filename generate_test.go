@@ -9,7 +9,7 @@ import (
 	oai "github.com/openai/openai-go/v3"
 )
 
-func TestNewGenerationOptions(t *testing.T) {
+func testNewGenerationOptions(t *testing.T) {
 	stops := []string{"END", "STOP"}
 	modalities := []Modality{Text, Audio}
 	audio := AudioConfig{VoiceName: "alloy", Format: "wav"}
@@ -216,7 +216,7 @@ func TestProviderOptionParsersIgnoreUnknownOptions(t *testing.T) {
 	}
 }
 
-func TestOpenAiGeneratorUsesRequestScopedState(t *testing.T) {
+func testOpenAiGeneratorUsesRequestScopedState(t *testing.T) {
 	client := &mockChatCompletionService{response: &oai.ChatCompletion{
 		Choices: []oai.ChatCompletionChoice{{
 			FinishReason: "stop",

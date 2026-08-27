@@ -36,7 +36,7 @@ func main() {
 	header := `# gai - Go for AI
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)
+![Go Version](https://img.shields.io/badge/Go-1.26.6+-00ADD8.svg)
 
 `
 
@@ -52,6 +52,7 @@ func main() {
 	fmt.Println("README.md generated successfully from doc.go!")
 }
 
+// convertDocToMarkdown rewrites package-comment conventions into the generated README format.
 func convertDocToMarkdown(docText string) string {
 	var result strings.Builder
 
@@ -103,7 +104,7 @@ func convertDocToMarkdown(docText string) string {
 		} else {
 			// Handle bullet points
 			if isBulletPoint(trimmedLine) {
-				result.WriteString(formatBulletPoint(trimmedLine) + "\n")
+				result.WriteString(strings.TrimSpace(trimmedLine) + "\n")
 			} else {
 				// Handle regular paragraph text
 				result.WriteString(trimmedLine)
@@ -167,11 +168,6 @@ func removeIndentation(line string) string {
 func isBulletPoint(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return strings.HasPrefix(trimmed, "- ")
-}
-
-func formatBulletPoint(line string) string {
-	trimmed := strings.TrimSpace(line)
-	return trimmed
 }
 
 func detectLanguage(codeLines []string) string {

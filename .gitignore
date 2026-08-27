@@ -20,6 +20,8 @@
 !design.md
 !LICENSE
 
+!.githooks/pre-commit
+
 !sample.pdf
 !sample.wav
 !sample.jpg

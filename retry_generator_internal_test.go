@@ -5,7 +5,12 @@ import (
 	"time"
 )
 
-func TestExponentialBackoffProgressionAndCap(t *testing.T) {
+func TestBackoffPolicyScenarios(t *testing.T) {
+	t.Run("ExponentialBackoffAppliesDownwardJitter", testExponentialBackoffAppliesDownwardJitter)
+	t.Run("ExponentialBackoffProgressionAndCap", testExponentialBackoffProgressionAndCap)
+}
+
+func testExponentialBackoffProgressionAndCap(t *testing.T) {
 	maximumJitter := func(limit int64) int64 { return limit - 1 }
 	backoff := exponentialBackoff(maximumJitter)
 	want := []time.Duration{
@@ -26,7 +31,7 @@ func TestExponentialBackoffProgressionAndCap(t *testing.T) {
 	}
 }
 
-func TestExponentialBackoffAppliesDownwardJitter(t *testing.T) {
+func testExponentialBackoffAppliesDownwardJitter(t *testing.T) {
 	minimumJitter := func(int64) int64 { return 0 }
 	backoff := exponentialBackoff(minimumJitter)
 

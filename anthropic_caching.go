@@ -130,14 +130,6 @@ func NewAnthropicServiceWrapper(wrapped AnthropicSvc, funcs ...AnthropicServiceP
 	}
 }
 
-// isOpus45OrLater checks if the model is Claude Opus 4.5 or a later version.
-// Claude Opus 4.5 introduced thinking block preservation, which means thinking blocks
-// from previous assistant turns are preserved in model context by default.
-// This enables cache optimization when using extended thinking with tool use.
-func isOpus45OrLater(model string) bool {
-	return strings.HasPrefix(model, "claude-opus-4-5")
-}
-
 // EnableSystemCaching modifies Anthropic API parameters to enable caching of system instructions.
 // This can improve performance and reduce costs when making multiple requests with the same
 // system instructions.
@@ -202,7 +194,7 @@ func EnableMultiTurnCaching(_ context.Context, params *a.MessageNewParams) error
 	// are stripped from prior turns, which invalidates the cache.
 	// For Opus 4.5+, thinking blocks are preserved, so caching works normally.
 	thinkingEnabled := params.Thinking.OfEnabled != nil && params.Thinking.OfEnabled.BudgetTokens > 0
-	if thinkingEnabled && !isOpus45OrLater(string(params.Model)) {
+	if thinkingEnabled && !strings.HasPrefix(string(params.Model), "claude-opus-4-5") {
 		return nil
 	}
 

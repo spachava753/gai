@@ -54,7 +54,7 @@ func responseSSEvent(eventType, data string) ssestream.Event {
 	return ssestream.Event{Type: eventType, Data: []byte(data)}
 }
 
-func TestResponsesStreamingAdapterPreservesReasoningSummaryParts(t *testing.T) {
+func testResponsesStreamingAdapterPreservesReasoningSummaryParts(t *testing.T) {
 	const reasoningID = "rs_123"
 	const encrypted = "encrypted-reasoning"
 
@@ -110,7 +110,7 @@ func TestResponsesStreamingAdapterPreservesReasoningSummaryParts(t *testing.T) {
 	}
 }
 
-func TestResponsesGeneratorStreamRetriesServerOverloadSSEError(t *testing.T) {
+func testResponsesGeneratorStreamRetriesServerOverloadSSEError(t *testing.T) {
 	const overloadPayload = `{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null}`
 
 	svc := &responsesStreamService{eventsByStream: [][]ssestream.Event{

@@ -380,8 +380,8 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 	return result, nil
 }
 
+// Generate consumes one stream, merges terminal metadata, and assembles the final assistant response.
 func (s *StreamingAdapter) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
-	// Stream and accumulate blocks
 	var blocks []Block
 	var messageExtraFields map[string]interface{}
 	var responseExtraFields map[string]interface{}

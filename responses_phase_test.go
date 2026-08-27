@@ -27,7 +27,7 @@ func (m *mockResponsesService) NewStreaming(ctx context.Context, body responses.
 	panic("unimplemented")
 }
 
-func TestResponsesGeneratorGenerateReturnsContentPolicyFinishReason(t *testing.T) {
+func testResponsesGeneratorGenerateReturnsContentPolicyFinishReason(t *testing.T) {
 	const rawResponse = `{
 		"id":"resp_filtered",
 		"created_at":0,
@@ -54,7 +54,7 @@ func TestResponsesGeneratorGenerateReturnsContentPolicyFinishReason(t *testing.T
 	}
 }
 
-func TestResponsesGeneratorGenerateReturnsFailedResponseError(t *testing.T) {
+func testResponsesGeneratorGenerateReturnsFailedResponseError(t *testing.T) {
 	const rawResponse = `{
 		"id":"resp_failed",
 		"created_at":0,
@@ -97,7 +97,7 @@ func TestResponsesGeneratorGenerateReturnsFailedResponseError(t *testing.T) {
 	}
 }
 
-func TestResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase(t *testing.T) {
+func testResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase(t *testing.T) {
 	gen := NewResponsesGenerator(nil)
 	dialog := Dialog{{
 		Role: Assistant,
@@ -124,7 +124,7 @@ func TestResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase(t *test
 	}
 }
 
-func TestResponsesGeneratorBuildInputItemsRejectsInvalidAssistantMessagePhase(t *testing.T) {
+func testResponsesGeneratorBuildInputItemsRejectsInvalidAssistantMessagePhase(t *testing.T) {
 	gen := NewResponsesGenerator(nil)
 	dialog := Dialog{{
 		Role: Assistant,
@@ -142,7 +142,7 @@ func TestResponsesGeneratorBuildInputItemsRejectsInvalidAssistantMessagePhase(t 
 	}
 }
 
-func TestResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhaseWithoutTextContent(t *testing.T) {
+func testResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhaseWithoutTextContent(t *testing.T) {
 	gen := NewResponsesGenerator(nil)
 
 	t.Run("tool-call-only assistant", func(t *testing.T) {
@@ -231,7 +231,7 @@ func TestResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhaseWithoutT
 	})
 }
 
-func TestResponsesGeneratorGeneratePreservesAssistantMessagePhase(t *testing.T) {
+func testResponsesGeneratorGeneratePreservesAssistantMessagePhase(t *testing.T) {
 	var apiResp responses.Response
 	if err := json.Unmarshal([]byte(`{
 		"id":"resp_123",
@@ -285,7 +285,7 @@ func TestResponsesGeneratorGeneratePreservesAssistantMessagePhase(t *testing.T) 
 	}
 }
 
-func TestResponsesGeneratorGeneratePreservesAssistantToolOnlyPhaseRoundTrip(t *testing.T) {
+func testResponsesGeneratorGeneratePreservesAssistantToolOnlyPhaseRoundTrip(t *testing.T) {
 	var apiResp responses.Response
 	if err := json.Unmarshal([]byte(`{
 		"id":"resp_456",
@@ -361,7 +361,7 @@ func TestResponsesGeneratorGeneratePreservesAssistantToolOnlyPhaseRoundTrip(t *t
 	}
 }
 
-func TestStreamingAdapterGeneratePreservesMessageExtraFields(t *testing.T) {
+func testStreamingAdapterGeneratePreservesMessageExtraFields(t *testing.T) {
 	adapter := &StreamingAdapter{S: &mockStreamingGenerator{chunks: []StreamChunk{
 		{
 			Block: Block{
@@ -398,7 +398,7 @@ func TestStreamingAdapterGeneratePreservesMessageExtraFields(t *testing.T) {
 	}
 }
 
-func TestStreamingAdapterGeneratePreservesToolOnlyMessageExtraFieldsForReplay(t *testing.T) {
+func testStreamingAdapterGeneratePreservesToolOnlyMessageExtraFieldsForReplay(t *testing.T) {
 	adapter := &StreamingAdapter{S: &mockStreamingGenerator{chunks: []StreamChunk{
 		{
 			Block: Block{
