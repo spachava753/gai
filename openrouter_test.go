@@ -17,15 +17,20 @@ import (
 
 func newOpenRouterTestGenerator(t *testing.T, server *httptest.Server) *OpenRouterGenerator {
 	t.Helper()
-	client, err := openrouterapi.NewClient(
-		server.URL,
-		openRouterSecuritySource{apiKey: "test-key"},
-		openrouterapi.WithClient(server.Client()),
-	)
+	generator, err := NewOpenRouterGenerator(server.Client(), server.URL, "test-key")
 	if err != nil {
-		t.Fatalf("create generated OpenRouter client: %v", err)
+		t.Fatalf("create OpenRouter generator: %v", err)
 	}
-	return NewOpenRouterGenerator(client, "")
+	return generator
+}
+
+func newLiveOpenRouterGenerator(t *testing.T, apiKey string) *OpenRouterGenerator {
+	t.Helper()
+	generator, err := NewOpenRouterGenerator(nil, "", apiKey)
+	if err != nil {
+		t.Fatalf("create OpenRouter generator: %v", err)
+	}
+	return generator
 }
 
 func TestOpenRouterGeneratorUsesGeneratedJSONClient(t *testing.T) {
@@ -374,7 +379,7 @@ func TestOpenRouterGenerateReturnsContentPolicyErrorForContentFilter(t *testing.
 
 func TestOpenRouterGenerator_Generate(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
-	gen := NewOpenRouterGenerator(nil, apiKey)
+	gen := newLiveOpenRouterGenerator(t, apiKey)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -417,7 +422,7 @@ func TestOpenRouterGenerator_Generate_image(t *testing.T) {
 	}
 	imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))
 	// Use a vision-capable model through OpenRouter.
-	gen := NewOpenRouterGenerator(nil, apiKey)
+	gen := newLiveOpenRouterGenerator(t, apiKey)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -457,7 +462,7 @@ func TestOpenRouterGenerator_Generate_image(t *testing.T) {
 }
 func TestOpenRouterGenerator_RequestTools(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
-	gen := NewOpenRouterGenerator(nil, apiKey)
+	gen := newLiveOpenRouterGenerator(t, apiKey)
 	// Define a request tool
 	tickerTool := Tool{
 		Name:        "get_stock_price",
@@ -524,7 +529,7 @@ func TestOpenRouterGenerator_RequestTools(t *testing.T) {
 func TestOpenRouterGenerator_Generate_reasoningModel(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	// Use a reasoning model through OpenRouter.
-	gen := NewOpenRouterGenerator(nil, apiKey)
+	gen := newLiveOpenRouterGenerator(t, apiKey)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -619,7 +624,7 @@ func TestOpenRouterGenerator_Generate_invalidModel(t *testing.T) {
 	// for invalid requests like nonsense model IDs.
 	apiKey := requireLiveAPIKey(t, "OPENROUTER_API_KEY")
 	// Use a nonsense model ID to trigger an error.
-	gen := NewOpenRouterGenerator(nil, apiKey)
+	gen := newLiveOpenRouterGenerator(t, apiKey)
 	dialog := Dialog{
 		{
 			Role: User,

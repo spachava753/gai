@@ -60,6 +60,9 @@ func (i InvalidParameterErr) Error() string {
 	return fmt.Sprintf("invalid parameter %s: %s", i.Parameter, i.Reason)
 }
 
+// ErrMissingAPIKey is returned when a provider constructor receives an empty API key.
+var ErrMissingAPIKey = errors.New("API key is required")
+
 // ErrContextLengthExceeded is returned when the total number of tokens in the input Dialog
 // exceeds the maximum context length supported by the Generator. Different Generator
 // implementations may have different context length limits.

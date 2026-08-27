@@ -455,22 +455,28 @@
 //	generator := gai.NewGeminiGenerator(client)
 //
 // Cerebras: The Cerebras implementation supports streaming text generation, function tools,
-// and replayable reasoning content. Pass nil to use the generated client and leave apiKey
-// empty to read CEREBRAS_API_KEY.
+// and replayable reasoning content. A nil HTTP client and empty base URL use the defaults.
+// The API key is required.
 //
-//	generator := gai.NewCerebrasGenerator(nil, "")
+//	generator, err := gai.NewCerebrasGenerator(nil, "", "your-api-key")
 //
 // OpenRouter: The OpenRouter implementation supports streaming text generation with multimodal input,
-// function tools, and replayable reasoning details. Pass nil to use the generated client
-// and leave apiKey empty to read OPENROUTER_API_KEY.
+// function tools, and replayable reasoning details. A nil HTTP client and empty base URL use the
+// defaults. The API key is required.
 //
-//	generator := gai.NewOpenRouterGenerator(nil, "")
+//	generator, err := gai.NewOpenRouterGenerator(nil, "", "your-api-key")
+//
+// Z.AI: The Z.AI implementation supports multimodal generation, streaming, function tools,
+// and replayable reasoning content. A nil HTTP client and empty base URL use the defaults.
+// The API key is required.
+//
+//	generator, err := gai.NewZaiGenerator(nil, "", "your-api-key")
 //
 // DeepSeek: The DeepSeek implementation supports text generation, streaming, function tools,
-// and replayable reasoning content. Pass nil to use the generated client and leave apiKey empty
-// to read DEEPSEEK_API_KEY.
+// and replayable reasoning content. A nil HTTP client and empty base URL use the defaults.
+// The API key is required.
 //
-//	generator := gai.NewDeepSeekGenerator(nil, "")
+//	generator, err := gai.NewDeepSeekGenerator(nil, "", "your-api-key")
 //
 // For every provider, set the model and system instructions on GenerationRequest.
 // Constructors retain only clients, credentials, endpoints, and other execution dependencies.

@@ -7,21 +7,24 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	deepseekapi "github.com/spachava753/gai/internal/deepseek"
 )
 
 func newDeepSeekTestGenerator(t *testing.T, server *httptest.Server) *DeepSeekGenerator {
 	t.Helper()
-	client, err := deepseekapi.NewClient(
-		server.URL,
-		deepSeekSecuritySource{apiKey: "test-key"},
-		deepseekapi.WithClient(server.Client()),
-	)
+	generator, err := NewDeepSeekGenerator(server.Client(), server.URL, "test-key")
 	if err != nil {
-		t.Fatalf("create generated DeepSeek client: %v", err)
+		t.Fatalf("create DeepSeek generator: %v", err)
 	}
-	return NewDeepSeekGenerator(client, "")
+	return generator
+}
+
+func newLiveDeepSeekGenerator(t *testing.T, apiKey string) *DeepSeekGenerator {
+	t.Helper()
+	generator, err := NewDeepSeekGenerator(nil, "", apiKey)
+	if err != nil {
+		t.Fatalf("create DeepSeek generator: %v", err)
+	}
+	return generator
 }
 
 func TestDeepSeekGeneratorUsesGeneratedJSONClient(t *testing.T) {
@@ -264,7 +267,7 @@ func TestDeepSeekBuildRequestReplaysThinking(t *testing.T) {
 
 func TestDeepSeekGeneratorLive(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "DEEPSEEK_API_KEY")
-	generator := NewDeepSeekGenerator(nil, apiKey)
+	generator := newLiveDeepSeekGenerator(t, apiKey)
 	request := GenerationRequest{
 		Model:  "deepseek-v4-flash",
 		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("Reply with the word hello.")}}},

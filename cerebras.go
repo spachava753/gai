@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"os"
+	"net/http"
 	"strings"
 
 	"github.com/go-faster/jx"
@@ -14,29 +14,33 @@ import (
 	"github.com/spachava753/gai/internal/cerebras"
 )
 
-const cerebrasBaseURL = "https://api.cerebras.ai"
+// CerebrasDefaultBaseURL is the Cerebras API server declared by the generated OpenAPI client.
+const CerebrasDefaultBaseURL = string(cerebras.DefaultServer)
 
 // CerebrasGenerator implements Generator using the generated Cerebras client.
 type CerebrasGenerator struct {
-	client CerebrasCompletionService
+	client *cerebras.Client
 }
 
-// CerebrasCompletionService defines the generated Cerebras chat completions client surface.
-type CerebrasCompletionService interface {
-	CreateChatCompletion(ctx context.Context, request *cerebras.ChatCompletionRequest) (cerebras.CreateChatCompletionRes, error)
-}
-
-// NewCerebrasGenerator creates a stateless Cerebras generator using the generated client.
-// If client is nil, a generated client is created with the Cerebras base URL.
-// apiKey is read from CEREBRAS_API_KEY when empty.
-func NewCerebrasGenerator(client CerebrasCompletionService, apiKey string) *CerebrasGenerator {
+// NewCerebrasGenerator creates a stateless Cerebras generator.
+// A nil httpClient uses the default HTTP client. An empty baseURL uses
+// CerebrasDefaultBaseURL. apiKey is required.
+func NewCerebrasGenerator(httpClient *http.Client, baseURL, apiKey string) (*CerebrasGenerator, error) {
+	if baseURL == "" {
+		baseURL = CerebrasDefaultBaseURL
+	}
 	if apiKey == "" {
-		apiKey = os.Getenv("CEREBRAS_API_KEY")
+		return nil, fmt.Errorf("cerebras: %w", ErrMissingAPIKey)
 	}
-	if client == nil {
-		client, _ = newDefaultCerebrasClient(apiKey)
+	options := make([]cerebras.ClientOption, 0, 1)
+	if httpClient != nil {
+		options = append(options, cerebras.WithClient(httpClient))
 	}
-	return &CerebrasGenerator{client: client}
+	client, err := cerebras.NewClient(baseURL, cerebrasSecuritySource{apiKey: apiKey}, options...)
+	if err != nil {
+		return nil, fmt.Errorf("cerebras: create client: %w", err)
+	}
+	return &CerebrasGenerator{client: client}, nil
 }
 
 type cerebrasSecuritySource struct {
@@ -45,10 +49,6 @@ type cerebrasSecuritySource struct {
 
 func (s cerebrasSecuritySource) BearerAuth(ctx context.Context, operationName cerebras.OperationName) (cerebras.BearerAuth, error) {
 	return cerebras.BearerAuth{Token: s.apiKey}, nil
-}
-
-func newDefaultCerebrasClient(apiKey string) (*cerebras.Client, error) {
-	return cerebras.NewClient(cerebrasBaseURL, cerebrasSecuritySource{apiKey: apiKey})
 }
 
 func convertToolToCerebras(tool Tool) (cerebras.FunctionTool, error) {

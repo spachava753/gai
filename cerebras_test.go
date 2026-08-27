@@ -10,20 +10,24 @@ import (
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	cerebrasapi "github.com/spachava753/gai/internal/cerebras"
 )
 
 func newCerebrasTestGenerator(t *testing.T, server *httptest.Server) *CerebrasGenerator {
 	t.Helper()
-	client, err := cerebrasapi.NewClient(
-		server.URL,
-		cerebrasSecuritySource{apiKey: "test-key"},
-		cerebrasapi.WithClient(server.Client()),
-	)
+	generator, err := NewCerebrasGenerator(server.Client(), server.URL, "test-key")
 	if err != nil {
-		t.Fatalf("create generated Cerebras client: %v", err)
+		t.Fatalf("create Cerebras generator: %v", err)
 	}
-	return NewCerebrasGenerator(client, "")
+	return generator
+}
+
+func newLiveCerebrasGenerator(t *testing.T, apiKey string) *CerebrasGenerator {
+	t.Helper()
+	generator, err := NewCerebrasGenerator(nil, "", apiKey)
+	if err != nil {
+		t.Fatalf("create Cerebras generator: %v", err)
+	}
+	return generator
 }
 
 func TestCerebrasGeneratorUsesGeneratedJSONClient(t *testing.T) {
@@ -312,7 +316,7 @@ func TestCerebrasBuildRequestReplaysThinking(t *testing.T) {
 
 func TestCerebrasGenerator_Generate(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
-	gen := NewCerebrasGenerator(nil, apiKey)
+	gen := newLiveCerebrasGenerator(t, apiKey)
 	dialog := Dialog{
 		{
 			Role:   User,
@@ -334,7 +338,7 @@ func TestCerebrasGenerator_Generate(t *testing.T) {
 func TestCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	// Use gpt-oss-120b model which supports reasoning with reasoning_effort parameter
-	gen := NewCerebrasGenerator(nil, apiKey)
+	gen := newLiveCerebrasGenerator(t, apiKey)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -419,7 +423,7 @@ func TestCerebrasGenerator_Generate_reasoning_gptoss(t *testing.T) {
 func TestCerebrasGenerator_Generate_reasoning_gemma(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
 	// Gemma supports reasoning through the reasoning_effort parameter.
-	gen := NewCerebrasGenerator(nil, apiKey)
+	gen := newLiveCerebrasGenerator(t, apiKey)
 	dialog := Dialog{
 		{
 			Role: User,
@@ -503,7 +507,7 @@ func TestCerebrasGenerator_Generate_reasoning_gemma(t *testing.T) {
 }
 func TestCerebrasGenerator_RequestTools(t *testing.T) {
 	apiKey := requireLiveAPIKey(t, "CEREBRAS_API_KEY")
-	cgen := NewCerebrasGenerator(nil, apiKey)
+	cgen := newLiveCerebrasGenerator(t, apiKey)
 	instructions := `You are a helpful assistant that returns the price of a stock and nothing else.
 Only output the price, like
 <example>

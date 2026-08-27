@@ -307,13 +307,15 @@ A provider generator keeps only what it needs to send a request:
 | `OpenAiGenerator` | completion service | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `AnthropicGenerator` | message service | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `GeminiGenerator` | Gemini client | `Generator`, `StreamingGenerator`, `TokenCounter` |
-| `CerebrasGenerator` | generated client | `Generator`, `StreamingGenerator` |
-| `OpenRouterGenerator` | generated client | `Generator`, `StreamingGenerator` |
+| `CerebrasGenerator` | private generated client | `Generator`, `StreamingGenerator` |
+| `OpenRouterGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 | `ResponsesGenerator` | Responses service | `Generator`, `StreamingGenerator` |
-| `ZaiGenerator` | generated client | `Generator`, `StreamingGenerator` |
-| `DeepSeekGenerator` | generated client | `Generator`, `StreamingGenerator` |
+| `ZaiGenerator` | private generated client | `Generator`, `StreamingGenerator` |
+| `DeepSeekGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 
-Constructors set up those connections. They do not choose a model, install tools, or store instructions. Every call gets that data from `GenerationRequest`.
+Constructors set up those connections. Generated clients under `internal/` never appear in public constructor parameters or return types. The generated-client adapters accept a standard `*http.Client`, base URL, and API key, then construct their private client internally. An empty base URL selects an exported provider default that aliases the `DefaultServer` constant generated from the OpenAPI spec. The API key must be non-empty; constructors do not read credentials from environment variables or other global state. Constructors return client setup errors instead of retaining an invalid client.
+
+Constructors do not choose a model, install tools, or store instructions. Every call gets that data from `GenerationRequest`.
 
 `ResponsesGenerator` also sets the upstream `store` option to false. The OpenAI service does not retain the conversation, and the Go generator does not retain request state.
 

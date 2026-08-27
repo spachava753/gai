@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"os"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -38,18 +38,14 @@ const (
 	OpenRouterUsageMetricReasoningDetailsAvailable = "reasoning_details_available"
 )
 
-const openRouterBaseURL = "https://openrouter.ai/api/v1"
+// OpenRouterDefaultBaseURL is the OpenRouter API server declared by the generated OpenAPI client.
+const OpenRouterDefaultBaseURL = string(openrouter.DefaultServer)
 
 // OpenRouterGenerator implements Generator using the generated OpenRouter client.
 // It normalizes replayable reasoning details, function tools, multimodal input,
 // provider errors, and usage data from OpenRouter Chat Completions.
 type OpenRouterGenerator struct {
-	client OpenRouterCompletionService
-}
-
-// OpenRouterCompletionService defines the generated OpenRouter chat completions client surface.
-type OpenRouterCompletionService interface {
-	CreateChatCompletion(ctx context.Context, request *openrouter.ChatCompletionRequest) (openrouter.CreateChatCompletionRes, error)
+	client *openrouter.Client
 }
 
 func classifyOpenRouterError(statusCode int, errorType string) APIErrorKind {
@@ -193,17 +189,25 @@ func parseOpenRouterGenerationOptions(values GenerationOptions) (*openRouterGene
 	return options, nil
 }
 
-// NewOpenRouterGenerator creates a stateless OpenRouter generator using the generated client.
-// If client is nil, a generated client is created with the OpenRouter base URL.
-// apiKey is read from OPENROUTER_API_KEY when empty.
-func NewOpenRouterGenerator(client OpenRouterCompletionService, apiKey string) *OpenRouterGenerator {
+// NewOpenRouterGenerator creates a stateless OpenRouter generator.
+// A nil httpClient uses the default HTTP client. An empty baseURL uses
+// OpenRouterDefaultBaseURL. apiKey is required.
+func NewOpenRouterGenerator(httpClient *http.Client, baseURL, apiKey string) (*OpenRouterGenerator, error) {
+	if baseURL == "" {
+		baseURL = OpenRouterDefaultBaseURL
+	}
 	if apiKey == "" {
-		apiKey = os.Getenv("OPENROUTER_API_KEY")
+		return nil, fmt.Errorf("openrouter: %w", ErrMissingAPIKey)
 	}
-	if client == nil {
-		client, _ = newDefaultOpenRouterClient(apiKey)
+	options := make([]openrouter.ClientOption, 0, 1)
+	if httpClient != nil {
+		options = append(options, openrouter.WithClient(httpClient))
 	}
-	return &OpenRouterGenerator{client: client}
+	client, err := openrouter.NewClient(baseURL, openRouterSecuritySource{apiKey: apiKey}, options...)
+	if err != nil {
+		return nil, fmt.Errorf("openrouter: create client: %w", err)
+	}
+	return &OpenRouterGenerator{client: client}, nil
 }
 
 type openRouterSecuritySource struct {
@@ -212,10 +216,6 @@ type openRouterSecuritySource struct {
 
 func (s openRouterSecuritySource) BearerAuth(ctx context.Context, operationName openrouter.OperationName) (openrouter.BearerAuth, error) {
 	return openrouter.BearerAuth{Token: s.apiKey}, nil
-}
-
-func newDefaultOpenRouterClient(apiKey string) (*openrouter.Client, error) {
-	return openrouter.NewClient(openRouterBaseURL, openRouterSecuritySource{apiKey: apiKey})
 }
 
 func buildOpenRouterReasoningDetails(blocks []Block) []openrouter.ReasoningDetail {

@@ -9,8 +9,6 @@ import (
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
-
-	zaiapi "github.com/spachava753/gai/internal/zai"
 )
 
 func requireContentContaining(t *testing.T, resp Response, want string) {
@@ -38,6 +36,24 @@ func requireBlockType(t *testing.T, resp Response, blockType string) Block {
 	}
 	t.Fatalf("no %s block found; response: %+v", blockType, resp)
 	return Block{}
+}
+
+func newZaiTestGenerator(t *testing.T, server *httptest.Server) *ZaiGenerator {
+	t.Helper()
+	generator, err := NewZaiGenerator(server.Client(), server.URL, "test-key")
+	if err != nil {
+		t.Fatalf("create Z.AI generator: %v", err)
+	}
+	return generator
+}
+
+func newLiveZaiGenerator(t *testing.T, apiKey string) *ZaiGenerator {
+	t.Helper()
+	generator, err := NewZaiGenerator(nil, "", apiKey)
+	if err != nil {
+		t.Fatalf("create Z.AI generator: %v", err)
+	}
+	return generator
 }
 
 func TestZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
@@ -69,11 +85,7 @@ func TestZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := zaiapi.NewClient(server.URL, zaiSecuritySource{apiKey: "test-key"}, zaiapi.WithClient(server.Client()))
-	if err != nil {
-		t.Fatalf("create generated client: %v", err)
-	}
-	generator := NewZaiGenerator(client, "")
+	generator := newZaiTestGenerator(t, server)
 
 	var thinking, content string
 	var toolCall string
@@ -124,11 +136,8 @@ func TestZaiGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := zaiapi.NewClient(server.URL, zaiSecuritySource{apiKey: "test-key"}, zaiapi.WithClient(server.Client()))
-	if err != nil {
-		t.Fatalf("create generated client: %v", err)
-	}
-	response, err := NewZaiGenerator(client, "").Generate(t.Context(), GenerationRequest{
+	generator := newZaiTestGenerator(t, server)
+	response, err := generator.Generate(t.Context(), GenerationRequest{
 		Model:  "glm-5",
 		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("answer")}}},
 	})
@@ -149,7 +158,7 @@ func TestZaiGeneratorUsesGeneratedJSONClient(t *testing.T) {
 func TestZaiGenerator(t *testing.T) {
 	t.Run("Generate", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		dialog := Dialog{
 			{
 				Role:   User,
@@ -176,7 +185,7 @@ func TestZaiGenerator(t *testing.T) {
 
 	t.Run("GenerateThinking", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		dialog := Dialog{
 			{
 				Role:   User,
@@ -222,7 +231,7 @@ func TestZaiGenerator(t *testing.T) {
 	t.Run("GenerateInterleavedThinking", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		// Preserve thinking across tool turns through a request option.
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		// Register a weather tool
 		weatherTool := Tool{
 			Name:        "get_weather",
@@ -294,7 +303,7 @@ func TestZaiGenerator(t *testing.T) {
 
 	t.Run("GenerateMultiTurn", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		// First turn
 		dialog := Dialog{
 			{
@@ -368,7 +377,7 @@ func TestZaiGenerator(t *testing.T) {
 
 	t.Run("RequestTools", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		instructions := `You are a helpful assistant that returns the price of a stock and nothing else.
 Only output the price, like:
 <example>
@@ -454,7 +463,7 @@ Only output the price, like:
 
 	t.Run("GenerateParallelToolCalls", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		instructions := `You are a tool-calling assistant.
 When the user asks for weather and stock information together, call both tools in the same assistant response before answering.`
 		weatherTool := Tool{
@@ -514,7 +523,7 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("Stream", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		dialog := Dialog{
 			{
 				Role:   User,
@@ -552,7 +561,7 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("StreamDisableThinking", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Count from 1 to 3")}}}
 		var contentChunks int
 		for chunk := range gen.Stream(context.Background(), GenerationRequest{
@@ -578,7 +587,7 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("StreamToolCalling", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		// Register a calculator tool
 		calcTool := Tool{
 			Name:        "calculate",
@@ -626,7 +635,7 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("GenerateVisionImageURL", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		dialog := Dialog{{Role: User, Blocks: []Block{
 			{BlockType: Content, ModalityType: Image, MimeType: "image/png", Content: Str("https://cdn.bigmodel.cn/static/logo/register.png")},
 			TextBlock("Describe this image in one short sentence."),
@@ -648,7 +657,7 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("GenerateVisionVideoURL", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		dialog := Dialog{{Role: User, Blocks: []Block{
 			{BlockType: Content, ModalityType: Video, MimeType: "video/quicktime", Content: Str("https://cdn.bigmodel.cn/agent-demos/lark/113123.mov")},
 			TextBlock("Describe what happens in this video in one short sentence."),
@@ -670,7 +679,7 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("GenerateVisionPDFURL", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		pdf := PDFBlock([]byte("placeholder"), "demo1.pdf")
 		pdf.ExtraFields[ZaiExtraFieldURL] = "https://cdn.bigmodel.cn/static/demo/demo1.pdf"
 		dialog := Dialog{{Role: User, Blocks: []Block{
@@ -694,7 +703,7 @@ When the user asks for weather and stock information together, call both tools i
 
 	t.Run("DisableThinking", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
-		gen := NewZaiGenerator(nil, apiKey)
+		gen := newLiveZaiGenerator(t, apiKey)
 		dialog := Dialog{
 			{
 				Role:   User,

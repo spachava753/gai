@@ -5,6 +5,7 @@ info:
   version: 1.0.0
 servers:
   - url: https://openrouter.ai/api/v1
+    x-ogen-server-name: default
 security:
   - bearerAuth: []
 paths:

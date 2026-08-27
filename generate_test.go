@@ -57,6 +57,61 @@ func TestNewGenerationOptions(t *testing.T) {
 	}
 }
 
+func TestGeneratedProviderConstructors(t *testing.T) {
+	constructors := []struct {
+		name      string
+		construct func(string, string) error
+	}{
+		{
+			name: "cerebras",
+			construct: func(baseURL, apiKey string) error {
+				_, err := NewCerebrasGenerator(nil, baseURL, apiKey)
+				return err
+			},
+		},
+		{
+			name: "deepseek",
+			construct: func(baseURL, apiKey string) error {
+				_, err := NewDeepSeekGenerator(nil, baseURL, apiKey)
+				return err
+			},
+		},
+		{
+			name: "openrouter",
+			construct: func(baseURL, apiKey string) error {
+				_, err := NewOpenRouterGenerator(nil, baseURL, apiKey)
+				return err
+			},
+		},
+		{
+			name: "zai",
+			construct: func(baseURL, apiKey string) error {
+				_, err := NewZaiGenerator(nil, baseURL, apiKey)
+				return err
+			},
+		},
+	}
+
+	for _, tt := range constructors {
+		t.Run(tt.name+" default", func(t *testing.T) {
+			if err := tt.construct("", "test-key"); err != nil {
+				t.Fatalf("construct with default base URL: %v", err)
+			}
+		})
+		t.Run(tt.name+" invalid URL", func(t *testing.T) {
+			if err := tt.construct("https://example.com/%zz", "test-key"); err == nil {
+				t.Fatal("construct with invalid base URL returned nil error")
+			}
+		})
+		t.Run(tt.name+" missing API key", func(t *testing.T) {
+			err := tt.construct("", "")
+			if !errors.Is(err, ErrMissingAPIKey) {
+				t.Fatalf("construct with empty API key returned %v, want ErrMissingAPIKey", err)
+			}
+		})
+	}
+}
+
 func TestTextInstructions(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		parts, err := textInstructions(Message{})

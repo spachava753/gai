@@ -77,6 +77,8 @@ Design principles
 - Interface-first, implementation-behind adapters
 - Small, testable units with clear contracts
 - Provider-agnostic core, provider-specific edges
+- Keep generated clients under `internal/`; public constructors accept standard HTTP clients, base URLs, and credentials rather than generated types
+- Require callers to pass credentials explicitly; provider constructors do not read environment variables or other global configuration
 - Opt into features (metrics, callbacks) without forcing dependencies
 
 Provider-specific metadata placement
@@ -105,13 +107,13 @@ Naming and location
 ## Security considerations
 
 Secrets
-- Never commit API keys; use environment variables for provider credentials:
+- Never commit API keys. Applications may load provider credentials from environment variables, then must pass them explicitly to constructors:
   - OpenAI: `OPENAI_API_KEY`
   - Anthropic: `ANTHROPIC_API_KEY`
   - Google: `GOOGLE_API_KEY` or ADC where applicable
   - Cerebras: `CEREBRAS_API_KEY`
   - OpenRouter: `OPENROUTER_API_KEY`
-  - ZAI: `ZAI_API_KEY`
+  - ZAI: `Z_API_KEY`
   - DeepSeek: `DEEPSEEK_API_KEY`
 - Provide `.env` locally but do not commit secrets; prefer `.env.example` when introduced
 
@@ -134,7 +136,7 @@ Dependencies
 ## Configuration
 
 Environment variables
-- Provider keys as above
+- Applications and live tests may load provider keys as listed above, but constructors require those keys as explicit arguments
 - `LIVE_TESTS=1` explicitly enables network-backed tests; the relevant provider API key must also be set
 - Tuning flags when present should be wired through options structs; document defaults in README
 

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"os"
+	"net/http"
 	"strings"
 
 	"github.com/go-faster/jx"
@@ -26,12 +26,7 @@ import (
 //
 // Supported models include glm-5.1, glm-5, glm-4.7, glm-4.6, glm-4.5, and variants.
 type ZaiGenerator struct {
-	client ZaiCompletionService
-}
-
-// ZaiCompletionService defines the generated Z.AI chat completions client surface.
-type ZaiCompletionService interface {
-	PaasV4ChatCompletionsPost(ctx context.Context, request zai.PaasV4ChatCompletionsPostReq, params zai.PaasV4ChatCompletionsPostParams) (zai.PaasV4ChatCompletionsPostRes, error)
+	client *zai.Client
 }
 
 const (
@@ -54,25 +49,33 @@ func WithZaiClearThinking(clear bool) GenerationOption {
 }
 
 const (
-	zaiBaseURL = "https://api.z.ai/api"
+	// ZaiDefaultBaseURL is the Z.AI API server declared by the generated OpenAPI client.
+	ZaiDefaultBaseURL = string(zai.DefaultServer)
 
 	// ZaiExtraFieldURL can be set on Image or Video content blocks to pass a remote URL.
 	// For PDFs, set this to a PDF URL on a PDFBlock; Z.AI file inputs require URLs.
 	ZaiExtraFieldURL = "zai_url"
 )
 
-// NewZaiGenerator creates a stateless Z.AI generator using the generated client.
-// If client is nil, a generated client is created with the Z.AI base URL.
-// apiKey is read from Z_API_KEY environment variable if empty.
-func NewZaiGenerator(client ZaiCompletionService, apiKey string) *ZaiGenerator {
+// NewZaiGenerator creates a stateless Z.AI generator.
+// A nil httpClient uses the default HTTP client. An empty baseURL uses
+// ZaiDefaultBaseURL. apiKey is required.
+func NewZaiGenerator(httpClient *http.Client, baseURL, apiKey string) (*ZaiGenerator, error) {
+	if baseURL == "" {
+		baseURL = ZaiDefaultBaseURL
+	}
 	if apiKey == "" {
-		apiKey = os.Getenv("Z_API_KEY")
+		return nil, fmt.Errorf("zai: %w", ErrMissingAPIKey)
 	}
-
-	if client == nil {
-		client, _ = newDefaultZaiClient(apiKey)
+	options := make([]zai.ClientOption, 0, 1)
+	if httpClient != nil {
+		options = append(options, zai.WithClient(httpClient))
 	}
-	return &ZaiGenerator{client: client}
+	client, err := zai.NewClient(baseURL, zaiSecuritySource{apiKey: apiKey}, options...)
+	if err != nil {
+		return nil, fmt.Errorf("zai: create client: %w", err)
+	}
+	return &ZaiGenerator{client: client}, nil
 }
 
 type zaiSecuritySource struct {
@@ -81,10 +84,6 @@ type zaiSecuritySource struct {
 
 func (s zaiSecuritySource) BearerAuth(ctx context.Context, operationName zai.OperationName) (zai.BearerAuth, error) {
 	return zai.BearerAuth{Token: s.apiKey}, nil
-}
-
-func newDefaultZaiClient(apiKey string) (*zai.Client, error) {
-	return zai.NewClient(zaiBaseURL, zaiSecuritySource{apiKey: apiKey})
 }
 
 func convertToolToZai(tool Tool) (zai.FunctionToolSchema, error) {

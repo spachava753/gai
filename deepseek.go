@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"os"
+	"net/http"
 	"strings"
 
 	"github.com/go-faster/jx"
@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	deepSeekBaseURL = "https://api.deepseek.com"
+	// DeepSeekDefaultBaseURL is the DeepSeek API server declared by the generated OpenAPI client.
+	DeepSeekDefaultBaseURL = string(deepseek.DefaultServer)
 
 	// DeepSeekGenerationOptionThinkingEnabled controls thinking mode for one request.
 	DeepSeekGenerationOptionThinkingEnabled = "deepseek_thinking_enabled"
@@ -30,25 +31,28 @@ func WithDeepSeekThinking(enabled bool) GenerationOption {
 
 // DeepSeekGenerator implements Generator and StreamingGenerator using the generated DeepSeek client.
 type DeepSeekGenerator struct {
-	client DeepSeekCompletionService
+	client *deepseek.Client
 }
 
-// DeepSeekCompletionService defines the generated DeepSeek chat completions client surface.
-type DeepSeekCompletionService interface {
-	ChatCompletionsPost(ctx context.Context, request *deepseek.ChatCompletionRequest) (deepseek.ChatCompletionsPostRes, error)
-}
-
-// NewDeepSeekGenerator creates a stateless DeepSeek generator using the generated client.
-// If client is nil, a generated client is created with the DeepSeek base URL.
-// apiKey is read from DEEPSEEK_API_KEY when empty.
-func NewDeepSeekGenerator(client DeepSeekCompletionService, apiKey string) *DeepSeekGenerator {
+// NewDeepSeekGenerator creates a stateless DeepSeek generator.
+// A nil httpClient uses the default HTTP client. An empty baseURL uses
+// DeepSeekDefaultBaseURL. apiKey is required.
+func NewDeepSeekGenerator(httpClient *http.Client, baseURL, apiKey string) (*DeepSeekGenerator, error) {
+	if baseURL == "" {
+		baseURL = DeepSeekDefaultBaseURL
+	}
 	if apiKey == "" {
-		apiKey = os.Getenv("DEEPSEEK_API_KEY")
+		return nil, fmt.Errorf("deepseek: %w", ErrMissingAPIKey)
 	}
-	if client == nil {
-		client, _ = newDefaultDeepSeekClient(apiKey)
+	options := make([]deepseek.ClientOption, 0, 1)
+	if httpClient != nil {
+		options = append(options, deepseek.WithClient(httpClient))
 	}
-	return &DeepSeekGenerator{client: client}
+	client, err := deepseek.NewClient(baseURL, deepSeekSecuritySource{apiKey: apiKey}, options...)
+	if err != nil {
+		return nil, fmt.Errorf("deepseek: create client: %w", err)
+	}
+	return &DeepSeekGenerator{client: client}, nil
 }
 
 type deepSeekSecuritySource struct {
@@ -57,10 +61,6 @@ type deepSeekSecuritySource struct {
 
 func (s deepSeekSecuritySource) BearerAuth(ctx context.Context, operationName deepseek.OperationName) (deepseek.BearerAuth, error) {
 	return deepseek.BearerAuth{Token: s.apiKey}, nil
-}
-
-func newDefaultDeepSeekClient(apiKey string) (*deepseek.Client, error) {
-	return deepseek.NewClient(deepSeekBaseURL, deepSeekSecuritySource{apiKey: apiKey})
 }
 
 type deepSeekGenerationOptions struct {

@@ -12,6 +12,7 @@ info:
     email: user_feedback@z.ai
 servers:
   - url: https://api.z.ai/api
+    x-ogen-server-name: default
     description: Production server
 security:
   - bearerAuth: []
