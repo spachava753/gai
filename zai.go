@@ -16,33 +16,41 @@ import (
 	"github.com/spachava753/gai/internal/zai"
 )
 
-// ZaiGenerator implements the Generator and StreamingGenerator interfaces for Z.AI API.
-// Z.AI provides OpenAI-compatible endpoints with extended thinking/reasoning capabilities.
+// ZaiGenerator adapts Z.AI Chat Completions to [Generator] and
+// [StreamingGenerator]. It accepts text plus supported image, video, and PDF URL
+// input, produces text, supports function tools, and preserves interleaved
+// reasoning for assistant replay.
 //
-// Key features:
-//   - OpenAI-compatible chat completions API
-//   - Interleaved thinking: the model can reason between tool calls
-//   - Preserved thinking: reasoning context can be retained across turns
-//   - Streaming with Server-Sent Events (SSE)
-//
-// Supported models include glm-5.1, glm-5, glm-4.7, glm-4.6, glm-4.5, and variants.
+// Z.AI consumes [WithTemperature], [WithTopP],
+// [WithMaxGenerationTokens], [WithToolChoice], [WithStopSequences],
+// [WithOutputModalities], and [WithThinkingBudget], plus [WithZaiThinking] and
+// [WithZaiClearThinking]. Remote media uses [ZaiExtraFieldURL]. Invocation data
+// and web-search results use the ZaiResponseExtraField constants in
+// [Response.ExtraFields].
 type ZaiGenerator struct {
 	client *zai.Client
 }
 
 const (
+	// ZaiGenerationOptionThinkingEnabled is the bool [GenerationOptions] key set
+	// by [WithZaiThinking].
 	ZaiGenerationOptionThinkingEnabled = "zai_thinking_enabled"
-	ZaiGenerationOptionClearThinking   = "zai_clear_thinking"
+	// ZaiGenerationOptionClearThinking is the bool [GenerationOptions] key set by
+	// [WithZaiClearThinking].
+	ZaiGenerationOptionClearThinking = "zai_clear_thinking"
 )
 
-// WithZaiThinking controls thinking mode for one generation request.
+// WithZaiThinking returns a [GenerationOption] that enables or disables Z.AI
+// thinking through [ZaiGenerationOptionThinkingEnabled].
 func WithZaiThinking(enabled bool) GenerationOption {
 	return func(options GenerationOptions) {
 		options[ZaiGenerationOptionThinkingEnabled] = enabled
 	}
 }
 
-// WithZaiClearThinking controls whether reasoning content from earlier turns is cleared.
+// WithZaiClearThinking returns a [GenerationOption] that controls whether Z.AI
+// clears reasoning from earlier turns through
+// [ZaiGenerationOptionClearThinking].
 func WithZaiClearThinking(clear bool) GenerationOption {
 	return func(options GenerationOptions) {
 		options[ZaiGenerationOptionClearThinking] = clear
@@ -50,30 +58,36 @@ func WithZaiClearThinking(clear bool) GenerationOption {
 }
 
 const (
-	// ZaiDefaultBaseURL is the Z.AI API server declared by the generated OpenAPI client.
+	// ZaiDefaultBaseURL is the endpoint used by [NewZaiGenerator] when baseURL is
+	// empty.
 	ZaiDefaultBaseURL = string(zai.DefaultServer)
 
-	// ZaiExtraFieldURL can be set on Image or Video content blocks to pass a remote URL.
-	// For PDFs, set this to a PDF URL on a PDFBlock; Z.AI file inputs require URLs.
+	// ZaiExtraFieldURL is the string [Block.ExtraFields] key for remote image,
+	// video, or PDF input. Z.AI requires PDF inputs to use a URL.
 	ZaiExtraFieldURL = "zai_url"
 )
 
 const (
-	// ZaiResponseExtraFieldID stores the completion identifier returned by Z.AI.
+	// ZaiResponseExtraFieldID is the string completion-ID key in
+	// [Response.ExtraFields].
 	ZaiResponseExtraFieldID = "zai_id"
-	// ZaiResponseExtraFieldRequestID stores Z.AI's request identifier.
+	// ZaiResponseExtraFieldRequestID is the string request-ID key in
+	// [Response.ExtraFields].
 	ZaiResponseExtraFieldRequestID = "zai_request_id"
-	// ZaiResponseExtraFieldCreated stores the completion's Unix creation timestamp.
+	// ZaiResponseExtraFieldCreated is the int64 Unix timestamp key in
+	// [Response.ExtraFields].
 	ZaiResponseExtraFieldCreated = "zai_created"
-	// ZaiResponseExtraFieldModel stores the model reported by Z.AI.
+	// ZaiResponseExtraFieldModel is the string response-model key in
+	// [Response.ExtraFields].
 	ZaiResponseExtraFieldModel = "zai_model"
-	// ZaiResponseExtraFieldWebSearchResults stores top-level Z.AI web-search results.
+	// ZaiResponseExtraFieldWebSearchResults is the []map[string]any hosted-search
+	// result key in [Response.ExtraFields].
 	ZaiResponseExtraFieldWebSearchResults = "zai_web_search_results"
 )
 
-// NewZaiGenerator creates a stateless Z.AI generator.
-// A nil httpClient uses the default HTTP client. An empty baseURL uses
-// ZaiDefaultBaseURL. apiKey is required.
+// NewZaiGenerator constructs a stateless Z.AI adapter. A nil httpClient uses
+// the generated client's default transport, an empty baseURL uses
+// [ZaiDefaultBaseURL], and an empty apiKey returns [ErrMissingAPIKey].
 func NewZaiGenerator(httpClient *http.Client, baseURL, apiKey string) (*ZaiGenerator, error) {
 	if baseURL == "" {
 		baseURL = ZaiDefaultBaseURL
@@ -723,7 +737,9 @@ func zaiWebSearchResults(results []zai.WebSearchObjectResponse) []map[string]int
 	return converted
 }
 
-// Generate implements Generator
+// Generate sends one Z.AI Chat Completions request and normalizes text,
+// reasoning, tool calls, hosted-search results, usage, and provider failures
+// into [Response].
 func (g *ZaiGenerator) Generate(ctx context.Context, generationRequest GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("zai: client not initialized")
@@ -809,7 +825,8 @@ func (g *ZaiGenerator) Generate(ctx context.Context, generationRequest Generatio
 	return result, nil
 }
 
-// Stream implements StreamingGenerator
+// Stream starts one Z.AI SSE stream when iterated and emits ordered reasoning,
+// text, tool-call, metadata, and terminal-error [StreamChunk] values.
 func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {

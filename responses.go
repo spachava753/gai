@@ -113,107 +113,106 @@ func mapResponsesStreamError(err error) *ApiErr {
 	return mapped
 }
 
-// ResponsesThoughtSummaryDetailParam is a GenerationOptions key for the thought
-// summary detail level. Its value is one of `auto`, `concise`, or `detailed`.
+// ResponsesThoughtSummaryDetailParam is the string [GenerationOptions] key set
+// by [WithResponsesThoughtSummaryDetail]. Accepted values are "auto",
+// "concise", and "detailed".
 const ResponsesThoughtSummaryDetailParam = "responses_thought_summary_detail"
 
-// ResponsesPromptCacheKeyParam is a GenerationOptions key for the OpenAI
-// Responses API prompt_cache_key request field. Reuse the same key across requests that
-// share a long static prefix to improve cache routing and hit rates.
+// ResponsesPromptCacheKeyParam is the string [GenerationOptions] key set by
+// [WithResponsesPromptCacheKey]. Reuse a key for requests with the same long
+// static prefix to improve provider cache routing.
 const ResponsesPromptCacheKeyParam = "responses_prompt_cache_key"
 
-// ResponsesServiceTierParam is a GenerationOptions key for the OpenAI
-// Responses API service_tier request field. Its value must be one of "auto", "default",
-// "flex", "scale", "priority", "fast", or "ultrafast".
+// ResponsesServiceTierParam is the string [GenerationOptions] key set by
+// [WithResponsesServiceTier]. Accepted values are "auto", "default", "flex",
+// "scale", "priority", "fast", and "ultrafast".
 const ResponsesServiceTierParam = "responses_service_tier"
 
-// WithResponsesThoughtSummaryDetail sets the OpenAI Responses reasoning summary detail level.
+// WithResponsesThoughtSummaryDetail returns a [GenerationOption] that stores
+// value under [ResponsesThoughtSummaryDetailParam].
 func WithResponsesThoughtSummaryDetail(value string) GenerationOption {
 	return func(options GenerationOptions) {
 		options[ResponsesThoughtSummaryDetailParam] = value
 	}
 }
 
-// WithResponsesPromptCacheKey sets the OpenAI Responses prompt cache routing key.
+// WithResponsesPromptCacheKey returns a [GenerationOption] that stores value
+// under [ResponsesPromptCacheKeyParam].
 func WithResponsesPromptCacheKey(value string) GenerationOption {
 	return func(options GenerationOptions) {
 		options[ResponsesPromptCacheKeyParam] = value
 	}
 }
 
-// WithResponsesServiceTier sets the OpenAI Responses processing tier.
+// WithResponsesServiceTier returns a [GenerationOption] that stores value under
+// [ResponsesServiceTierParam].
 func WithResponsesServiceTier(value string) GenerationOption {
 	return func(options GenerationOptions) {
 		options[ResponsesServiceTierParam] = value
 	}
 }
 
-// ResponsesExtraFieldReasoningID is the key used in Block.ExtraFields for Thinking blocks
-// to store the reasoning item's unique ID from the Responses API. This is needed to reconstruct
-// reasoning input items when passing back in multi-turn conversations.
+// ResponsesExtraFieldReasoningID is the string [Block.ExtraFields] key for a
+// Responses reasoning item ID. [ResponsesGenerator] replays it in later tool
+// turns.
 const ResponsesExtraFieldReasoningID = "responses_reasoning_id"
 
-// ResponsesExtraFieldSummaryIndex is the key used in Block.ExtraFields for Responses
-// reasoning summary Thinking blocks to store the summary_index within the reasoning item.
+// ResponsesExtraFieldSummaryIndex is the int [Block.ExtraFields] key that
+// preserves a reasoning summary's index within its Responses reasoning item.
 const ResponsesExtraFieldSummaryIndex = "responses_summary_index"
 
-// ResponsesExtraFieldEncryptedContent is the key used in Block.ExtraFields for Thinking blocks
-// to store the encrypted reasoning content from the Responses API. When using the API in
-// stateless mode (store=false), encrypted reasoning items must be passed back to the API
-// during multi-turn function-calling conversations so the model can continue its reasoning.
-//
-// Per the OpenAI docs: reasoning items should be included in the input for subsequent turns
-// during ongoing function call chains (i.e., between the last user message and the current
-// request). Once the assistant produces a non-tool-call response and a new user message begins
-// a new turn, previous encrypted reasoning items are no longer needed. The API will
-// automatically ignore reasoning items that aren't relevant to the current context.
+// ResponsesExtraFieldEncryptedContent is the string [Block.ExtraFields] key for
+// encrypted reasoning returned when [ResponsesGenerator] uses stateless storage.
+// Preserve it on [Thinking] blocks during a function-call chain so the generator
+// can reconstruct reasoning input in the next request.
 const ResponsesExtraFieldEncryptedContent = "responses_encrypted_content"
 
-// ResponsesMessageExtraFieldPhase is the key used in Message.ExtraFields for assistant messages
-// returned by the OpenAI Responses API. The API documents that assistant message phase should be
-// preserved and resent in follow-up requests when present.
+// ResponsesMessageExtraFieldPhase is the string [Message.ExtraFields] key for
+// an assistant Responses message phase. Preserve it when replaying the message.
+// Values are [ResponsesMessagePhaseCommentary] and
+// [ResponsesMessagePhaseFinalAnswer].
 const ResponsesMessageExtraFieldPhase = "responses_phase"
 
 const (
-	ResponsesMessagePhaseCommentary  = "commentary"
+	// ResponsesMessagePhaseCommentary identifies an assistant message produced
+	// during tool or reasoning work. It is a value of
+	// [ResponsesMessageExtraFieldPhase].
+	ResponsesMessagePhaseCommentary = "commentary"
+	// ResponsesMessagePhaseFinalAnswer identifies an assistant message intended
+	// as the user-visible answer. It is a value of
+	// [ResponsesMessageExtraFieldPhase].
 	ResponsesMessagePhaseFinalAnswer = "final_answer"
 )
 
+// ResponsesService is the OpenAI SDK subset required by [ResponsesGenerator].
+// The SDK's client.Responses service satisfies this interface.
 type ResponsesService interface {
+	// New performs one non-streaming Responses API request.
 	New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (res *responses.Response, err error)
+	// NewStreaming starts one streaming Responses API request.
 	NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (stream *ssestream.Stream[responses.ResponseStreamEventUnion])
 }
 
-// ResponsesGenerator is a stateless generator that calls OpenAI models via the Responses API.
+// ResponsesGenerator adapts the OpenAI Responses API to [Generator] and
+// [StreamingGenerator]. It accepts text, image, and PDF input, produces text,
+// supports function tools, and preserves reasoning summaries and message phases.
 //
-// This generator operates in fully stateless mode: it sets store=false on every request
-// and includes "reasoning.encrypted_content" so that encrypted reasoning tokens are
-// returned in API responses. These encrypted tokens are stored in Thinking block ExtraFields
-// and automatically reconstructed as reasoning input items when the dialog is passed back
-// for subsequent turns (e.g., during multi-step function calling).
+// It always sends store=false and requests encrypted reasoning content. Replay
+// data uses [ResponsesExtraFieldReasoningID],
+// [ResponsesExtraFieldEncryptedContent], [ResponsesExtraFieldSummaryIndex], and
+// [ResponsesMessageExtraFieldPhase].
+//
+// Responses consumes [WithTemperature], [WithTopP],
+// [WithMaxGenerationTokens], [WithToolChoice], [WithOutputModalities], and
+// [WithThinkingBudget], plus [WithResponsesThoughtSummaryDetail],
+// [WithResponsesPromptCacheKey], and [WithResponsesServiceTier].
 type ResponsesGenerator struct {
 	client ResponsesService
 }
 
-// NewResponsesGenerator creates a stateless OpenAI Responses API generator.
-// The returned generator implements Generator and StreamingGenerator.
-//
-// Parameters:
-//   - client: An OpenAI Responses service (typically &client.Responses)
-//
-// Supported modalities:
-//   - Text: Both input and output
-//   - Image: Input only (base64 encoded, including PDFs with MIME type "application/pdf")
-//   - Audio: Input only (base64 encoded, WAV and MP3 formats)
-//
-// For audio input, use models with audio support like:
-//   - openai.ChatModelGPT4oAudioPreview
-//   - openai.ChatModelGPT4oMiniAudioPreview
-//
-// PDF documents are supported as a special case of the Image modality. Use the PDFBlock
-// helper function to create PDF content blocks.
-//
-// This generator fully supports the anyOf JSON Schema feature.
+// NewResponsesGenerator returns a stateless OpenAI Responses adapter backed by
+// client. The OpenAI SDK's client.Responses service satisfies
+// [ResponsesService].
 func NewResponsesGenerator(client ResponsesService) *ResponsesGenerator {
 	return &ResponsesGenerator{client: client}
 }
@@ -800,7 +799,8 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (message 
 	return message, hasToolCalls, refusal, nil
 }
 
-// Generate validates the request, executes one Responses API call, and translates its output and usage.
+// Generate sends one Responses API request and normalizes messages, reasoning,
+// tool calls, usage, phases, and provider failures into [Response].
 func (r *ResponsesGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if r.client == nil {
 		return Response{}, fmt.Errorf("responses: client not initialized")
@@ -873,7 +873,8 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, request GenerationReq
 	return result, nil
 }
 
-// Stream validates the request and converts Responses events into ordered stream chunks.
+// Stream starts one Responses API stream when iterated and translates its
+// events into ordered [StreamChunk] values with replay metadata.
 func (r *ResponsesGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if r.client == nil {

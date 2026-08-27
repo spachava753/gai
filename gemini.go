@@ -131,17 +131,17 @@ func mapGeminiError(err error) *ApiErr {
 }
 
 const (
-	// GeminiExtraFieldThoughtSignature stores the thought signature for thinking blocks.
-	// Present in Block.ExtraFields for Thinking blocks from Gemini responses.
-	// This signature is required when sending thinking blocks back to the API.
+	// GeminiExtraFieldThoughtSignature is the string [Block.ExtraFields] key for
+	// a Gemini [Thinking] signature. Preserve it when replaying the block.
 	GeminiExtraFieldThoughtSignature = "gemini_thought_signature"
 
-	// GeminiExtraFieldFunctionName stores the function name for tool call blocks.
-	// Present in Block.ExtraFields for ToolCall blocks from Gemini responses.
+	// GeminiExtraFieldFunctionName is the string [Block.ExtraFields] key that
+	// preserves the function name associated with a Gemini [ToolCall].
 	GeminiExtraFieldFunctionName = "function_name"
 )
 
-// MarshalJSONToolUseInput marshals a ToolCallInput, never panics.
+// MarshalJSONToolUseInput encodes a normalized [ToolCallInput]. On failure it
+// returns an empty JSON object with the encoding error.
 func MarshalJSONToolUseInput(t ToolCallInput) ([]byte, error) {
 	data, err := json.Marshal(t)
 	if err != nil {
@@ -275,34 +275,24 @@ func parseGeminiGenerationOptions(values GenerationOptions) (*geminiGenerationOp
 	return options, nil
 }
 
+// GeminiGenerator adapts Google Gemini to [Generator], [StreamingGenerator], and
+// [TokenCounter]. It accepts text, image, audio, and PDF input, produces text,
+// supports function tools, and preprocesses parallel tool results.
+//
+// Gemini consumes [WithTemperature], [WithTopP], [WithTopK],
+// [WithCandidateCount], [WithMaxGenerationTokens], [WithToolChoice],
+// [WithStopSequences], and [WithThinkingBudget]. Thinking blocks preserve
+// [GeminiExtraFieldThoughtSignature] in [Block.ExtraFields] for replay.
+//
+// Tool schemas support anyOf only for a nullable pair consisting of one type and
+// null; other anyOf unions return [InvalidToolErr].
 type GeminiGenerator struct {
 	client *genai.Client
 }
 
-// NewGeminiGenerator creates a stateless Gemini generator.
-// It preprocesses parallel tool results for Gemini compatibility.
-//
-// Parameters:
-//   - client: A properly initialized genai.Client instance with API key configured
-//
-// Supported modalities:
-//   - Text: Both input and output
-//   - Image: Input only (base64 encoded, including PDFs with MIME type "application/pdf")
-//   - Audio: Input only (base64 encoded)
-//
-// PDF documents are supported as part of the Image modality. The PDF content is sent
-// with the appropriate MIME type and processed by Gemini's multimodal capabilities.
-// Use the PDFBlock helper function to create PDF content blocks.
-//
-// Note on JSON Schema support limitations:
-//   - The anyOf property has limited support in Gemini. It only supports the pattern [Type, null] to
-//     indicate nullable fields, which is implemented using Schema.Nullable=true.
-//   - If you use anyOf with multiple non-null types or with only the null type, this generator will
-//     return errors, as the Gemini SDK doesn't support these patterns.
-//   - For maximum compatibility across all generators, restrict usage of anyOf to the nullable pattern:
-//     e.g., "anyOf": [{"type": "string"}, {"type": "null"}]
-//
-// Returns a generator that also implements StreamingGenerator and TokenCounter.
+// NewGeminiGenerator returns a stateless Gemini adapter backed by client. It
+// wraps [GeminiGenerator] with [PreprocessingGenerator] so parallel tool results
+// use Gemini's required message shape.
 func NewGeminiGenerator(client *genai.Client) interface {
 	Generator
 	StreamingGenerator
@@ -312,7 +302,8 @@ func NewGeminiGenerator(client *genai.Client) interface {
 	return &PreprocessingGenerator{GeneratorWrapper: GeneratorWrapper{Inner: inner}}
 }
 
-// Generate implements gai.Generator
+// Generate sends one Gemini request and normalizes multimodal content, thinking,
+// tool calls, usage, and provider failures into [Response].
 func (g *GeminiGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("gemini: client not initialized")
@@ -553,7 +544,8 @@ func (g *GeminiGenerator) Generate(ctx context.Context, request GenerationReques
 	return result, nil
 }
 
-// Stream builds the request inside the iterator and translates Gemini parts, tool calls, usage, and failures in order.
+// Stream starts one Gemini stream when iterated and translates content,
+// thinking, tool calls, usage, and failures into ordered [StreamChunk] values.
 func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {
@@ -951,9 +943,8 @@ func prepareGeminiChatHistory(dialog Dialog, toolCallIDToFuncName map[string]str
 	return history, nil
 }
 
-// Count sends the request's model, instructions, dialog, and tools to Gemini's
-// CountTokens API. It includes multimodal input and all conversation turns. The
-// context can cancel the remote call.
+// Count sends the model, instructions, dialog, tools, and multimodal input to
+// Gemini's token-counting endpoint. It honors context cancellation.
 func (g *GeminiGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	if g.client == nil {
 		return 0, fmt.Errorf("gemini: client not initialized")

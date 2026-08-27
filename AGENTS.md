@@ -15,9 +15,8 @@ GAI is a Go library for interacting with LLM providers, including OpenAI, Anthro
   - Examples and usage via `*_example_test.go` files
 - Tests: colocated `*_test.go` for each area, plus provider-specific tests
 - Samples: `sample.jpg`, `sample.pdf`, `sample.wav` for multimodal tests/examples
-- Scripts: `scripts/` includes docs-generation helper
 - Tracked hooks: `.githooks/pre-commit` runs LAAS against hand-written packages and excludes generated OGEN clients
-- `README.md` is generated from `doc.go` via `go run ./scripts/generate-readme.go`; do not edit `README.md` directly or hand-patch generated output
+- Public documentation: `doc.go` contains the package API map, `README.md` contains the repository guide, and `*_example_test.go` contains compiled examples
 - `design.md` records the generator interfaces, shared types, state ownership, and rationale implemented by the current release
 
 Conventions
@@ -38,7 +37,7 @@ Common commands
 - Run tests with race: `go test -race ./...`
 - Run a single test file: `go test -run TestName ./...`
 - Examples as docs: `go test ./...` executes `*_example_test.go`
-- Generate README from script after changing `doc.go`: `go run ./scripts/generate-readme.go`
+- Inspect rendered package documentation: `go doc -all .`
 
 Dev tips
 - Use `RG_COLOR=never` if your environment requires plain output
@@ -57,9 +56,12 @@ Go style
 - Use table-driven tests for variations
 
 Documentation
-- Package-level overview lives in `doc.go`; @README.md is generated from it
-- Do not edit @README.md directly. To change README content, edit the relevant package doc comments in `doc.go`, then run `go run ./scripts/generate-readme.go`
-- Example-driven documentation via `*_example_test.go`
+- Keep `doc.go` concise and focused on provider-neutral concepts, with Go documentation links such as `[GenerationRequest]`
+- Maintain @README.md as the repository guide; it is independent from `doc.go`
+- Put provider-specific behavior on the corresponding provider type, constructor, option, metadata key, or method
+- Public comments should explain intent, contracts, value types, storage locations, errors, and related symbols instead of restating declarations
+- Use reciprocal links between option helpers and keys, and between metadata keys and their containing fields
+- Example-driven documentation via `*_example_test.go`; examples must compile under `go test ./...`
 
 Imports
 - Standard -> third-party -> local groupings
@@ -140,7 +142,7 @@ Dependencies
 Environment variables
 - Applications and live tests may load provider keys as listed above, but constructors require those keys as explicit arguments
 - `LIVE_TESTS=1` explicitly enables network-backed tests; the relevant provider API key must also be set
-- Tuning flags when present should be wired through options structs; document defaults in README
+- Tuning flags when present should be wired through options structs; document defaults on the public option symbol and in README when they affect common usage
 
 Configuration management
 - Prefer functional options to long parameter lists for public constructors
@@ -149,7 +151,7 @@ Configuration management
 When adding new configuration
 1) Add fields to the appropriate options or config struct
 2) Validate in constructor
-3) Document in @README.md and add an example test
+3) Document the public symbols and add an example test; update @README.md when the configuration belongs in the repository guide
 
 ## Git and contribution workflow
 

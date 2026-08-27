@@ -1,112 +1,58 @@
 package gai
 
-// Metadata represents a collection of metrics returned by a Generator in a Response.
-// The map's keys are metric names, and values can be of any type, though typically
-// they are numeric types like int or float64.
-//
-// Two common metrics that a Generator typically returns are:
-//   - [UsageMetricInputTokens]: The number of tokens in the input Dialog
-//   - [UsageMetricGenerationTokens]: The number of tokens generated in the Response
-//
-// A Generator may return additional implementation-specific metrics.
+// Metadata stores usage measurements in [Response.UsageMetadata] and
+// [MetadataBlock]. Common keys have typed accessors; provider-specific keys
+// document their concrete value types and can be read with [GetMetric].
 type Metadata map[string]any
 
 const (
-	// UsageMetricInputTokens is a metric key representing the number of tokens in the input Dialog.
-	// The value associated with this key is expected to be of type int.
+	// UsageMetricInputTokens is the int [Metadata] key read by [InputTokens].
 	UsageMetricInputTokens = "input_tokens"
 
-	// UsageMetricGenerationTokens is a metric key representing the number of tokens generated
-	// in the Response. The value associated with this key is expected to be of type int.
+	// UsageMetricGenerationTokens is the int [Metadata] key read by
+	// [OutputTokens].
 	UsageMetricGenerationTokens = "gen_tokens"
 
-	// UsageMetricCacheReadTokens is a metric key representing the number of tokens read from cache.
-	// This applies to providers that support prompt caching (e.g., Anthropic, OpenAI).
-	// The value associated with this key is expected to be of type int.
+	// UsageMetricCacheReadTokens is the int [Metadata] key read by
+	// [CacheReadTokens].
 	UsageMetricCacheReadTokens = "cache_read_tokens"
 
-	// UsageMetricCacheWriteTokens is a metric key representing the number of tokens written to cache.
-	// This applies to providers that support prompt caching (e.g., Anthropic).
-	// The value associated with this key is expected to be of type int.
+	// UsageMetricCacheWriteTokens is the int [Metadata] key read by
+	// [CacheWriteTokens].
 	UsageMetricCacheWriteTokens = "cache_write_tokens"
 
-	// UsageMetricReasoningTokens is a metric key representing the number of reasoning tokens
-	// in the output. This applies to providers that support reasoning/thinking models
-	// (e.g., OpenAI Responses API with reasoning enabled).
-	// The value associated with this key is expected to be of type int.
+	// UsageMetricReasoningTokens is the int [Metadata] key for provider-reported
+	// reasoning tokens. Read it with [GetMetric].
 	UsageMetricReasoningTokens = "reasoning_tokens"
 )
 
-// InputTokens returns the number of tokens in the input Dialog from the metrics.
-// The first return value is the number of input tokens, and the second indicates
-// whether the metric was present in the map.
-//
-// If the metric is not present, returns (0, false).
-// If the metric is present, returns (tokens, true).
-//
-// Panics if the value in the metrics map cannot be type asserted to int.
+// InputTokens reads [UsageMetricInputTokens]. It returns false when the key is
+// absent and panics when the stored value is not an int.
 func InputTokens(m Metadata) (int, bool) {
 	return GetMetric[int](m, UsageMetricInputTokens)
 }
 
-// OutputTokens returns the number of tokens generated in the Response from the metrics.
-// The first return value is the number of generated tokens, and the second indicates
-// whether the metric was present in the map.
-//
-// If the metric is not present, returns (0, false).
-// If the metric is present, returns (tokens, true).
-//
-// Panics if the value in the metrics map cannot be type asserted to int.
+// OutputTokens reads [UsageMetricGenerationTokens]. It returns false when the
+// key is absent and panics when the stored value is not an int.
 func OutputTokens(m Metadata) (int, bool) {
 	return GetMetric[int](m, UsageMetricGenerationTokens)
 }
 
-// CacheReadTokens returns the number of tokens read from cache from the metrics.
-// This metric is populated by providers that support prompt caching (e.g., Anthropic, OpenAI).
-// The first return value is the number of cache read tokens, and the second indicates
-// whether the metric was present in the map.
-//
-// If the metric is not present, returns (0, false).
-// If the metric is present, returns (tokens, true).
-//
-// Panics if the value in the metrics map cannot be type asserted to int.
+// CacheReadTokens reads [UsageMetricCacheReadTokens]. It returns false when
+// the key is absent and panics when the stored value is not an int.
 func CacheReadTokens(m Metadata) (int, bool) {
 	return GetMetric[int](m, UsageMetricCacheReadTokens)
 }
 
-// CacheWriteTokens returns the number of tokens written to cache from the metrics.
-// This metric is populated by providers that support prompt caching (e.g., Anthropic).
-// The first return value is the number of cache write tokens, and the second indicates
-// whether the metric was present in the map.
-//
-// If the metric is not present, returns (0, false).
-// If the metric is present, returns (tokens, true).
-//
-// Panics if the value in the metrics map cannot be type asserted to int.
+// CacheWriteTokens reads [UsageMetricCacheWriteTokens]. It returns false when
+// the key is absent and panics when the stored value is not an int.
 func CacheWriteTokens(m Metadata) (int, bool) {
 	return GetMetric[int](m, UsageMetricCacheWriteTokens)
 }
 
-// GetMetric is a generic function that retrieves a metric value of type T from the metrics map.
-// The first return value is the metric value of type T, and the second indicates whether
-// the metric was present in the map.
-//
-// If the metric is not present, returns (zero value of T, false).
-// If the metric is present, returns (metric value, true).
-//
-// Panics if the value in the metrics map cannot be type asserted to T.
-//
-// Example usage:
-//
-//	// Get a float64 metric
-//	if cost, ok := GetMetric[float64](metrics, "cost"); ok {
-//	    fmt.Printf("Request cost: $%.2f\n", cost)
-//	}
-//
-//	// Get a string metric
-//	if model, ok := GetMetric[string](metrics, "model"); ok {
-//	    fmt.Printf("Model used: %s\n", model)
-//	}
+// GetMetric reads key from m and asserts its value to T. It returns the zero
+// value and false when key is absent. It panics when a present value is not T;
+// use the concrete type documented by the metric key.
 func GetMetric[T any](m Metadata, key string) (T, bool) {
 	var metric T
 	metricVal, ok := m[key]

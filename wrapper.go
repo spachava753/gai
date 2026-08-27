@@ -99,6 +99,7 @@ import (
 //	// Now gen.Generate() flows: Logging → Metrics → Retry → base
 //	// And gen.Count() flows:    Logging → Metrics → base (Retry doesn't override Count)
 type GeneratorWrapper struct {
+	// Inner receives calls that the embedding wrapper does not override.
 	Inner Generator
 }
 

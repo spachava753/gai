@@ -59,7 +59,16 @@ func mapAnthropicError(err error) *ApiErr {
 	}
 }
 
-// AnthropicGenerator implements the gai.Generator interface using OpenAI's API
+// AnthropicGenerator adapts the Anthropic Messages API to [Generator],
+// [StreamingGenerator], and [TokenCounter]. It accepts text, image, and PDF
+// input, produces text, and supports function tools and extended thinking.
+//
+// Anthropic consumes [WithTemperature], [WithTopP],
+// [WithMaxGenerationTokens], [WithToolChoice], [WithStopSequences],
+// [WithOutputModalities], and [WithThinkingBudget]. Thinking blocks preserve
+// [AnthropicExtraFieldThinkingSignature] in [Block.ExtraFields] for replay.
+// Use [NewAnthropicServiceWrapper] to add request modifiers such as
+// [EnableSystemCaching] and [EnableMultiTurnCaching].
 type AnthropicGenerator struct {
 	client AnthropicSvc
 }
@@ -146,9 +155,8 @@ func parseAnthropicGenerationOptions(values GenerationOptions) (*anthropicGenera
 }
 
 const (
-	// AnthropicExtraFieldThinkingSignature stores the thinking signature for extended thinking blocks.
-	// Present in Block.ExtraFields for Thinking blocks from Anthropic responses.
-	// This signature is required when sending thinking blocks back to the API.
+	// AnthropicExtraFieldThinkingSignature is the string [Block.ExtraFields] key
+	// for an Anthropic [Thinking] signature. Preserve it when replaying the block.
 	AnthropicExtraFieldThinkingSignature = "anthropic_thinking_signature"
 )
 
@@ -406,7 +414,8 @@ func anthropicStopError(reason a.StopReason, details a.RefusalStopDetails) error
 	}
 }
 
-// Generate validates request state, performs one Anthropic call, and normalizes content, tools, usage, and errors.
+// Generate sends one Anthropic Messages request and normalizes text, thinking,
+// tool calls, usage, and provider failures into [Response].
 func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("anthropic: client not initialized")
@@ -638,7 +647,8 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationReq
 	return result, nil
 }
 
-// Stream validates request state inside the iterator and translates Anthropic events into ordered blocks and errors.
+// Stream starts one Anthropic Messages stream when iterated and translates its
+// events into ordered [StreamChunk] values.
 func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {
@@ -938,22 +948,10 @@ type AnthropicSvc interface {
 	CountTokens(ctx context.Context, body a.MessageCountTokensParams, opts ...option.RequestOption) (res *a.MessageTokensCount, err error)
 }
 
-// NewAnthropicGenerator creates a stateless Anthropic generator.
-// It preprocesses parallel tool results for Anthropic compatibility.
-// This generator fully supports the anyOf JSON Schema feature.
-//
-// Parameters:
-//   - client: An Anthropic service client
-//
-// Supported modalities:
-//   - Text: Both input and output
-//   - Image: Input only (base64 encoded, including PDFs with MIME type "application/pdf")
-//
-// PDF documents are handled specially using Anthropic's NewDocumentBlock function,
-// which provides optimized PDF processing. Use the PDFBlock helper function to
-// create PDF content blocks.
-//
-// The returned generator also implements the TokenCounter interface for token counting.
+// NewAnthropicGenerator returns a stateless Anthropic adapter backed by client.
+// It wraps [AnthropicGenerator] with [PreprocessingGenerator] so parallel tool
+// results use Anthropic's required message shape. client must implement
+// [AnthropicSvc].
 func NewAnthropicGenerator(client AnthropicSvc) interface {
 	Generator
 	StreamingGenerator
@@ -967,9 +965,9 @@ var _ Generator = (*AnthropicGenerator)(nil)
 var _ StreamingGenerator = (*AnthropicGenerator)(nil)
 var _ TokenCounter = (*AnthropicGenerator)(nil)
 
-// Count implements TokenCounter by sending the request's model, instructions,
-// dialog, and tools to Anthropic's CountTokens API. The API returns input tokens
-// only. The context can cancel the remote call.
+// Count sends the model, instructions, dialog, and tools to Anthropic's token
+// counting endpoint. It returns input tokens only and honors context
+// cancellation.
 func (g *AnthropicGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	if g.client == nil {
 		return 0, fmt.Errorf("anthropic: client not initialized")

@@ -6,84 +6,79 @@ import (
 	"time"
 )
 
-// ErrMaxGenerationLimit is returned when a Generator reaches the token limit set by
-// GenerationOptionMaxGenerationTokens. Generation stopped because of the limit rather
-// than a natural completion.
+// ErrMaxGenerationLimit reports that generation stopped at an output limit.
+// The provider can return a partial [Response] whose finish reason is
+// [MaxGenerationLimit]. A caller-supplied limit normally comes from
+// [WithMaxGenerationTokens].
 var ErrMaxGenerationLimit = errors.New("maximum generation limit reached")
 
-// UnsupportedInputModalityErr is returned when a Generator encounters an input Message
-// with a Block that contains an unsupported Modality. The string value of this error
-// contains the name of the unsupported modality.
-//
-// For example, if a Generator only supports text input but receives an audio input,
-// it will return this error with details about the unsupported audio modality.
+// UnsupportedInputModalityErr reports that a [GenerationRequest] contains a
+// [Block.ModalityType] unsupported by the selected provider or model. Its string
+// value names the rejected modality.
 type UnsupportedInputModalityErr string
 
+// Error formats the rejected input modality.
 func (u UnsupportedInputModalityErr) Error() string {
 	return fmt.Sprintf("unsupported input modality: %s", string(u))
 }
 
-// UnsupportedOutputModalityErr is returned when GenerationOptionOutputModalities
-// requests a modality that a Generator does not support.
-//
-// For example, if a Generator only supports text output but is asked to generate
-// audio content, it will return this error with details about the unsupported
-// audio modality.
+// UnsupportedOutputModalityErr reports that [WithOutputModalities] requested a
+// modality unsupported by the selected provider or model. Its string value
+// names the rejected modality.
 type UnsupportedOutputModalityErr string
 
+// Error formats the rejected output modality.
 func (u UnsupportedOutputModalityErr) Error() string {
 	return fmt.Sprintf("unsupported output modality: %s", string(u))
 }
 
-// InvalidToolChoiceErr is returned when GenerationOptionToolChoice is invalid.
-// This can occur when a named tool is absent from GenerationRequest.Tools or tools
-// are required but the request provides none.
-//
-// The string value of this error contains details about why the tool choice was invalid.
+// InvalidToolChoiceErr reports a value rejected from [WithToolChoice]. Common
+// causes are a missing named [Tool], required tool use with no tools, or a
+// selection mode unsupported by the provider.
 type InvalidToolChoiceErr string
 
+// Error formats the invalid tool-choice reason.
 func (i InvalidToolChoiceErr) Error() string {
 	return fmt.Sprintf("invalid tool choice: %s", string(i))
 }
 
-// InvalidParameterErr is returned when a recognized GenerationOptions value has
-// the wrong type, is outside the provider's valid range, or conflicts with another
-// option.
+// InvalidParameterErr reports a recognized [GenerationOptions] value with an
+// invalid concrete type, provider range, enum value, or option combination.
 type InvalidParameterErr struct {
-	// Parameter is the name of the invalid parameter
+	// Parameter is the exported option key or request field that failed validation.
 	Parameter string `json:"parameter" yaml:"parameter"`
-	// Reason describes why the parameter is invalid
+	// Reason describes the violated contract.
 	Reason string `json:"reason" yaml:"reason"`
 }
 
+// Error formats the invalid parameter and reason.
 func (i InvalidParameterErr) Error() string {
 	return fmt.Sprintf("invalid parameter %s: %s", i.Parameter, i.Reason)
 }
 
-// ErrMissingAPIKey is returned when a provider constructor receives an empty API key.
+// ErrMissingAPIKey is returned by provider constructors that accept an explicit
+// API key when that key is empty.
 var ErrMissingAPIKey = errors.New("API key is required")
 
-// ErrContextLengthExceeded is returned when the total number of tokens in the input Dialog
-// exceeds the maximum context length supported by the Generator. Different Generator
-// implementations may have different context length limits.
+// ErrContextLengthExceeded is available to generators that can identify a
+// context-window overflow independently of other invalid requests. A provider
+// that does not expose a distinct reason can instead return [ApiErr] with
+// [APIErrorKindInvalidRequest].
 var ErrContextLengthExceeded = errors.New("context length exceeded")
 
-// ContentPolicyErr is returned when the input or generated content violates the Generator's
-// content policy. This can include:
-//   - Unsafe or inappropriate content
-//   - Prohibited topics or language
-//   - Content that violates usage terms
-//
-// The string value contains details about the specific policy violation.
+// ContentPolicyErr reports a provider content-policy stop that includes a
+// human-readable reason. [Response.FinishReason] can also be
+// [ContentPolicyViolation] when the provider supplies a response.
 type ContentPolicyErr string
 
+// Error formats the content-policy reason.
 func (c ContentPolicyErr) Error() string {
 	return fmt.Sprintf("content policy violation: %s", string(c))
 }
 
-// InvalidToolErr is returned when a tool in GenerationRequest.Tools is invalid.
-// Empty and reserved names, duplicate names, and unsupported schemas are rejected.
-// Cause contains the provider conversion or validation error.
+// InvalidToolErr reports an invalid declaration in [GenerationRequest.Tools].
+// Empty, reserved, and duplicate names are rejected before a provider call;
+// Cause can also contain a provider schema-conversion error.
 type InvalidToolErr struct {
 	// Tool is the invalid tool's name.
 	Tool string `json:"tool" yaml:"tool"`
@@ -91,6 +86,7 @@ type InvalidToolErr struct {
 	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
 }
 
+// Error formats the invalid tool name and cause.
 func (t InvalidToolErr) Error() string {
 	return fmt.Sprintf("invalid tool %q: %v", t.Tool, t.Cause)
 }
@@ -100,40 +96,63 @@ func (t InvalidToolErr) Unwrap() error {
 	return t.Cause
 }
 
-// ErrEmptyDialog is returned when an empty Dialog is provided to Generate.
-// At least one Message must be present in the Dialog.
+// ErrEmptyDialog is returned by built-in generators and token counters when
+// [GenerationRequest.Dialog] contains no messages.
 var ErrEmptyDialog = errors.New("empty dialog: at least one message required")
 
-// Provider identifies the upstream service that returned an API/server error.
+// Provider identifies the adapter that produced an [ApiErr].
 type Provider string
 
 const (
-	ProviderAnthropic  Provider = "anthropic"
-	ProviderCerebras   Provider = "cerebras"
-	ProviderDeepSeek   Provider = "deepseek"
-	ProviderGemini     Provider = "gemini"
-	ProviderOpenAI     Provider = "openai"
+	// ProviderAnthropic identifies Anthropic Messages API failures.
+	ProviderAnthropic Provider = "anthropic"
+	// ProviderCerebras identifies Cerebras Chat Completions failures.
+	ProviderCerebras Provider = "cerebras"
+	// ProviderDeepSeek identifies DeepSeek Chat Completions failures.
+	ProviderDeepSeek Provider = "deepseek"
+	// ProviderGemini identifies Google Gemini failures.
+	ProviderGemini Provider = "gemini"
+	// ProviderOpenAI identifies OpenAI Chat Completions failures.
+	ProviderOpenAI Provider = "openai"
+	// ProviderOpenRouter identifies OpenRouter failures.
 	ProviderOpenRouter Provider = "openrouter"
-	ProviderResponses  Provider = "responses"
-	ProviderZAI        Provider = "zai"
+	// ProviderResponses identifies OpenAI Responses API failures.
+	ProviderResponses Provider = "responses"
+	// ProviderZAI identifies Z.AI failures.
+	ProviderZAI Provider = "zai"
 )
 
-// APIErrorKind classifies server-originated errors in a provider-agnostic way.
+// APIErrorKind is a provider-neutral [ApiErr] classification used by
+// [ApiErr.Retryable], [RetryGenerator], and fallback policies.
 type APIErrorKind string
 
 const (
-	APIErrorKindUnknown            APIErrorKind = "unknown"
-	APIErrorKindInvalidRequest     APIErrorKind = "invalid_request"
-	APIErrorKindAuthentication     APIErrorKind = "authentication"
-	APIErrorKindPermission         APIErrorKind = "permission"
-	APIErrorKindNotFound           APIErrorKind = "not_found"
-	APIErrorKindRateLimit          APIErrorKind = "rate_limit"
-	APIErrorKindRequestTooLarge    APIErrorKind = "request_too_large"
-	APIErrorKindTimeout            APIErrorKind = "timeout"
-	APIErrorKindServer             APIErrorKind = "server"
+	// APIErrorKindUnknown means the provider failure could not be classified.
+	APIErrorKindUnknown APIErrorKind = "unknown"
+	// APIErrorKindInvalidRequest means the request was malformed or unsupported.
+	APIErrorKindInvalidRequest APIErrorKind = "invalid_request"
+	// APIErrorKindAuthentication means credentials were absent or invalid.
+	APIErrorKindAuthentication APIErrorKind = "authentication"
+	// APIErrorKindPermission means valid credentials lack access to the operation.
+	APIErrorKindPermission APIErrorKind = "permission"
+	// APIErrorKindNotFound means a requested model or resource does not exist.
+	APIErrorKindNotFound APIErrorKind = "not_found"
+	// APIErrorKindRateLimit means the provider rejected work because of a quota or
+	// rate limit. [ApiErr.RetryAfter] can provide a requested delay.
+	APIErrorKindRateLimit APIErrorKind = "rate_limit"
+	// APIErrorKindRequestTooLarge means the request body exceeded a provider limit.
+	APIErrorKindRequestTooLarge APIErrorKind = "request_too_large"
+	// APIErrorKindTimeout means the provider timed out while processing the request.
+	APIErrorKindTimeout APIErrorKind = "timeout"
+	// APIErrorKindServer means an otherwise unclassified provider server failure.
+	APIErrorKindServer APIErrorKind = "server"
+	// APIErrorKindServiceUnavailable means the provider cannot currently accept work.
 	APIErrorKindServiceUnavailable APIErrorKind = "service_unavailable"
-	APIErrorKindOverloaded         APIErrorKind = "overloaded"
-	APIErrorKindContentPolicy      APIErrorKind = "content_policy"
+	// APIErrorKindOverloaded means provider capacity is temporarily exhausted.
+	APIErrorKindOverloaded APIErrorKind = "overloaded"
+	// APIErrorKindContentPolicy means the provider rejected content under its
+	// safety or usage policy.
+	APIErrorKindContentPolicy APIErrorKind = "content_policy"
 )
 
 // ApiErr represents an error returned by an upstream provider. Kind provides a
@@ -161,6 +180,7 @@ type ApiErr struct {
 	Cause error `json:"cause,omitempty" yaml:"cause,omitempty"`
 }
 
+// Error formats the provider, classification, status, and message available on a.
 func (a *ApiErr) Error() string {
 	if a == nil {
 		return "<nil>"

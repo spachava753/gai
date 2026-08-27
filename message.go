@@ -6,30 +6,29 @@ import (
 	"fmt"
 )
 
-// Role represents what type a Message is
+// Role identifies how a [Message] participates in a [GenerationRequest]. The
+// zero value is [User].
 type Role uint
 
 const (
-	// User represents the user role in a list of messages
+	// User identifies caller-authored conversational input in [GenerationRequest.Dialog].
 	User Role = iota
 
-	// Assistant represents the assistant role in a list of messages.
-	// A Message that has an Assistant role represents content generated
-	// by the model
+	// Assistant identifies model output. Assistant messages can be returned in
+	// [Response.Candidates] or replayed in a later [Dialog].
 	Assistant
 
-	// ToolResult represents the result of a tool execution.
-	// A Message with this role contains the output from a tool that
-	// was called during generation. This allows tool results to support
-	// multiple Blocks of different Modalities
+	// ToolResult identifies application-owned output for a preceding [ToolCall].
+	// Construct tool results with [ToolResultMessage].
 	ToolResult
 
-	// System represents model instructions supplied through GenerationRequest.
-	// System messages belong in GenerationRequest.Instructions, not Dialog.
+	// System identifies model instructions. System messages belong in
+	// [GenerationRequest.Instructions], outside [GenerationRequest.Dialog].
 	System
 )
 
-// String returns the string representation of the role
+// String returns the wire-oriented name of r. Unknown values include their
+// numeric value in the returned string.
 func (r Role) String() string {
 	switch r {
 	case User:
@@ -45,18 +44,23 @@ func (r Role) String() string {
 	}
 }
 
-// Modality represents the type of modality that a Block holds
-// The default for Modality is a Text type
+// Modality identifies the media represented by a [Block]. The zero value is
+// [Text]. Provider types document which input and output modalities they accept.
 type Modality uint
 
 const (
+	// Text identifies textual content, reasoning, metadata, and tool payloads.
 	Text Modality = iota
+	// Image identifies image input or output.
 	Image
+	// Audio identifies audio input or output.
 	Audio
+	// Video identifies video input or output.
 	Video
 )
 
-// String returns the string representation of the modality
+// String returns the lowercase name of m. Unknown values include their numeric
+// value in the returned string.
 func (m Modality) String() string {
 	switch m {
 	case Text:
@@ -73,174 +77,134 @@ func (m Modality) String() string {
 }
 
 const (
-	// Content represents unstructured content of a single Modality, like text, images and audio.
+	// Content is the [Block.BlockType] for ordinary text or media content.
 	Content = "content"
 
-	// Thinking represents the thinking/reasoning content a Generator produced.
-	// When a block has this type, its ExtraFields will contain ThinkingExtraFieldGeneratorKey
-	// to identify which generator produced the thinking content. This allows consumers to
-	// handle thinking blocks differently based on their source (e.g., accessing Anthropic-specific
-	// signature fields via AnthropicExtraFieldThinkingSignature).
+	// Thinking is the [Block.BlockType] for model reasoning. Thinking blocks set
+	// [ThinkingExtraFieldGeneratorKey] and can carry provider replay metadata in
+	// [Block.ExtraFields].
 	Thinking = "thinking"
 
-	// ToolCall represents a tool call request by the model.
+	// ToolCall is the [Block.BlockType] for a model-requested function call. Its
+	// content encodes [ToolCallInput].
 	ToolCall = "tool_call"
 
-	// MetadataBlockType represents a block containing usage metadata.
+	// MetadataBlockType is the [Block.BlockType] used by streams to emit
+	// [Metadata] before successful termination.
 	MetadataBlockType = "metadata"
 
-	// Separator represents a logical boundary between streaming blocks.
-	// StreamingGenerator implementations can emit SeparatorBlock chunks when the
-	// provider signals the end of a logical block. StreamingAdapter uses these
-	// chunks to prevent adjacent same-type chunks from being merged, then omits
-	// separators from the final Response blocks.
+	// Separator is the internal [Block.BlockType] used to preserve logical stream
+	// boundaries. [StreamingAdapter] consumes and removes separator blocks.
 	Separator = "separator"
 
-	// ThinkingExtraFieldGeneratorKey is set in Block.ExtraFields for Thinking blocks to identify
-	// which generator produced the thinking content. All generators that support thinking blocks
-	// set this field automatically.
-	//
-	// The value is one of the ThinkingGenerator* constants (e.g., ThinkingGeneratorAnthropic).
-	//
-	// Example usage:
-	//
-	//	for _, block := range message.Blocks {
-	//	    if block.BlockType == gai.Thinking {
-	//	        if gen, ok := block.ExtraFields[gai.ThinkingExtraFieldGeneratorKey]; ok {
-	//	            switch gen {
-	//	            case gai.ThinkingGeneratorAnthropic:
-	//	                // Access Anthropic-specific fields like AnthropicExtraFieldThinkingSignature
-	//	            case gai.ThinkingGeneratorGemini:
-	//	                // Access Gemini-specific fields like GeminiExtraFieldThoughtSignature
-	//	            }
-	//	        }
-	//	    }
-	//	}
+	// ThinkingExtraFieldGeneratorKey is the [Block.ExtraFields] key that identifies
+	// the provider adapter that produced a [Thinking] block. Its string value is
+	// one of the ThinkingGenerator constants below.
 	ThinkingExtraFieldGeneratorKey = "thinking_generator"
 
-	// ThinkingGeneratorAnthropic identifies thinking blocks from the Anthropic generator.
-	// Anthropic thinking blocks may also contain AnthropicExtraFieldThinkingSignature.
+	// ThinkingGeneratorAnthropic is the [ThinkingExtraFieldGeneratorKey] value for
+	// [AnthropicGenerator]. See [AnthropicExtraFieldThinkingSignature].
 	ThinkingGeneratorAnthropic = "anthropic"
 
-	// ThinkingGeneratorCerebras identifies thinking blocks from the Cerebras generator.
+	// ThinkingGeneratorCerebras is the [ThinkingExtraFieldGeneratorKey] value for
+	// [CerebrasGenerator].
 	ThinkingGeneratorCerebras = "cerebras"
 
-	// ThinkingGeneratorDeepSeek identifies thinking blocks from the DeepSeek generator.
+	// ThinkingGeneratorDeepSeek is the [ThinkingExtraFieldGeneratorKey] value for
+	// [DeepSeekGenerator].
 	ThinkingGeneratorDeepSeek = "deepseek"
 
-	// ThinkingGeneratorGemini identifies thinking blocks from the Gemini generator.
-	// Gemini thinking blocks may also contain GeminiExtraFieldThoughtSignature.
+	// ThinkingGeneratorGemini is the [ThinkingExtraFieldGeneratorKey] value for
+	// [GeminiGenerator]. See [GeminiExtraFieldThoughtSignature].
 	ThinkingGeneratorGemini = "gemini"
 
-	// ThinkingGeneratorOpenRouter identifies thinking blocks from the OpenRouter generator.
-	// OpenRouter thinking blocks may also contain OpenRouterExtraFieldReasoningType,
-	// OpenRouterExtraFieldReasoningFormat, OpenRouterExtraFieldReasoningIndex, and
-	// OpenRouterExtraFieldReasoningSignature.
+	// ThinkingGeneratorOpenRouter is the [ThinkingExtraFieldGeneratorKey] value
+	// for [OpenRouterGenerator]. See [OpenRouterExtraFieldReasoningType].
 	ThinkingGeneratorOpenRouter = "openrouter"
 
-	// ThinkingGeneratorResponses identifies thinking blocks from the OpenAI Responses generator.
+	// ThinkingGeneratorResponses is the [ThinkingExtraFieldGeneratorKey] value
+	// for [ResponsesGenerator].
 	ThinkingGeneratorResponses = "responses"
 
-	// ThinkingGeneratorZai identifies thinking blocks from the Zai generator.
+	// ThinkingGeneratorZai is the [ThinkingExtraFieldGeneratorKey] value for
+	// [ZaiGenerator].
 	ThinkingGeneratorZai = "zai"
 )
 
-// Block represents a self-contained piece of a Message, meant to represent a "part" of a message.
-// For example, if a message returned by a model contains audio and a tool call, the audio would
-// be represented as one block, and the tool call another. Another example is if there are multiple
-// tool calls in a response generated by a model, each tool call would be represented by single Block.
+// Block is one ordered unit of message content. A block can contain ordinary
+// [Content], model [Thinking], a [ToolCall], stream [MetadataBlockType], or an
+// internal [Separator]. Use the block constructors for common input forms.
 type Block struct {
-	// ID is optional, it is commonly set when for ToolCall block types,
-	// and sometimes for Content type blocks. An empty string means that the ID field
-	// is not set
+	// ID correlates tool calls and tool results and can carry a provider content
+	// identifier. An empty string means no identifier is attached.
 	ID string `json:"id,omitempty" yaml:"id,omitempty"`
 
-	// BlockType is required, and if not set explicitly, the default value is of type Content.
-	// - A Content BlockType represents unstructured content of single Modality, like text, images and audio
-	// - A Thinking BlockType represents the thinking/reasoning a Generator produced
-	// - A ToolCall BlockType represents a tool call by the model
-	// - A Separator BlockType represents an internal streaming boundary and should not appear in final messages
-	//
-	// Note that a Generator can support more block types than the ones listed above,
-	// the above block types are simply a common set of block types that a Generator can return.
+	// BlockType identifies the block contract. Set it to [Content], [Thinking],
+	// [ToolCall], [MetadataBlockType], or [Separator]. The empty string is not a
+	// valid input block type.
 	BlockType string `json:"block_type" yaml:"block_type"`
 
-	// ModalityType represents the Modality of the content
+	// ModalityType identifies the media in Content. The zero value is [Text].
 	ModalityType Modality `json:"modality_type" yaml:"modality_type"`
 
-	// MimeType represents the MIME type of the content.
-	// Common values include "text/plain", "image/jpeg", "image/png", "audio/mp3", "video/mp4", etc.
-	// If empty, defaults to "text/plain"
+	// MimeType identifies the content encoding, such as "text/plain",
+	// "image/png", or "audio/mpeg". Block constructors set an appropriate value;
+	// provider adapters can reject missing or unsupported types.
 	MimeType string `json:"mime_type,omitempty" yaml:"mime_type,omitempty"`
 
-	// Content represents the content of the block. It can be any type that implements fmt.Stringer.
-	// For non-text modalities like images, audio, or video, the Content's String() method should
-	// return base64 encoded data. The MimeType field should be set appropriately to indicate the
-	// content type.
+	// Content is the block payload. Text content is normally [Str]. Binary input
+	// helpers base64-encode raw bytes and store the encoded value as Str. A nil
+	// value is invalid for request content.
 	Content fmt.Stringer `json:"content,omitempty" yaml:"content,omitempty"`
 
-	// ExtraFields allows a Generator to store Generator-specific extra information that can be used
-	// in a later invocation or for handling provider-specific features.
-	//
-	// Common fields include:
-	//   - ThinkingExtraFieldGeneratorKey: Always set on Thinking blocks to identify the source generator
-	//   - AnthropicExtraFieldThinkingSignature: Signature for Anthropic extended thinking blocks
-	//   - GeminiExtraFieldThoughtSignature: Signature for Gemini thinking blocks
-	//   - ResponsesExtraFieldReasoningID/SummaryIndex/EncryptedContent: OpenAI Responses reasoning metadata
-	//   - OpenRouterExtraFieldReasoningType/Format/Index/Signature: OpenRouter reasoning metadata
-	//   - OpenAIExtraFieldImageWidth/Height/Detail: Image processing hints for OpenAI
-	//   - BlockFieldFilenameKey: Filename for PDF blocks
-	//
-	// See each generator's documentation for provider-specific fields.
+	// ExtraFields carries provider or block-specific data at the narrowest replay
+	// scope. Examples include [ThinkingExtraFieldGeneratorKey],
+	// [AnthropicExtraFieldThinkingSignature], [GeminiExtraFieldThoughtSignature],
+	// [ResponsesExtraFieldReasoningID], and [BlockFieldFilenameKey].
 	ExtraFields map[string]interface{} `json:"extra_fields,omitempty" yaml:"extra_fields,omitempty"`
 }
 
-// Message represents a collection of blocks produced by the user or meant for the assistant.
+// Message is one role-scoped, ordered sequence of [Block] values. Messages in
+// [GenerationRequest.Dialog] use [User], [Assistant], or [ToolResult]. A
+// [System] message belongs in [GenerationRequest.Instructions].
 type Message struct {
-	// Role is required, and the default value of Role is User. However, for readability purposes,
-	// it is recommended to always set the Role to User or Assistant and not rely on the zero value
-	// to make it clear to the reader what type of Message it is
+	// Role determines how providers interpret Blocks. The zero value is [User],
+	// but callers should set it explicitly.
 	Role Role `json:"role" yaml:"role"`
 
-	// Blocks represents the collection of different blocks produced by the User or Assistant
+	// Blocks preserves the provider-visible content order.
 	Blocks []Block `json:"blocks" yaml:"blocks"`
 
-	// ToolResultError indicates whether the tool execution resulted in an error.
-	// When true, the message content represents an error response from a tool call.
-	// This is used by providers to properly format error responses in the API request.
+	// ToolResultError marks a [ToolResult] message as an unsuccessful tool
+	// execution whose content should be shown to the model.
 	ToolResultError bool `json:"tool_result_error,omitempty" yaml:"tool_result_error,omitempty"`
 
-	// ExtraFields allows storing additional message-level information that can be used
-	// for provider-specific features or custom metadata. Unlike Block.ExtraFields which
-	// stores block-specific data, this field is for information that applies to the
-	// entire message.
-	//
-	// Common fields include:
-	//   - ResponsesMessageExtraFieldPhase: OpenAI Responses assistant message phase
+	// ExtraFields carries provider data that applies to the whole message. Block
+	// replay data belongs in [Block.ExtraFields]. OpenAI Responses assistant
+	// messages can use [ResponsesMessageExtraFieldPhase].
 	ExtraFields map[string]interface{} `json:"extra_fields,omitempty" yaml:"extra_fields,omitempty"`
 }
 
-// Dialog represents a dialog between a User and Assistant
+// Dialog is the ordered conversation supplied in [GenerationRequest.Dialog].
+// System instructions are stored separately in [GenerationRequest.Instructions].
 type Dialog []Message
 
-// Str is a simple string type that implements fmt.Stringer
+// Str adapts a string to fmt.Stringer for use as [Block.Content].
 type Str string
 
+// String returns the underlying string.
 func (s Str) String() string {
 	return string(s)
 }
 
-// SystemMessage creates system instructions from ordered content blocks.
+// SystemMessage returns a [System]-role message containing a copy of blocks.
+// Use it for [GenerationRequest.Instructions], not [GenerationRequest.Dialog].
 func SystemMessage(blocks ...Block) Message {
 	return Message{Role: System, Blocks: append([]Block(nil), blocks...)}
 }
 
-// TextBlock creates a simple text content block.
-// This is a convenience function for creating basic text blocks.
-//
-// Example:
-//
-//	block := TextBlock("Hello, world!")
+// TextBlock returns a [Content] block containing UTF-8 text with MIME type
+// "text/plain".
 func TextBlock(text string) Block {
 	return Block{
 		BlockType:    Content,
@@ -250,12 +214,10 @@ func TextBlock(text string) Block {
 	}
 }
 
-// MetadataBlock creates a Block containing usage metadata.
-// The metadata parameter should contain metric information such as token counts,
-// typically using keys like UsageMetricInputTokens and UsageMetricGenerationTokens.
-//
-// This block type is primarily used internally by streaming generators to emit
-// usage information as the final block in a stream.
+// MetadataBlock encodes metadata as JSON in a [MetadataBlockType] block.
+// [StreamingGenerator] implementations use this as their final successful data
+// chunk; [StreamingAdapter] moves it to [Response.UsageMetadata]. Invalid map
+// values produce an empty JSON object.
 func MetadataBlock(metadata Metadata) Block {
 	jsonData, err := json.Marshal(metadata)
 	if err != nil {
@@ -270,12 +232,9 @@ func MetadataBlock(metadata Metadata) Block {
 	}
 }
 
-// ImageBlock creates an image content block with the given base64-encoded data and MIME type.
-// This is a convenience function for creating image blocks.
-//
-// Example:
-//
-//	block := ImageBlock(base64EncodedJpeg, "image/jpeg")
+// ImageBlock returns an [Image] [Content] block by base64-encoding raw data.
+// mimeType must identify the supplied bytes, for example "image/jpeg" or
+// "image/png". Provider types document accepted image formats.
 func ImageBlock(data []byte, mimeType string) Block {
 	base64Data := base64.StdEncoding.EncodeToString(data)
 	return Block{
@@ -286,12 +245,9 @@ func ImageBlock(data []byte, mimeType string) Block {
 	}
 }
 
-// AudioBlock creates an audio content block with the given base64-encoded data and MIME type.
-// This is a convenience function for creating audio blocks.
-//
-// Example:
-//
-//	block := AudioBlock(audioData, "audio/mp3")
+// AudioBlock returns an [Audio] [Content] block by base64-encoding raw data.
+// mimeType must identify the supplied bytes. Provider types document accepted
+// audio formats.
 func AudioBlock(data []byte, mimeType string) Block {
 	base64Data := base64.StdEncoding.EncodeToString(data)
 	return Block{
@@ -302,18 +258,15 @@ func AudioBlock(data []byte, mimeType string) Block {
 	}
 }
 
+// BlockFieldFilenameKey is the [Block.ExtraFields] key set by [PDFBlock]. Its
+// string value is the caller-supplied filename used by providers that require a
+// file name for document input.
 const BlockFieldFilenameKey = "filename"
 
-// PDFBlock creates a PDF content block with the given base64-encoded data and filename.
-// This is a convenience function for creating PDF blocks compatible with all providers.
-//
-// PDFs are treated as a special type of image modality by model providers. The PDF is converted to a series
-// of images at the provider API level. For OpenAI, supplying a filename is required for PDF file input.
-//
-// Example:
-//
-//	pdfData, _ := os.ReadFile("paper.pdf")
-//	block := PDFBlock(pdfData, "paper.pdf")
+// PDFBlock returns an [Image] [Content] block with MIME type "application/pdf".
+// It base64-encodes raw data and stores filename under [BlockFieldFilenameKey].
+// PDF support and transport differ by provider; unsupported adapters return
+// [UnsupportedInputModalityErr] or [InvalidParameterErr].
 func PDFBlock(data []byte, filename string) Block {
 	base64Data := base64.StdEncoding.EncodeToString(data)
 	return Block{
@@ -327,15 +280,9 @@ func PDFBlock(data []byte, filename string) Block {
 	}
 }
 
-// ToolCallBlock creates a tool call block with the given ID, tool name, and parameters.
-// The parameters are automatically marshaled to JSON.
-//
-// Example:
-//
-//	block := ToolCallBlock("call_123", "get_weather", map[string]any{
-//		"location": "New York",
-//		"units": "fahrenheit",
-//	})
+// ToolCallBlock returns a [ToolCall] block containing a JSON-encoded
+// [ToolCallInput]. id is the provider call identifier, toolName must match a
+// [Tool.Name], and parameters must be JSON-encodable.
 func ToolCallBlock(id, toolName string, parameters map[string]any) (Block, error) {
 	toolUse := ToolCallInput{
 		Name:       toolName,
@@ -356,12 +303,10 @@ func ToolCallBlock(id, toolName string, parameters map[string]any) (Block, error
 	}, nil
 }
 
-// SeparatorBlock creates a streaming boundary marker.
-//
-// Separator blocks carry no user-visible content. Streaming generators can emit
-// them after a provider reports that a logical content block has ended. The
-// StreamingAdapter drops separator blocks from the final response after using
-// them to avoid merging chunks from separate provider blocks.
+// SeparatorBlock returns an internal [Separator] boundary. A
+// [StreamingGenerator] can emit it between logical provider blocks;
+// [StreamingAdapter] uses the boundary during compression and omits it from the
+// final [Response].
 func SeparatorBlock() Block {
 	return Block{
 		BlockType:    Separator,
@@ -371,33 +316,10 @@ func SeparatorBlock() Block {
 	}
 }
 
-// ToolResultMessage creates a message representing the result of a tool execution.
-// This function constructs a Message with the ToolResult role containing one or more
-// content blocks. The tool call ID is automatically set on all provided blocks.
-//
-// Parameters:
-//   - id: The identifier for the tool call, should match the original tool call ID
-//   - blocks: One or more content blocks (use TextBlock, ImageBlock, PDFBlock, etc.)
-//
-// Returns a Message configured with ToolResult role and the provided blocks.
-//
-// Examples:
-//
-//	// Single text result
-//	result := ToolResultMessage("call_123", TextBlock("Temperature: 72°F"))
-//
-//	// PDF with explanation
-//	result := ToolResultMessage("call_123",
-//	    TextBlock("Here's the generated report:"),
-//	    PDFBlock(pdfData, "report.pdf"),
-//	)
-//
-//	// Multiple images
-//	result := ToolResultMessage("call_123",
-//	    TextBlock("Found 3 matching charts:"),
-//	    ImageBlock(chart1, "image/png"),
-//	    ImageBlock(chart2, "image/png"),
-//	)
+// ToolResultMessage returns a [ToolResult]-role message for the call id. It
+// copies blocks and sets [Block.ID] on every copy, preserving the caller's
+// blocks. Set [Message.ToolResultError] on the returned value when execution
+// produced a model-visible tool error.
 func ToolResultMessage(id string, blocks ...Block) Message {
 	// Set the ID on all blocks
 	resultBlocks := make([]Block, len(blocks))

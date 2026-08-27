@@ -7,7 +7,9 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// GenerateSchema is a helper function to help generate the schema definition for Tool.InputSchema
+// GenerateSchema derives a JSON Schema for T for use as [Tool.InputSchema]. It
+// closes object schemas by setting additionalProperties to false when the
+// generated schema does not specify that keyword.
 func GenerateSchema[T any]() (*jsonschema.Schema, error) {
 	schema, err := jsonschema.For[T](&jsonschema.ForOptions{})
 	if err != nil {
@@ -20,90 +22,20 @@ func GenerateSchema[T any]() (*jsonschema.Schema, error) {
 	return schema, nil
 }
 
-// Tool represents a tool that can be called by a Generator during generation.
-// Each tool has a name, description, and a schema defining its input parameters.
-//
-// Example tools:
-//
-// A simple tool with a single required string parameter:
-//
-//	{
-//	    Name:        "get_stock_price",
-//	    Description: "Get the current stock price for a given ticker symbol.",
-//	    InputSchema: &jsonschema.Schema{
-//	        Type: "object",
-//	        Properties: map[string]*jsonschema.Schema{
-//	            "ticker": {
-//	                Type:        "string",
-//	                Description: "The stock ticker symbol, e.g. AAPL for Apple Inc.",
-//	            },
-//	        },
-//	        Required: []string{"ticker"},
-//	    },
-//	}
-//
-// A tool with both required and optional parameters:
-//
-//	{
-//	    Name:        "get_weather",
-//	    Description: "Get the current weather in a given location",
-//	    InputSchema: &jsonschema.Schema{
-//	        Type: "object",
-//	        Properties: map[string]*jsonschema.Schema{
-//	            "location": {
-//	                Type:        "string",
-//	                Description: "The city and state, e.g. San Francisco, CA",
-//	            },
-//	            "unit": {
-//	                Type:        "string",
-//	                Enum:        []interface{}{"celsius", "fahrenheit"},
-//	                Description: "The unit of temperature, either 'celsius' or 'fahrenheit'",
-//	            },
-//	        },
-//	        Required: []string{"location"},
-//	    },
-//	}
-//
-// A tool with an array parameter:
-//
-//	{
-//	    Name:        "get_batch_stock_prices",
-//	    Description: "Get the current stock prices for a list of ticker symbols.",
-//	    InputSchema: &jsonschema.Schema{
-//	        Type: "object",
-//	        Properties: map[string]*jsonschema.Schema{
-//	            "tickers": {
-//	                Type:        "array",
-//	                Description: "List of stock ticker symbols, e.g. ['AAPL', 'GOOGL', 'MSFT']",
-//	                Items: &jsonschema.Schema{
-//	                    Type:        "string",
-//	                    Description: "A stock ticker symbol",
-//	                },
-//	            },
-//	        },
-//	        Required: []string{"tickers"},
-//	    },
-//	}
-//
-// A tool with no parameters:
-//
-//	{
-//	    Name:        "get_server_time",
-//	    Description: "Get the current server time in UTC.",
-//	    InputSchema: nil, // or omit the field entirely
-//	}
+// Tool declares a caller-owned function available through
+// [GenerationRequest.Tools]. Generators send the declaration to the provider and
+// return requested calls as [ToolCall] blocks; they never execute the function.
+// Use [GenerateSchema] to derive InputSchema from a Go parameter type.
 type Tool struct {
-	// Name is the identifier used to reference this tool.
-	// It should be unique among all tools provided to a Generator.
+	// Name is the provider-visible function identifier. It must be non-empty,
+	// non-reserved, and unique within [GenerationRequest.Tools].
 	Name string `json:"name" yaml:"name"`
 
-	// Description explains what the tool does.
-	// This helps the Generator understand when and how to use the tool.
+	// Description tells the model when and how to call the function.
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 
-	// InputSchema defines the parameters this tool accepts using JSON Schema.
-	// A nil value indicates no parameters are accepted.
-	// The schema should typically be of type "object" for parameter definitions.
+	// InputSchema defines parameters with JSON Schema. A nil schema declares no
+	// parameters. [GenerateSchema] derives a closed schema from a Go type.
 	InputSchema *jsonschema.Schema `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`
 }
 
@@ -220,9 +152,11 @@ type ToolCallback interface {
 	Call(ctx context.Context, parameters map[string]any) (Message, error)
 }
 
-// ToolCallInput represents a standardized format for tool use in all generators.
-// It contains the name of the tool to use and the parameters to pass to it.
+// ToolCallInput is the normalized payload encoded in a [ToolCall] block. Use
+// [ToolCallBlock] to construct one for replay or tests.
 type ToolCallInput struct {
-	Name       string         `json:"name" yaml:"name"`
+	// Name matches the requested [Tool.Name].
+	Name string `json:"name" yaml:"name"`
+	// Parameters contains the provider-decoded JSON arguments.
 	Parameters map[string]any `json:"parameters" yaml:"parameters"`
 }

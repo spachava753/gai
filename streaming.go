@@ -30,11 +30,21 @@ import (
 // Err reports a terminal stream failure. When Err is non-nil, the other fields
 // are ignored and the producer must stop the sequence after yielding this chunk.
 type StreamChunk struct {
-	Block               Block                  `json:"block" yaml:"block"`
-	MessageExtraFields  map[string]interface{} `json:"message_extra_fields,omitempty" yaml:"message_extra_fields,omitempty"`
+	// Block is one partial content, thinking, tool-call, separator, or metadata
+	// block. It is ignored when Err is non-nil.
+	Block Block `json:"block" yaml:"block"`
+	// MessageExtraFields carries candidate-level metadata discovered during the
+	// stream. [StreamingAdapter] merges it into [Message.ExtraFields].
+	MessageExtraFields map[string]interface{} `json:"message_extra_fields,omitempty" yaml:"message_extra_fields,omitempty"`
+	// ResponseExtraFields carries invocation-level metadata discovered during the
+	// stream. [StreamingAdapter] merges it into [Response.ExtraFields].
 	ResponseExtraFields map[string]interface{} `json:"response_extra_fields,omitempty" yaml:"response_extra_fields,omitempty"`
-	CandidatesIndex     int                    `json:"candidates_index" yaml:"candidates_index"`
-	Err                 error                  `json:"-" yaml:"-"`
+	// CandidatesIndex identifies the response candidate for Block. The current
+	// [StreamingAdapter] accepts only index zero.
+	CandidatesIndex int `json:"candidates_index" yaml:"candidates_index"`
+	// Err is the terminal stream failure. Producers must stop after yielding a
+	// chunk with Err set, and consumers must ignore the other fields.
+	Err error `json:"-" yaml:"-"`
 }
 
 // StreamingGenerator is an interface for generators that support streaming responses.
@@ -199,23 +209,20 @@ type StreamChunk struct {
 //   - [ErrEmptyDialog] when no messages are provided in the dialog
 //   - [ApiErr] when a provider returns a server/API error
 type StreamingGenerator interface {
+	// Stream returns a lazy sequence for request. Validation and provider work
+	// should begin when the sequence is iterated, and iteration must honor ctx.
 	Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk]
 }
 
-// StreamingAdapter converts a StreamingGenerator to a Generator by collecting all chunks
-// and compressing them into a complete Response. This adapter handles the conversion from
-// streaming chunks to the standard Response format expected by the Generator interface.
+// StreamingAdapter implements [Generator] by collecting a
+// [StreamingGenerator]. It merges adjacent text fragments, reconstructs tool
+// calls, consumes [Separator] boundaries, moves [MetadataBlockType] into
+// [Response.UsageMetadata], and preserves message and response extra fields.
 //
-// The adapter:
-// 1. Collects all chunks from the StreamingGenerator
-// 2. Uses compressStreamingBlocks to merge consecutive chunks of the same type
-// 3. Uses Separator chunks as merge boundaries and omits them from final messages
-// 4. Constructs a Response with the compressed blocks
-// 5. Sets FinishReason based on whether tool calls are present
-//
-// Note: This adapter currently only supports single candidate responses (N=1).
-// If the streaming generator yields chunks with CandidatesIndex > 0, an error is returned.
+// The adapter accepts only candidate index zero. A stream with another
+// [StreamChunk.CandidatesIndex] returns [InvalidParameterErr].
 type StreamingAdapter struct {
+	// S is the streaming generator collected by [StreamingAdapter.Generate].
 	S StreamingGenerator
 }
 
@@ -467,6 +474,8 @@ func (s *StreamingAdapter) Generate(ctx context.Context, request GenerationReque
 	}, nil
 }
 
+// Count delegates to S when it implements [TokenCounter]. It returns an error
+// without contacting a provider when token counting is unsupported.
 func (s *StreamingAdapter) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	i, ok := s.S.(TokenCounter)
 	if !ok {

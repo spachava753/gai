@@ -38,19 +38,20 @@ type Validator interface {
 	Validate() error
 }
 
-// CallbackExecErr is an error type that wraps a real callback execution error.
-// When returned from a callback (wrapped in this type), it signals to the caller
-// that the error is a hard failure and execution should terminate, rather than being
-// returned as an erroneous tool result.
+// CallbackExecErr marks a [ToolCallBackFunc] failure as an application execution
+// failure that should stop the tool loop. Other callback errors become
+// model-visible [ToolResult] messages.
 type CallbackExecErr struct {
+	// Err is the non-nil execution failure returned to the caller.
 	Err error `json:"err,omitempty" yaml:"err,omitempty"`
 }
 
-// Unwrap allows errors.Unwrap and errors.As to extract the underlying error.
+// Unwrap returns the execution failure for errors.Is and errors.As.
 func (c CallbackExecErr) Unwrap() error {
 	return c.Err
 }
 
+// Error returns the execution failure's message. Err must be non-nil.
 func (c CallbackExecErr) Error() string {
 	return c.Err.Error()
 }

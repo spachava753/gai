@@ -16,39 +16,54 @@ import (
 )
 
 const (
-	// DeepSeekDefaultBaseURL is the DeepSeek API server declared by the generated OpenAPI client.
+	// DeepSeekDefaultBaseURL is the endpoint used by [NewDeepSeekGenerator] when
+	// baseURL is empty.
 	DeepSeekDefaultBaseURL = string(deepseek.DefaultServer)
 
-	// DeepSeekGenerationOptionThinkingEnabled controls thinking mode for one request.
+	// DeepSeekGenerationOptionThinkingEnabled is the bool [GenerationOptions]
+	// key set by [WithDeepSeekThinking].
 	DeepSeekGenerationOptionThinkingEnabled = "deepseek_thinking_enabled"
 )
 
 const (
-	// DeepSeekResponseExtraFieldID stores the completion identifier returned by DeepSeek.
+	// DeepSeekResponseExtraFieldID is the string completion-ID key in
+	// [Response.ExtraFields].
 	DeepSeekResponseExtraFieldID = "deepseek_id"
-	// DeepSeekResponseExtraFieldModel stores the model reported by DeepSeek.
+	// DeepSeekResponseExtraFieldModel is the string response-model key in
+	// [Response.ExtraFields].
 	DeepSeekResponseExtraFieldModel = "deepseek_model"
-	// DeepSeekResponseExtraFieldCreated stores the completion's Unix creation timestamp.
+	// DeepSeekResponseExtraFieldCreated is the int64 Unix timestamp key in
+	// [Response.ExtraFields].
 	DeepSeekResponseExtraFieldCreated = "deepseek_created"
-	// DeepSeekResponseExtraFieldSystemFingerprint stores the backend configuration fingerprint.
+	// DeepSeekResponseExtraFieldSystemFingerprint is the string backend
+	// fingerprint key in [Response.ExtraFields].
 	DeepSeekResponseExtraFieldSystemFingerprint = "deepseek_system_fingerprint"
 )
 
-// WithDeepSeekThinking controls thinking mode for one DeepSeek generation request.
+// WithDeepSeekThinking returns a [GenerationOption] that stores enabled under
+// [DeepSeekGenerationOptionThinkingEnabled].
 func WithDeepSeekThinking(enabled bool) GenerationOption {
 	return func(options GenerationOptions) {
 		options[DeepSeekGenerationOptionThinkingEnabled] = enabled
 	}
 }
 
-// DeepSeekGenerator implements Generator and StreamingGenerator using the generated DeepSeek client.
+// DeepSeekGenerator adapts DeepSeek Chat Completions to [Generator] and
+// [StreamingGenerator]. It accepts and produces text, supports function tools,
+// and preserves reasoning content on assistant messages for tool-call replay.
+//
+// DeepSeek consumes [WithTemperature], [WithTopP],
+// [WithMaxGenerationTokens], [WithToolChoice], [WithStopSequences],
+// [WithOutputModalities], [WithThinkingBudget], and [WithDeepSeekThinking].
+// Invocation details use the DeepSeekResponseExtraField constants in
+// [Response.ExtraFields].
 type DeepSeekGenerator struct {
 	client *deepseek.Client
 }
 
-// NewDeepSeekGenerator creates a stateless DeepSeek generator.
-// A nil httpClient uses the default HTTP client. An empty baseURL uses
-// DeepSeekDefaultBaseURL. apiKey is required.
+// NewDeepSeekGenerator constructs a stateless DeepSeek adapter. A nil
+// httpClient uses the generated client's default transport, an empty baseURL
+// uses [DeepSeekDefaultBaseURL], and an empty apiKey returns [ErrMissingAPIKey].
 func NewDeepSeekGenerator(httpClient *http.Client, baseURL, apiKey string) (*DeepSeekGenerator, error) {
 	if baseURL == "" {
 		baseURL = DeepSeekDefaultBaseURL
@@ -423,7 +438,8 @@ func deepSeekResponseExtraFields(id, model string, created int, systemFingerprin
 	return extraFields
 }
 
-// Generate implements Generator.
+// Generate sends one DeepSeek Chat Completions request and normalizes text,
+// reasoning, tool calls, usage, and provider failures into [Response].
 func (g *DeepSeekGenerator) Generate(ctx context.Context, generationRequest GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("deepseek: client not initialized")
@@ -492,7 +508,8 @@ func (g *DeepSeekGenerator) Generate(ctx context.Context, generationRequest Gene
 	return result, nil
 }
 
-// Stream implements StreamingGenerator.
+// Stream starts one DeepSeek SSE stream when iterated and emits ordered
+// reasoning, text, tool-call, metadata, and terminal-error [StreamChunk] values.
 func (g *DeepSeekGenerator) Stream(ctx context.Context, generationRequest GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {

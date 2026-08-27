@@ -7,45 +7,79 @@ import (
 )
 
 const (
-	ToolChoiceAuto          = "auto"
+	// ToolChoiceAuto lets the provider decide whether to call a tool. Pass it to
+	// [WithToolChoice] or store it under [GenerationOptionToolChoice].
+	ToolChoiceAuto = "auto"
+	// ToolChoiceToolsRequired requires at least one tool call. Providers that do
+	// not support required tool choice return [InvalidToolChoiceErr].
 	ToolChoiceToolsRequired = "required"
 )
 
-// Generation option keys shared by provider generators.
+// Common keys in [GenerationOptions]. Provider adapters ignore unsupported
+// keys and validate recognized values when building a request.
 const (
-	GenerationOptionTemperature         = "temperature"
-	GenerationOptionTopP                = "top_p"
-	GenerationOptionTopK                = "top_k"
-	GenerationOptionFrequencyPenalty    = "frequency_penalty"
-	GenerationOptionPresencePenalty     = "presence_penalty"
-	GenerationOptionCandidateCount      = "candidate_count"
+	// GenerationOptionTemperature is the float64 sampling-temperature key set by
+	// [WithTemperature]. Valid ranges are provider-defined.
+	GenerationOptionTemperature = "temperature"
+	// GenerationOptionTopP is the float64 nucleus-sampling key set by [WithTopP].
+	GenerationOptionTopP = "top_p"
+	// GenerationOptionTopK is the uint top-k sampling key set by [WithTopK].
+	GenerationOptionTopK = "top_k"
+	// GenerationOptionFrequencyPenalty is the float64 frequency-penalty key set
+	// by [WithFrequencyPenalty].
+	GenerationOptionFrequencyPenalty = "frequency_penalty"
+	// GenerationOptionPresencePenalty is the float64 presence-penalty key set by
+	// [WithPresencePenalty].
+	GenerationOptionPresencePenalty = "presence_penalty"
+	// GenerationOptionCandidateCount is the uint candidate-count key set by
+	// [WithCandidateCount]. It is supported by OpenAI Chat Completions, Gemini,
+	// and OpenRouter generation; [StreamingAdapter] supports one candidate.
+	GenerationOptionCandidateCount = "candidate_count"
+	// GenerationOptionMaxGenerationTokens is the int output-token limit key set
+	// by [WithMaxGenerationTokens].
 	GenerationOptionMaxGenerationTokens = "max_generation_tokens"
-	GenerationOptionToolChoice          = "tool_choice"
-	GenerationOptionStopSequences       = "stop_sequences"
-	GenerationOptionOutputModalities    = "output_modalities"
-	GenerationOptionAudioConfig         = "audio_config"
-	GenerationOptionThinkingBudget      = "thinking_budget"
+	// GenerationOptionToolChoice is the string tool-selection key set by
+	// [WithToolChoice]. Values can be "none", [ToolChoiceAuto],
+	// [ToolChoiceToolsRequired], or a tool name when the provider supports it.
+	GenerationOptionToolChoice = "tool_choice"
+	// GenerationOptionStopSequences is the []string stop-sequence key set by
+	// [WithStopSequences].
+	GenerationOptionStopSequences = "stop_sequences"
+	// GenerationOptionOutputModalities is the []Modality output key set by
+	// [WithOutputModalities]. Providers reject unsupported requested modalities.
+	GenerationOptionOutputModalities = "output_modalities"
+	// GenerationOptionAudioConfig is the [AudioConfig] key set by
+	// [WithAudioConfig]. OpenAI Chat Completions consumes this option when audio
+	// output is requested.
+	GenerationOptionAudioConfig = "audio_config"
+	// GenerationOptionThinkingBudget is the string reasoning-effort or token-budget
+	// key set by [WithThinkingBudget]. Accepted values differ by provider.
+	GenerationOptionThinkingBudget = "thinking_budget"
 )
 
+// AudioConfig selects the voice and encoding for generated audio. Use it with
+// [WithAudioConfig] and request [Audio] through [WithOutputModalities]. The
+// provider validates supported voices and formats.
 type AudioConfig struct {
-	// VoiceName represents what voice to use when generating an audio output as
-	// A Generator usually offers an option to generate speech using a specific built-in voice
+	// VoiceName is the provider-defined built-in voice name.
 	VoiceName string `json:"voice_name,omitempty" yaml:"voice_name,omitempty"`
 
-	// Format specifies the output audio format. Must be one a valid audio file format, such as wav or mp3.
-	// A Generator's supported file formats will be specified in its docs
+	// Format is the provider-defined audio encoding, such as "wav" or "mp3".
 	Format string `json:"format,omitempty" yaml:"format,omitempty"`
 }
 
-// GenerationOptions contains common and provider-specific generation parameters.
-// Recognized common keys use the GenerationOption* constants. Providers ignore
-// keys they do not recognize.
+// GenerationOptions stores common and provider-specific request controls.
+// Prefer [NewGenerationOptions] and typed [GenerationOption] helpers. Direct
+// assignment is supported for exported keys and experimental provider values;
+// callers must use the concrete value type documented by the key.
 type GenerationOptions map[string]any
 
-// GenerationOption applies one typed common option to GenerationOptions.
+// GenerationOption mutates [GenerationOptions]. Options are applied in order by
+// [NewGenerationOptions], so a later option can replace an earlier value.
 type GenerationOption func(GenerationOptions)
 
-// NewGenerationOptions creates generation options and applies options in order.
+// NewGenerationOptions allocates an option map and applies options in order.
+// It returns a non-nil empty map when called without options.
 func NewGenerationOptions(options ...GenerationOption) GenerationOptions {
 	values := make(GenerationOptions, len(options))
 	for _, option := range options {
@@ -54,81 +88,102 @@ func NewGenerationOptions(options ...GenerationOption) GenerationOptions {
 	return values
 }
 
-// WithTemperature sets GenerationOptionTemperature.
+// WithTemperature returns a [GenerationOption] that stores value under
+// [GenerationOptionTemperature]. Providers define the accepted range.
 func WithTemperature(value float64) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionTemperature] = value }
 }
 
-// WithTopP sets GenerationOptionTopP.
+// WithTopP returns a [GenerationOption] that stores value under
+// [GenerationOptionTopP].
 func WithTopP(value float64) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionTopP] = value }
 }
 
-// WithTopK sets GenerationOptionTopK.
+// WithTopK returns a [GenerationOption] that stores value under
+// [GenerationOptionTopK]. Providers without top-k sampling ignore it.
 func WithTopK(value uint) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionTopK] = value }
 }
 
-// WithFrequencyPenalty sets GenerationOptionFrequencyPenalty.
+// WithFrequencyPenalty returns a [GenerationOption] that stores value under
+// [GenerationOptionFrequencyPenalty].
 func WithFrequencyPenalty(value float64) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionFrequencyPenalty] = value }
 }
 
-// WithPresencePenalty sets GenerationOptionPresencePenalty.
+// WithPresencePenalty returns a [GenerationOption] that stores value under
+// [GenerationOptionPresencePenalty].
 func WithPresencePenalty(value float64) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionPresencePenalty] = value }
 }
 
-// WithCandidateCount sets GenerationOptionCandidateCount.
+// WithCandidateCount requests value independently generated candidates through
+// [GenerationOptionCandidateCount]. A zero value is provider-defined.
 func WithCandidateCount(value uint) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionCandidateCount] = value }
 }
 
-// WithMaxGenerationTokens sets GenerationOptionMaxGenerationTokens.
+// WithMaxGenerationTokens limits generated output through
+// [GenerationOptionMaxGenerationTokens]. Providers reject invalid limits and
+// may return [ErrMaxGenerationLimit] when generation reaches the limit.
 func WithMaxGenerationTokens(value int) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionMaxGenerationTokens] = value }
 }
 
-// WithToolChoice sets GenerationOptionToolChoice.
+// WithToolChoice controls tool selection through [GenerationOptionToolChoice].
+// Pass "none", [ToolChoiceAuto], [ToolChoiceToolsRequired], or a name from
+// [GenerationRequest.Tools]. Unsupported choices return [InvalidToolChoiceErr].
 func WithToolChoice(value string) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionToolChoice] = value }
 }
 
-// WithStopSequences sets GenerationOptionStopSequences and copies values.
+// WithStopSequences stores a copy of values under
+// [GenerationOptionStopSequences].
 func WithStopSequences(values ...string) GenerationOption {
 	return func(options GenerationOptions) {
 		options[GenerationOptionStopSequences] = append([]string(nil), values...)
 	}
 }
 
-// WithOutputModalities sets GenerationOptionOutputModalities and copies values.
+// WithOutputModalities stores a copy of values under
+// [GenerationOptionOutputModalities]. Unsupported requests return
+// [UnsupportedOutputModalityErr].
 func WithOutputModalities(values ...Modality) GenerationOption {
 	return func(options GenerationOptions) {
 		options[GenerationOptionOutputModalities] = append([]Modality(nil), values...)
 	}
 }
 
-// WithAudioConfig sets GenerationOptionAudioConfig.
+// WithAudioConfig stores value under [GenerationOptionAudioConfig]. Use it with
+// [WithOutputModalities] when requesting [Audio] output.
 func WithAudioConfig(value AudioConfig) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionAudioConfig] = value }
 }
 
-// WithThinkingBudget sets GenerationOptionThinkingBudget.
+// WithThinkingBudget stores a provider-specific effort label or decimal token
+// budget under [GenerationOptionThinkingBudget]. Provider adapters document and
+// validate their accepted values.
 func WithThinkingBudget(value string) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionThinkingBudget] = value }
 }
 
-// GenerationRequest contains all semantic inputs to one model invocation.
+// GenerationRequest contains every semantic input to one [Generator.Generate]
+// invocation. It is safe to reuse a generator concurrently with different
+// requests when the underlying provider client is concurrency-safe.
 type GenerationRequest struct {
-	// Model identifies the provider model for this invocation.
+	// Model is the provider model identifier for this invocation.
 	Model string `json:"model" yaml:"model"`
-	// Instructions contains system-role content outside the conversation dialog.
+	// Instructions contains optional [System]-role content outside [Dialog]. Use
+	// [SystemMessage] to construct non-empty instructions.
 	Instructions Message `json:"instructions,omitempty" yaml:"instructions,omitempty"`
-	// Dialog is the complete conversation supplied to this invocation.
+	// Dialog is the complete conversation. An empty dialog returns [ErrEmptyDialog].
 	Dialog Dialog `json:"dialog" yaml:"dialog"`
-	// Tools is the complete tool set available to this invocation.
+	// Tools is the complete caller-defined function set available to this
+	// invocation. Tool names must be unique.
 	Tools []Tool `json:"tools,omitempty" yaml:"tools,omitempty"`
-	// Options contains common and provider-specific generation parameters.
+	// Options contains common and provider-specific controls. Providers ignore
+	// keys they do not recognize.
 	Options GenerationOptions `json:"options,omitempty" yaml:"options,omitempty"`
 }
 
@@ -191,85 +246,79 @@ func joinedTextInstructions(instructions Message) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
-// FinishReason represents the reason why a Generator stopped generating and returned a Response
+// FinishReason classifies why generation stopped. It is normalized across
+// providers and stored in [Response.FinishReason].
 type FinishReason uint8
 
 const (
-	// Unknown represents an invalid FinishReason, likely only seen with a zero value Response
+	// Unknown is the zero value and means no finish reason was reported.
 	Unknown FinishReason = iota
 
-	// EndTurn represents the end of the Generator generating an output.
-	// Note that this is different to the ToolUse reason,
-	// which the Generator waits for a tool call result
+	// EndTurn means the model completed its response without another required
+	// caller action.
 	EndTurn
 
-	// StopSequence represents the Generator generating one of the stop sequences
-	// requested with GenerationOptionStopSequences and stopping generation
+	// StopSequence means the model emitted a sequence requested through
+	// [WithStopSequences].
 	StopSequence
 
-	// MaxGenerationLimit represents the Generator reaching the maximum number of
-	// tokens requested with GenerationOptionMaxGenerationTokens.
+	// MaxGenerationLimit means generation reached a provider output limit,
+	// commonly one requested through [WithMaxGenerationTokens].
 	MaxGenerationLimit
 
-	// ToolUse represents the Generator pausing generated output after calling a
-	// tool to wait for a tool call result.
+	// ToolUse means the model emitted one or more [ToolCall] blocks and is waiting
+	// for caller-supplied [ToolResultMessage] values.
 	ToolUse
 
-	// ContentPolicyViolation represents generation stopping because the input or
-	// generated output violated the provider's content policy.
+	// ContentPolicyViolation means the provider stopped because input or output
+	// violated its content policy.
 	ContentPolicyViolation
 )
 
-// Response is what is returned by a Generator
+// Response contains normalized output from one [Generator.Generate] call.
+// Provider-specific invocation details use [Response.ExtraFields]; candidate or
+// replay data stays on the corresponding [Message] or [Block].
 type Response struct {
-	// Candidates contains the generated messages. Its length is controlled by
-	// GenerationOptionCandidateCount, with a common default of one candidate.
+	// Candidates contains generated assistant messages. Providers commonly return
+	// one candidate; supported generators honor [WithCandidateCount].
 	Candidates []Message `json:"candidates" yaml:"candidates"`
 
-	// FinishReason represents the reason why a Generator stopped generating
+	// FinishReason reports why generation stopped.
 	FinishReason FinishReason `json:"finish_reason" yaml:"finish_reason"`
 
 	// UsageMetadata contains common and provider-specific measurements such as
-	// token counts, cost, cache usage, and timing information.
+	// token counts, cost, cache usage, and timing. Use [InputTokens],
+	// [OutputTokens], and [GetMetric] to retrieve values.
 	UsageMetadata Metadata `json:"usage_metadata,omitempty" yaml:"usage_metadata,omitempty"`
 
-	// ExtraFields contains provider-specific information about the invocation.
-	// Replay-critical candidate and content metadata belongs on Message.ExtraFields
-	// or Block.ExtraFields instead.
+	// ExtraFields contains provider-specific invocation data such as completion
+	// IDs, model names, timestamps, fingerprints, and service tiers. Replay data
+	// belongs on [Message.ExtraFields] or [Block.ExtraFields].
 	ExtraFields map[string]interface{} `json:"extra_fields,omitempty" yaml:"extra_fields,omitempty"`
 }
 
-// A Generator accepts a self-contained GenerationRequest and returns a Response or an error.
-// The context provides cancellation, deadlines, and request-scoped values.
+// Generator performs non-streaming model generation. Implementations consume
+// only the supplied [GenerationRequest]; callers may reuse one generator with
+// independent request state.
 //
-// A Generator implementation may return several types of errors:
-//   - [ErrMaxGenerationLimit] when the maximum token generation limit is exceeded
-//   - [UnsupportedInputModalityErr] when encountering an unsupported input modality
-//   - [UnsupportedOutputModalityErr] when requested to generate an unsupported output modality
-//   - [InvalidToolChoiceErr] when an invalid tool choice is specified
-//   - [InvalidParameterErr] when generation parameters are invalid or out of range
-//   - [ErrContextLengthExceeded] when input dialog is too long
-//   - [ContentPolicyErr] when content violates usage policies
-//   - [ErrEmptyDialog] when no messages are provided in the dialog
-//   - [ApiErr] when a provider returns a server/API error
+// Generate honors context cancellation and can return validation errors before
+// contacting a provider. Provider failures are returned as [ApiErr]. A terminal
+// condition such as [ErrMaxGenerationLimit] can return both a partial [Response]
+// and a non-nil error.
 type Generator interface {
+	// Generate sends request to the provider and returns its normalized response.
 	Generate(ctx context.Context, request GenerationRequest) (Response, error)
 }
 
-// TokenCounter is an interface for a generator that can count the number of tokens in a Dialog.
-// This is useful for:
-//  1. Estimating costs before sending a request to the API
-//  2. Checking if a dialog exceeds the context window limits of a model
-//  3. Optimizing prompt design by analyzing token usage
-//  4. Managing rate limits that are based on token counts
+// TokenCounter is an optional generator capability for estimating or querying
+// the input tokens consumed by a [GenerationRequest]. Counting includes the
+// model, instructions, dialog, and tools, but provider behavior can differ for
+// multimodal content.
 //
-// The exact method of token counting varies by provider:
-//   - OpenAI uses tiktoken to count tokens without making an API call
-//   - Anthropic calls a dedicated counting API endpoint
-//   - Gemini calls a dedicated counting API endpoint
-//
-// In all cases, Count receives the same request used for generation so model,
-// instructions, dialog, and tools are counted consistently.
+// [OpenAiGenerator] counts locally with tiktoken. [AnthropicGenerator] and
+// [GeminiGenerator] call provider token-counting endpoints.
 type TokenCounter interface {
+	// Count returns the provider's input-token count for request. The context can
+	// cancel implementations that perform a remote call.
 	Count(ctx context.Context, request GenerationRequest) (uint, error)
 }

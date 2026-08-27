@@ -100,16 +100,10 @@ func preprocessToolResults(dialog Dialog) Dialog {
 	return result
 }
 
-// PreprocessingGenerator is a transparent wrapper that automatically preprocesses the dialog before every Generate call.
-//
-// Specifically, it consolidates parallel tool result messages into the format required by
-// LLM providers such as Anthropic and Gemini, which expect parallel tool results to be
-// delivered in a single message with multiple blocks, whereas OpenAI-style dialogs use
-// separate messages for each. This wrapper ensures the dialog structure fed into the
-// underlying generator is always in the correct, provider-specific format.
-//
-// This helps keep generator implementations clean, centralizes parallel tool result
-// normalization, and can be easily composed with future generators needing the same behavior.
+// PreprocessingGenerator wraps a [Generator] and consolidates consecutive
+// parallel [ToolResult] messages before generation. Anthropic and Gemini require
+// one tool-result message containing all blocks for a parallel assistant turn.
+// Other request fields are forwarded unchanged.
 type PreprocessingGenerator struct {
 	GeneratorWrapper
 }
@@ -117,11 +111,17 @@ type PreprocessingGenerator struct {
 var _ Generator = (*PreprocessingGenerator)(nil)
 var _ TokenCounter = (*PreprocessingGenerator)(nil)
 
+// Generate preprocesses [GenerationRequest.Dialog] and delegates to the wrapped
+// [Generator].
 func (p *PreprocessingGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	request.Dialog = preprocessToolResults(request.Dialog)
 	return p.Inner.Generate(ctx, request)
 }
 
+// Stream preprocesses [GenerationRequest.Dialog] and delegates to the wrapped
+// [StreamingGenerator]. It panics when the wrapped generator does not implement
+// StreamingGenerator; construct this wrapper only around a streaming provider
+// when calling Stream.
 func (p *PreprocessingGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	request.Dialog = preprocessToolResults(request.Dialog)
 	if g, ok := p.Inner.(StreamingGenerator); ok {
@@ -130,7 +130,8 @@ func (p *PreprocessingGenerator) Stream(ctx context.Context, request GenerationR
 	panic("inner generator does not implement StreamingGenerator")
 }
 
-// WithPreprocessing returns a WrapperFunc that applies tool-result preprocessing.
+// WithPreprocessing returns a [WrapperFunc] that installs a
+// [PreprocessingGenerator].
 func WithPreprocessing() WrapperFunc {
 	return func(g Generator) Generator {
 		return &PreprocessingGenerator{

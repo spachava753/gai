@@ -6,23 +6,27 @@ import (
 	"fmt"
 )
 
-// FallbackConfig represents the configuration for when to fallback to another generator
+// FallbackConfig controls which [Generator.Generate] errors advance to the next
+// generator in a [FallbackGenerator].
 type FallbackConfig struct {
-	// ShouldFallback is a function that determines whether to fallback to another generator
-	// based on the error returned by the current generator.
-	// If nil, the default behavior is used, which fallbacks on rate limit errors and 5xx status codes.
+	// ShouldFallback returns true to try the next generator. A nil function uses
+	// [ApiErr.Retryable]. It can be called concurrently when the fallback
+	// generator is shared.
 	ShouldFallback func(err error) bool
 }
 
-// FallbackGenerator implements the Generator interface by composing multiple generators.
-// If one generator returns an error that meets the fallback criteria, it tries the next generator.
+// FallbackGenerator implements [Generator] by trying an ordered set of
+// generators. Every generator receives the same [GenerationRequest], including
+// its model identifier. Callers must choose compatible generators or wrap them
+// with an explicit request transformation.
 type FallbackGenerator struct {
 	generators []Generator
 	config     FallbackConfig
 }
 
-// NewFallbackGenerator creates a new FallbackGenerator with the provided generators and configuration.
-// It returns an error if fewer than 2 generators are provided.
+// NewFallbackGenerator constructs an ordered fallback chain. It requires at
+// least two generators. A nil config, or a config with nil ShouldFallback, uses
+// [ApiErr.Retryable].
 func NewFallbackGenerator(generators []Generator, config *FallbackConfig) (*FallbackGenerator, error) {
 	if len(generators) < 2 {
 		return nil, errors.New("fallback generator requires at least 2 generators")
@@ -52,9 +56,9 @@ func defaultShouldFallback(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.Retryable()
 }
 
-// Generate implements the Generator interface.
-// It tries each generator in order, falling back to the next one if the current returns an error
-// that meets the fallback criteria.
+// Generate tries generators in order while [FallbackConfig.ShouldFallback]
+// accepts each error. A rejected error returns immediately. If every generator
+// fails, Generate wraps the final error.
 func (f *FallbackGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	var lastErr error
 
@@ -84,8 +88,8 @@ func (f *FallbackGenerator) Generate(ctx context.Context, request GenerationRequ
 	return Response{}, fmt.Errorf("all generators failed: %w", lastErr)
 }
 
-// NewHTTPStatusFallbackConfig creates a FallbackConfig that fallbacks on specific HTTP status codes.
-// It will fallback on ApiErr values matching the specified status codes.
+// NewHTTPStatusFallbackConfig returns a policy that accepts [ApiErr] values
+// whose status code matches one of statusCodes.
 func NewHTTPStatusFallbackConfig(statusCodes ...int) FallbackConfig {
 	return FallbackConfig{
 		ShouldFallback: func(err error) bool {
@@ -102,7 +106,8 @@ func NewHTTPStatusFallbackConfig(statusCodes ...int) FallbackConfig {
 	}
 }
 
-// NewRateLimitOnlyFallbackConfig creates a FallbackConfig that only fallbacks on rate limit ApiErr values.
+// NewRateLimitOnlyFallbackConfig returns a policy that accepts only [ApiErr]
+// values classified as [APIErrorKindRateLimit].
 func NewRateLimitOnlyFallbackConfig() FallbackConfig {
 	return FallbackConfig{
 		ShouldFallback: func(err error) bool {

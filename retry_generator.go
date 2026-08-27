@@ -57,26 +57,22 @@ func exponentialBackoff(randomInt64N func(int64) int64) func(uint) (time.Duratio
 	}
 }
 
-// RetryGenerator is a Generator that wraps another Generator and retries failed
-// Generate calls and Stream startup failures according to its retry
-// configuration.
+// RetryGenerator wraps a [Generator] and retries failed Generate calls and
+// Stream startup failures according to [RetryConfig].
 //
-// It retries on specific errors:
-//   - context.DeadlineExceeded (from the Generate/Stream call itself, not the overall context)
-//   - gai.ApiErr values classified as retryable (rate limits and transient upstream errors)
+// It retries context.DeadlineExceeded returned by an operation and [ApiErr]
+// values for which [ApiErr.Retryable] reports true. Overall context cancellation
+// stops the loop.
 //
-// Streaming retries are intentionally conservative: once a stream chunk has been
-// emitted to the caller, subsequent errors are returned as-is rather than retried,
-// because retrying after partial output would duplicate already-observed content.
-// If the consumer stops iteration by returning false from yield, the stream ends
-// successfully without surfacing an error, following the standard iter.Seq contract.
+// Once a [StreamChunk] has been emitted, subsequent stream failures are returned
+// without retrying because replay would duplicate observed output. Stopping
+// iteration early is treated as successful consumer cancellation.
 //
-// RetryGenerator does not disable retries configured in the wrapped provider SDK.
-// To avoid nested retry loops, disable provider retries when constructing OpenAI or
-// Anthropic clients with the corresponding option.WithMaxRetries(0) client option.
+// RetryGenerator does not disable retries in provider SDKs. Disable SDK retries
+// separately when nested retry loops are undesirable.
 type RetryGenerator struct {
-	GeneratorWrapper             // Embed for default Count/Register delegation and unsupported Stream fallback.
-	config           RetryConfig // Copied at construction; mutable retry state is scoped to each invocation.
+	GeneratorWrapper             // Delegates Count and unsupported optional capabilities.
+	config           RetryConfig // Copied at construction; each invocation owns retry state.
 }
 
 type permanentRetryError struct {
@@ -97,7 +93,8 @@ type retryDecision struct {
 	hasRetryAfter bool
 }
 
-// NewRetryGenerator creates a RetryGenerator with the provided config.
+// NewRetryGenerator wraps generator with config. A zero config performs one
+// attempt because a nil [RetryConfig.Backoff] disables retries.
 func NewRetryGenerator(generator Generator, config RetryConfig) *RetryGenerator {
 	return &RetryGenerator{
 		GeneratorWrapper: GeneratorWrapper{Inner: generator},

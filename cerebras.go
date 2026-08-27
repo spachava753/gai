@@ -16,61 +16,83 @@ import (
 )
 
 const (
-	// CerebrasUsageMetricImageTokens is the number of tokens used for image inputs.
+	// CerebrasUsageMetricImageTokens is the int image-token key in
+	// [Response.UsageMetadata].
 	CerebrasUsageMetricImageTokens = "image_tokens"
-	// CerebrasUsageMetricQueueTimeSeconds is the time a request spent queued.
+	// CerebrasUsageMetricQueueTimeSeconds is the float64 queue-duration key in
+	// [Response.UsageMetadata].
 	CerebrasUsageMetricQueueTimeSeconds = "queue_time_seconds"
-	// CerebrasUsageMetricPromptTimeSeconds is the time spent processing input tokens.
+	// CerebrasUsageMetricPromptTimeSeconds is the float64 prompt-processing key
+	// in [Response.UsageMetadata].
 	CerebrasUsageMetricPromptTimeSeconds = "prompt_time_seconds"
-	// CerebrasUsageMetricCompletionTimeSeconds is the time spent generating output tokens.
+	// CerebrasUsageMetricCompletionTimeSeconds is the float64 generation-duration
+	// key in [Response.UsageMetadata].
 	CerebrasUsageMetricCompletionTimeSeconds = "completion_time_seconds"
-	// CerebrasUsageMetricTotalTimeSeconds is the request's total processing time.
+	// CerebrasUsageMetricTotalTimeSeconds is the float64 total-duration key in
+	// [Response.UsageMetadata].
 	CerebrasUsageMetricTotalTimeSeconds = "total_time_seconds"
-	// CerebrasUsageMetricTimeInfoCreated is the Unix timestamp in Cerebras time_info.
+	// CerebrasUsageMetricTimeInfoCreated is the int64 Unix timestamp key in
+	// [Response.UsageMetadata].
 	CerebrasUsageMetricTimeInfoCreated = "time_info_created"
 )
 
 const (
-	// CerebrasGenerationOptionLogitBias stores a map of token IDs to logit adjustments.
+	// CerebrasGenerationOptionLogitBias is the map[string]float64 key set by
+	// [WithCerebrasLogitBias].
 	CerebrasGenerationOptionLogitBias = "cerebras_logit_bias"
-	// CerebrasGenerationOptionLogprobs controls token log-probability output.
+	// CerebrasGenerationOptionLogprobs is the bool key set by
+	// [WithCerebrasLogprobs].
 	CerebrasGenerationOptionLogprobs = "cerebras_logprobs"
-	// CerebrasGenerationOptionParallelToolCalls controls parallel function calling.
+	// CerebrasGenerationOptionParallelToolCalls is the bool key set by
+	// [WithCerebrasParallelToolCalls].
 	CerebrasGenerationOptionParallelToolCalls = "cerebras_parallel_tool_calls"
-	// CerebrasGenerationOptionPrediction stores known predicted output text.
+	// CerebrasGenerationOptionPrediction is the string key set by
+	// [WithCerebrasPrediction].
 	CerebrasGenerationOptionPrediction = "cerebras_prediction"
-	// CerebrasGenerationOptionPromptCacheKey stores a prompt cache routing key.
+	// CerebrasGenerationOptionPromptCacheKey is the string key set by
+	// [WithCerebrasPromptCacheKey].
 	CerebrasGenerationOptionPromptCacheKey = "cerebras_prompt_cache_key"
-	// CerebrasGenerationOptionResponseFormat stores a Cerebras response_format object.
+	// CerebrasGenerationOptionResponseFormat is the map[string]any key set by
+	// [WithCerebrasResponseFormat].
 	CerebrasGenerationOptionResponseFormat = "cerebras_response_format"
-	// CerebrasGenerationOptionSeed stores the sampling seed.
+	// CerebrasGenerationOptionSeed is the int key set by [WithCerebrasSeed].
 	CerebrasGenerationOptionSeed = "cerebras_seed"
-	// CerebrasGenerationOptionServiceTier stores the requested processing tier.
+	// CerebrasGenerationOptionServiceTier is the string key set by
+	// [WithCerebrasServiceTier].
 	CerebrasGenerationOptionServiceTier = "cerebras_service_tier"
-	// CerebrasGenerationOptionTopLogprobs stores the number of alternative tokens per position.
+	// CerebrasGenerationOptionTopLogprobs is the int key set by
+	// [WithCerebrasTopLogprobs].
 	CerebrasGenerationOptionTopLogprobs = "cerebras_top_logprobs"
-	// CerebrasGenerationOptionUser stores a provider-side end-user identifier.
+	// CerebrasGenerationOptionUser is the string key set by [WithCerebrasUser].
 	CerebrasGenerationOptionUser = "cerebras_user"
 )
 
 const (
-	// CerebrasResponseExtraFieldID stores the completion identifier.
+	// CerebrasResponseExtraFieldID is the string completion-ID key in
+	// [Response.ExtraFields].
 	CerebrasResponseExtraFieldID = "cerebras_id"
-	// CerebrasResponseExtraFieldModel stores the model reported in the response.
+	// CerebrasResponseExtraFieldModel is the string response-model key in
+	// [Response.ExtraFields].
 	CerebrasResponseExtraFieldModel = "cerebras_model"
-	// CerebrasResponseExtraFieldCreated stores the completion's Unix creation timestamp.
+	// CerebrasResponseExtraFieldCreated is the int64 Unix timestamp key in
+	// [Response.ExtraFields].
 	CerebrasResponseExtraFieldCreated = "cerebras_created"
-	// CerebrasResponseExtraFieldSystemFingerprint stores the backend configuration fingerprint.
+	// CerebrasResponseExtraFieldSystemFingerprint is the string backend
+	// fingerprint key in [Response.ExtraFields].
 	CerebrasResponseExtraFieldSystemFingerprint = "cerebras_system_fingerprint"
-	// CerebrasResponseExtraFieldServiceTier stores the response's service tier.
+	// CerebrasResponseExtraFieldServiceTier is the string requested-tier key in
+	// [Response.ExtraFields].
 	CerebrasResponseExtraFieldServiceTier = "cerebras_service_tier"
-	// CerebrasResponseExtraFieldServiceTierUsed stores the processing tier Cerebras actually used.
+	// CerebrasResponseExtraFieldServiceTierUsed is the string actual-tier key in
+	// [Response.ExtraFields].
 	CerebrasResponseExtraFieldServiceTierUsed = "cerebras_service_tier_used"
-	// CerebrasMessageExtraFieldLogprobs stores candidate token log probabilities.
+	// CerebrasMessageExtraFieldLogprobs is the map[string]any token-logprobability
+	// key in [Message.ExtraFields].
 	CerebrasMessageExtraFieldLogprobs = "cerebras_logprobs"
 )
 
-// CerebrasServiceTier controls request prioritization.
+// CerebrasServiceTier selects request prioritization for
+// [WithCerebrasServiceTier].
 type CerebrasServiceTier string
 
 const (
@@ -84,87 +106,112 @@ const (
 	CerebrasServiceTierFlex CerebrasServiceTier = "flex"
 )
 
-// WithCerebrasLogitBias sets token logit adjustments for one Cerebras request.
+// WithCerebrasLogitBias stores a copy of value under
+// [CerebrasGenerationOptionLogitBias].
 func WithCerebrasLogitBias(value map[string]float64) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionLogitBias] = maps.Clone(value)
 	}
 }
 
-// WithCerebrasLogprobs controls whether Cerebras returns token log probabilities.
+// WithCerebrasLogprobs stores enabled under
+// [CerebrasGenerationOptionLogprobs]. Returned log probabilities use
+// [CerebrasMessageExtraFieldLogprobs].
 func WithCerebrasLogprobs(enabled bool) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionLogprobs] = enabled
 	}
 }
 
-// WithCerebrasParallelToolCalls controls parallel function calling.
+// WithCerebrasParallelToolCalls stores enabled under
+// [CerebrasGenerationOptionParallelToolCalls].
 func WithCerebrasParallelToolCalls(enabled bool) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionParallelToolCalls] = enabled
 	}
 }
 
-// WithCerebrasPrediction supplies known text that Cerebras can match as predicted output.
+// WithCerebrasPrediction stores content under
+// [CerebrasGenerationOptionPrediction] as known predicted output.
 func WithCerebrasPrediction(content string) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionPrediction] = content
 	}
 }
 
-// WithCerebrasPromptCacheKey sets the Cerebras prompt cache routing key.
+// WithCerebrasPromptCacheKey stores value under
+// [CerebrasGenerationOptionPromptCacheKey].
 func WithCerebrasPromptCacheKey(value string) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionPromptCacheKey] = value
 	}
 }
 
-// WithCerebrasResponseFormat sets a Cerebras response_format object.
+// WithCerebrasResponseFormat stores a shallow copy of value under
+// [CerebrasGenerationOptionResponseFormat].
 func WithCerebrasResponseFormat(value map[string]any) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionResponseFormat] = maps.Clone(value)
 	}
 }
 
-// WithCerebrasSeed sets the best-effort deterministic sampling seed.
+// WithCerebrasSeed stores value under [CerebrasGenerationOptionSeed] for
+// best-effort deterministic sampling.
 func WithCerebrasSeed(value int) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionSeed] = value
 	}
 }
 
-// WithCerebrasServiceTier sets the Cerebras processing tier.
+// WithCerebrasServiceTier stores value under
+// [CerebrasGenerationOptionServiceTier].
 func WithCerebrasServiceTier(value CerebrasServiceTier) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionServiceTier] = string(value)
 	}
 }
 
-// WithCerebrasTopLogprobs sets the number of alternative tokens returned per position.
+// WithCerebrasTopLogprobs stores value under
+// [CerebrasGenerationOptionTopLogprobs].
 func WithCerebrasTopLogprobs(value int) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionTopLogprobs] = value
 	}
 }
 
-// WithCerebrasUser sets the provider-side end-user identifier.
+// WithCerebrasUser stores value under [CerebrasGenerationOptionUser] as a
+// provider-visible end-user identifier.
 func WithCerebrasUser(value string) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionUser] = value
 	}
 }
 
-// CerebrasDefaultBaseURL is the Cerebras API server declared by the generated OpenAPI client.
+// CerebrasDefaultBaseURL is the endpoint used by [NewCerebrasGenerator] when
+// baseURL is empty.
 const CerebrasDefaultBaseURL = string(cerebras.DefaultServer)
 
-// CerebrasGenerator implements Generator and StreamingGenerator using the generated Cerebras client.
+// CerebrasGenerator adapts Cerebras Chat Completions to [Generator] and
+// [StreamingGenerator]. It accepts text plus PNG or JPEG [ImageBlock] input,
+// produces text, supports function tools, and preserves reasoning for assistant replay.
+//
+// Cerebras consumes [WithTemperature], [WithTopP], [WithFrequencyPenalty],
+// [WithPresencePenalty], [WithMaxGenerationTokens], [WithToolChoice],
+// [WithStopSequences], [WithOutputModalities], and [WithThinkingBudget]. Native
+// controls include [WithCerebrasLogprobs], [WithCerebrasResponseFormat], and
+// [WithCerebrasServiceTier].
+//
+// Invocation details use the CerebrasResponseExtraField constants in
+// [Response.ExtraFields]. Candidate log probabilities use
+// [CerebrasMessageExtraFieldLogprobs] in [Message.ExtraFields]. Image tokens and
+// timing use the CerebrasUsageMetric constants in [Response.UsageMetadata].
 type CerebrasGenerator struct {
 	client *cerebras.Client
 }
 
-// NewCerebrasGenerator creates a stateless Cerebras generator.
-// A nil httpClient uses the default HTTP client. An empty baseURL uses
-// CerebrasDefaultBaseURL. apiKey is required.
+// NewCerebrasGenerator constructs a stateless Cerebras adapter. A nil
+// httpClient uses the generated client's default transport, an empty baseURL
+// uses [CerebrasDefaultBaseURL], and an empty apiKey returns [ErrMissingAPIKey].
 func NewCerebrasGenerator(httpClient *http.Client, baseURL, apiKey string) (*CerebrasGenerator, error) {
 	if baseURL == "" {
 		baseURL = CerebrasDefaultBaseURL
@@ -723,7 +770,9 @@ func mergeCerebrasLogprobs(destination, source map[string]any) {
 	}
 }
 
-// Generate implements Generator.
+// Generate sends one Cerebras Chat Completions request and normalizes text,
+// reasoning, tool calls, log probabilities, usage, and provider failures into
+// [Response].
 func (g *CerebrasGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("cerebras: client not initialized")
@@ -809,7 +858,8 @@ func (g *CerebrasGenerator) Generate(ctx context.Context, request GenerationRequ
 	return result, nil
 }
 
-// Stream implements StreamingGenerator.
+// Stream starts one Cerebras SSE stream when iterated and emits ordered
+// reasoning, text, tool-call, metadata, and terminal-error [StreamChunk] values.
 func (g *CerebrasGenerator) Stream(ctx context.Context, generationRequest GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {

@@ -18,98 +18,127 @@ import (
 )
 
 const (
-	// OpenRouterExtraFieldReasoningType stores the reasoning detail type (e.g., "reasoning.summary", "reasoning.text", "reasoning.encrypted").
-	// Present in Block.ExtraFields for Thinking blocks from OpenRouter responses.
+	// OpenRouterExtraFieldReasoningType is the string [Block.ExtraFields] key for
+	// a reasoning detail type such as "reasoning.summary" or "reasoning.encrypted".
 	OpenRouterExtraFieldReasoningType = "reasoning_type"
 
-	// OpenRouterExtraFieldReasoningFormat stores the reasoning detail format (e.g., "anthropic-claude-v1").
-	// Present in Block.ExtraFields for Thinking blocks from OpenRouter responses.
+	// OpenRouterExtraFieldReasoningFormat is the string [Block.ExtraFields] key
+	// for the provider reasoning format.
 	OpenRouterExtraFieldReasoningFormat = "reasoning_format"
 
-	// OpenRouterExtraFieldReasoningIndex stores the zero-based index of the reasoning detail in the response.
-	// Present in Block.ExtraFields for Thinking blocks from OpenRouter responses.
+	// OpenRouterExtraFieldReasoningIndex is the int [Block.ExtraFields] key for a
+	// reasoning detail's response index.
 	OpenRouterExtraFieldReasoningIndex = "reasoning_index"
 
-	// OpenRouterExtraFieldReasoningSignature stores the signature for encrypted reasoning details.
-	// Present in Block.ExtraFields for Thinking blocks with type "reasoning.text" when a signature is provided.
+	// OpenRouterExtraFieldReasoningSignature is the string [Block.ExtraFields]
+	// key for a replayable reasoning signature.
 	OpenRouterExtraFieldReasoningSignature = "reasoning_signature"
 
-	// OpenRouterUsageMetricReasoningDetailsAvailable indicates whether reasoning_details were present in the response.
-	// Stored in Response.UsageMetadata as a boolean value.
+	// OpenRouterUsageMetricReasoningDetailsAvailable is the bool
+	// [Response.UsageMetadata] key that reports whether reasoning details appeared.
 	OpenRouterUsageMetricReasoningDetailsAvailable = "reasoning_details_available"
 
-	// OpenRouterUsageMetricCost is the completion cost reported by OpenRouter.
+	// OpenRouterUsageMetricCost is the float64 completion-cost key in
+	// [Response.UsageMetadata].
 	OpenRouterUsageMetricCost = "cost"
 
-	// OpenRouterUsageMetricIsBYOK reports whether OpenRouter used a caller-provided provider key.
+	// OpenRouterUsageMetricIsBYOK is the bool [Response.UsageMetadata] key that
+	// reports whether OpenRouter used a caller-provided provider key.
 	OpenRouterUsageMetricIsBYOK = "is_byok"
 
-	// OpenRouterUsageMetricCostDetails stores OpenRouter's native cost breakdown.
+	// OpenRouterUsageMetricCostDetails is the map[string]any native cost-breakdown
+	// key in [Response.UsageMetadata].
 	OpenRouterUsageMetricCostDetails = "cost_details"
 
-	// OpenRouterUsageMetricServerToolUseDetails stores server-side tool usage counts.
+	// OpenRouterUsageMetricServerToolUseDetails is the map[string]any server-tool
+	// usage key in [Response.UsageMetadata].
 	OpenRouterUsageMetricServerToolUseDetails = "server_tool_use_details"
 
-	// OpenRouterUsageMetricPromptTokenDetails stores OpenRouter's full prompt token breakdown.
+	// OpenRouterUsageMetricPromptTokenDetails is the map[string]any prompt-token
+	// breakdown key in [Response.UsageMetadata].
 	OpenRouterUsageMetricPromptTokenDetails = "prompt_token_details"
 
-	// OpenRouterUsageMetricCompletionTokenDetails stores OpenRouter's full completion token breakdown.
+	// OpenRouterUsageMetricCompletionTokenDetails is the map[string]any
+	// completion-token breakdown key in [Response.UsageMetadata].
 	OpenRouterUsageMetricCompletionTokenDetails = "completion_token_details"
 )
 
 const (
-	// OpenRouterGenerationOptionLogitBias stores a map of token IDs to logit adjustments.
+	// OpenRouterGenerationOptionLogitBias is the map[string]float64 key set by
+	// [WithOpenRouterLogitBias].
 	OpenRouterGenerationOptionLogitBias = "openrouter_logit_bias"
-	// OpenRouterGenerationOptionLogprobs controls token log-probability output.
+	// OpenRouterGenerationOptionLogprobs is the bool key set by
+	// [WithOpenRouterLogprobs].
 	OpenRouterGenerationOptionLogprobs = "openrouter_logprobs"
-	// OpenRouterGenerationOptionMinP stores the minimum probability sampling threshold.
+	// OpenRouterGenerationOptionMinP is the float64 key set by
+	// [WithOpenRouterMinP].
 	OpenRouterGenerationOptionMinP = "openrouter_min_p"
-	// OpenRouterGenerationOptionModels stores the ordered fallback model list.
+	// OpenRouterGenerationOptionModels is the []string fallback-model key set by
+	// [WithOpenRouterFallbackModels].
 	OpenRouterGenerationOptionModels = "openrouter_models"
-	// OpenRouterGenerationOptionParallelToolCalls controls parallel function calling.
+	// OpenRouterGenerationOptionParallelToolCalls is the bool key set by
+	// [WithOpenRouterParallelToolCalls].
 	OpenRouterGenerationOptionParallelToolCalls = "openrouter_parallel_tool_calls"
-	// OpenRouterGenerationOptionPrediction stores known predicted output text.
+	// OpenRouterGenerationOptionPrediction is the string key set by
+	// [WithOpenRouterPrediction].
 	OpenRouterGenerationOptionPrediction = "openrouter_prediction"
-	// OpenRouterGenerationOptionPromptCacheKey stores a prompt cache routing key.
+	// OpenRouterGenerationOptionPromptCacheKey is the string key set by
+	// [WithOpenRouterPromptCacheKey].
 	OpenRouterGenerationOptionPromptCacheKey = "openrouter_prompt_cache_key"
-	// OpenRouterGenerationOptionProvider stores OpenRouter provider routing preferences.
+	// OpenRouterGenerationOptionProvider is the map[string]any routing key set by
+	// [WithOpenRouterProviderPreferences].
 	OpenRouterGenerationOptionProvider = "openrouter_provider"
-	// OpenRouterGenerationOptionRepetitionPenalty stores the repetition penalty.
+	// OpenRouterGenerationOptionRepetitionPenalty is the float64 key set by
+	// [WithOpenRouterRepetitionPenalty].
 	OpenRouterGenerationOptionRepetitionPenalty = "openrouter_repetition_penalty"
-	// OpenRouterGenerationOptionResponseFormat stores an OpenRouter response_format object.
+	// OpenRouterGenerationOptionResponseFormat is the map[string]any key set by
+	// [WithOpenRouterResponseFormat].
 	OpenRouterGenerationOptionResponseFormat = "openrouter_response_format"
-	// OpenRouterGenerationOptionSeed stores the sampling seed.
+	// OpenRouterGenerationOptionSeed is the int key set by [WithOpenRouterSeed].
 	OpenRouterGenerationOptionSeed = "openrouter_seed"
-	// OpenRouterGenerationOptionServiceTier stores the requested processing tier.
+	// OpenRouterGenerationOptionServiceTier is the string key set by
+	// [WithOpenRouterServiceTier].
 	OpenRouterGenerationOptionServiceTier = "openrouter_service_tier"
-	// OpenRouterGenerationOptionSessionID stores the session identifier.
+	// OpenRouterGenerationOptionSessionID is the string key set by
+	// [WithOpenRouterSessionID].
 	OpenRouterGenerationOptionSessionID = "openrouter_session_id"
-	// OpenRouterGenerationOptionTopA stores the top-a sampling threshold.
+	// OpenRouterGenerationOptionTopA is the float64 key set by
+	// [WithOpenRouterTopA].
 	OpenRouterGenerationOptionTopA = "openrouter_top_a"
-	// OpenRouterGenerationOptionTopLogprobs stores the number of alternative tokens per position.
+	// OpenRouterGenerationOptionTopLogprobs is the int key set by
+	// [WithOpenRouterTopLogprobs].
 	OpenRouterGenerationOptionTopLogprobs = "openrouter_top_logprobs"
-	// OpenRouterGenerationOptionUser stores a provider-side end-user identifier.
+	// OpenRouterGenerationOptionUser is the string key set by
+	// [WithOpenRouterUser].
 	OpenRouterGenerationOptionUser = "openrouter_user"
 )
 
 const (
-	// OpenRouterResponseExtraFieldID stores the completion identifier.
+	// OpenRouterResponseExtraFieldID is the string completion-ID key in
+	// [Response.ExtraFields].
 	OpenRouterResponseExtraFieldID = "openrouter_id"
-	// OpenRouterResponseExtraFieldModel stores the model reported in the response.
+	// OpenRouterResponseExtraFieldModel is the string response-model key in
+	// [Response.ExtraFields].
 	OpenRouterResponseExtraFieldModel = "openrouter_model"
-	// OpenRouterResponseExtraFieldCreated stores the completion's Unix creation timestamp.
+	// OpenRouterResponseExtraFieldCreated is the int64 Unix timestamp key in
+	// [Response.ExtraFields].
 	OpenRouterResponseExtraFieldCreated = "openrouter_created"
-	// OpenRouterResponseExtraFieldSystemFingerprint stores the backend configuration fingerprint.
+	// OpenRouterResponseExtraFieldSystemFingerprint is the string backend
+	// fingerprint key in [Response.ExtraFields].
 	OpenRouterResponseExtraFieldSystemFingerprint = "openrouter_system_fingerprint"
-	// OpenRouterResponseExtraFieldServiceTier stores the processing tier OpenRouter used.
+	// OpenRouterResponseExtraFieldServiceTier is the string processing-tier key
+	// in [Response.ExtraFields].
 	OpenRouterResponseExtraFieldServiceTier = "openrouter_service_tier"
-	// OpenRouterResponseExtraFieldMetadata stores OpenRouter's native response metadata object.
+	// OpenRouterResponseExtraFieldMetadata is the map[string]any native metadata
+	// key in [Response.ExtraFields].
 	OpenRouterResponseExtraFieldMetadata = "openrouter_metadata"
-	// OpenRouterMessageExtraFieldLogprobs stores candidate token log probabilities.
+	// OpenRouterMessageExtraFieldLogprobs is the map[string]any token-logprobability
+	// key in [Message.ExtraFields].
 	OpenRouterMessageExtraFieldLogprobs = "openrouter_logprobs"
 )
 
-// OpenRouterServiceTier selects the processing tier requested from OpenRouter.
+// OpenRouterServiceTier selects processing priority for
+// [WithOpenRouterServiceTier].
 type OpenRouterServiceTier string
 
 const (
@@ -127,98 +156,126 @@ const (
 	OpenRouterServiceTierScale OpenRouterServiceTier = "scale"
 )
 
-// WithOpenRouterLogitBias sets token logit adjustments for one OpenRouter request.
+// WithOpenRouterLogitBias stores a copy of value under
+// [OpenRouterGenerationOptionLogitBias].
 func WithOpenRouterLogitBias(value map[string]float64) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionLogitBias] = maps.Clone(value) }
 }
 
-// WithOpenRouterLogprobs controls whether OpenRouter returns token log probabilities.
+// WithOpenRouterLogprobs stores enabled under
+// [OpenRouterGenerationOptionLogprobs]. Returned values use
+// [OpenRouterMessageExtraFieldLogprobs].
 func WithOpenRouterLogprobs(enabled bool) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionLogprobs] = enabled }
 }
 
-// WithOpenRouterMinP sets OpenRouter's minimum probability sampling threshold.
+// WithOpenRouterMinP stores value under [OpenRouterGenerationOptionMinP].
 func WithOpenRouterMinP(value float64) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionMinP] = value }
 }
 
-// WithOpenRouterFallbackModels sets the ordered model fallback list.
+// WithOpenRouterFallbackModels stores a copy of values under
+// [OpenRouterGenerationOptionModels] in fallback order.
 func WithOpenRouterFallbackModels(values ...string) GenerationOption {
 	return func(options GenerationOptions) {
 		options[OpenRouterGenerationOptionModels] = append([]string(nil), values...)
 	}
 }
 
-// WithOpenRouterParallelToolCalls controls parallel function calling.
+// WithOpenRouterParallelToolCalls stores enabled under
+// [OpenRouterGenerationOptionParallelToolCalls].
 func WithOpenRouterParallelToolCalls(enabled bool) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionParallelToolCalls] = enabled }
 }
 
-// WithOpenRouterPrediction supplies known text that OpenRouter can match as predicted output.
+// WithOpenRouterPrediction stores content under
+// [OpenRouterGenerationOptionPrediction] as known predicted output.
 func WithOpenRouterPrediction(content string) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionPrediction] = content }
 }
 
-// WithOpenRouterPromptCacheKey sets the OpenRouter prompt cache routing key.
+// WithOpenRouterPromptCacheKey stores value under
+// [OpenRouterGenerationOptionPromptCacheKey].
 func WithOpenRouterPromptCacheKey(value string) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionPromptCacheKey] = value }
 }
 
-// WithOpenRouterProviderPreferences sets OpenRouter's provider routing object.
+// WithOpenRouterProviderPreferences stores a shallow copy of value under
+// [OpenRouterGenerationOptionProvider].
 func WithOpenRouterProviderPreferences(value map[string]any) GenerationOption {
 	return func(options GenerationOptions) {
 		options[OpenRouterGenerationOptionProvider] = maps.Clone(value)
 	}
 }
 
-// WithOpenRouterRepetitionPenalty sets OpenRouter's repetition penalty.
+// WithOpenRouterRepetitionPenalty stores value under
+// [OpenRouterGenerationOptionRepetitionPenalty].
 func WithOpenRouterRepetitionPenalty(value float64) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionRepetitionPenalty] = value }
 }
 
-// WithOpenRouterResponseFormat sets an OpenRouter response_format object.
+// WithOpenRouterResponseFormat stores a shallow copy of value under
+// [OpenRouterGenerationOptionResponseFormat].
 func WithOpenRouterResponseFormat(value map[string]any) GenerationOption {
 	return func(options GenerationOptions) {
 		options[OpenRouterGenerationOptionResponseFormat] = maps.Clone(value)
 	}
 }
 
-// WithOpenRouterSeed sets the best-effort deterministic sampling seed.
+// WithOpenRouterSeed stores value under [OpenRouterGenerationOptionSeed] for
+// best-effort deterministic sampling.
 func WithOpenRouterSeed(value int) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionSeed] = value }
 }
 
-// WithOpenRouterServiceTier sets the requested OpenRouter processing tier.
+// WithOpenRouterServiceTier stores value under
+// [OpenRouterGenerationOptionServiceTier].
 func WithOpenRouterServiceTier(value OpenRouterServiceTier) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionServiceTier] = string(value) }
 }
 
-// WithOpenRouterSessionID sets the OpenRouter session identifier.
+// WithOpenRouterSessionID stores value under
+// [OpenRouterGenerationOptionSessionID].
 func WithOpenRouterSessionID(value string) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionSessionID] = value }
 }
 
-// WithOpenRouterTopA sets OpenRouter's top-a sampling threshold.
+// WithOpenRouterTopA stores value under [OpenRouterGenerationOptionTopA].
 func WithOpenRouterTopA(value float64) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionTopA] = value }
 }
 
-// WithOpenRouterTopLogprobs sets the number of alternative tokens returned per position.
+// WithOpenRouterTopLogprobs stores value under
+// [OpenRouterGenerationOptionTopLogprobs].
 func WithOpenRouterTopLogprobs(value int) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionTopLogprobs] = value }
 }
 
-// WithOpenRouterUser sets the provider-side end-user identifier.
+// WithOpenRouterUser stores value under [OpenRouterGenerationOptionUser] as a
+// provider-visible end-user identifier.
 func WithOpenRouterUser(value string) GenerationOption {
 	return func(options GenerationOptions) { options[OpenRouterGenerationOptionUser] = value }
 }
 
-// OpenRouterDefaultBaseURL is the OpenRouter API server declared by the generated OpenAPI client.
+// OpenRouterDefaultBaseURL is the endpoint used by
+// [NewOpenRouterGenerator] when baseURL is empty.
 const OpenRouterDefaultBaseURL = string(openrouter.DefaultServer)
 
-// OpenRouterGenerator implements Generator and StreamingGenerator using the generated OpenRouter client.
-// It normalizes replayable reasoning details, function tools, multimodal input,
-// provider errors, and usage data from OpenRouter Chat Completions.
+// OpenRouterGenerator adapts OpenRouter Chat Completions to [Generator] and
+// [StreamingGenerator]. It accepts text, image, audio, and PDF input, produces
+// text, supports function tools, preserves reasoning details for replay, and
+// retains partial output when an upstream provider reports an error.
+//
+// OpenRouter consumes the common sampling, penalty, candidate, token-limit,
+// tool-choice, stop, output-modality, and thinking helpers. Native controls
+// include [WithOpenRouterFallbackModels], [WithOpenRouterProviderPreferences],
+// [WithOpenRouterResponseFormat], and [WithOpenRouterServiceTier].
+//
+// Reasoning metadata uses the OpenRouterExtraField constants in
+// [Block.ExtraFields]. Invocation data uses the OpenRouterResponseExtraField
+// constants in [Response.ExtraFields], candidate log probabilities use
+// [OpenRouterMessageExtraFieldLogprobs], and native usage uses the
+// OpenRouterUsageMetric constants.
 type OpenRouterGenerator struct {
 	client *openrouter.Client
 }
@@ -472,9 +529,10 @@ func parseOpenRouterGenerationOptions(values GenerationOptions) (*openRouterGene
 	return options, nil
 }
 
-// NewOpenRouterGenerator creates a stateless OpenRouter generator.
-// A nil httpClient uses the default HTTP client. An empty baseURL uses
-// OpenRouterDefaultBaseURL. apiKey is required.
+// NewOpenRouterGenerator constructs a stateless OpenRouter adapter. A nil
+// httpClient uses the generated client's default transport, an empty baseURL
+// uses [OpenRouterDefaultBaseURL], and an empty apiKey returns
+// [ErrMissingAPIKey].
 func NewOpenRouterGenerator(httpClient *http.Client, baseURL, apiKey string) (*OpenRouterGenerator, error) {
 	if baseURL == "" {
 		baseURL = OpenRouterDefaultBaseURL
@@ -990,7 +1048,9 @@ func openRouterResponseExtraFields(id, model string, created int64, systemFinger
 	return extraFields
 }
 
-// Generate implements Generator
+// Generate sends one OpenRouter Chat Completions request and normalizes
+// multimodal content, reasoning, tool calls, routing metadata, usage, partial
+// output, and provider failures into [Response].
 func (g *OpenRouterGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("openrouter: client not initialized")
@@ -1101,7 +1161,8 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, request GenerationRe
 	return result, nil
 }
 
-// Stream implements StreamingGenerator.
+// Stream starts one OpenRouter SSE stream when iterated and emits ordered
+// reasoning, text, tool-call, metadata, and terminal-error [StreamChunk] values.
 func (g *OpenRouterGenerator) Stream(ctx context.Context, generationRequest GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {

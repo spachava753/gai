@@ -24,19 +24,19 @@ import (
 )
 
 const (
-	// OpenAIExtraFieldImageWidth stores the image width in pixels.
-	// Can be set in Block.ExtraFields for Image blocks to specify dimensions
-	// when they cannot be determined from the image data.
+	// OpenAIExtraFieldImageWidth is the int pixel-width key in
+	// [Block.ExtraFields]. [OpenAiGenerator.Count] uses it when dimensions cannot
+	// be decoded from image data.
 	OpenAIExtraFieldImageWidth = "width"
 
-	// OpenAIExtraFieldImageHeight stores the image height in pixels.
-	// Can be set in Block.ExtraFields for Image blocks to specify dimensions
-	// when they cannot be determined from the image data.
+	// OpenAIExtraFieldImageHeight is the int pixel-height key in
+	// [Block.ExtraFields]. [OpenAiGenerator.Count] uses it with
+	// [OpenAIExtraFieldImageWidth].
 	OpenAIExtraFieldImageHeight = "height"
 
-	// OpenAIExtraFieldImageDetail stores the detail level for image processing.
-	// Can be set in Block.ExtraFields for Image blocks to "low" or "high".
-	// Defaults to "high" if not specified.
+	// OpenAIExtraFieldImageDetail is the string [Block.ExtraFields] key for
+	// OpenAI image detail. [OpenAiGenerator.Count] recognizes "low" and "high"
+	// and defaults an absent or unrecognized value to "high".
 	OpenAIExtraFieldImageDetail = "detail"
 )
 
@@ -92,7 +92,16 @@ func init() {
 	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo16k0613] = tiktoken.MODEL_CL100K_BASE
 }
 
-// OpenAiGenerator implements the gai.Generator interface using OpenAI's API
+// OpenAiGenerator adapts OpenAI Chat Completions to [Generator],
+// [StreamingGenerator], and [TokenCounter]. It accepts text, image, audio, and
+// PDF input, produces text or audio, and supports function tools.
+//
+// It consumes [WithTemperature], [WithTopP], [WithFrequencyPenalty],
+// [WithPresencePenalty], [WithCandidateCount], [WithMaxGenerationTokens],
+// [WithToolChoice], [WithStopSequences], [WithOutputModalities],
+// [WithAudioConfig], and [WithThinkingBudget]. Image token counting can use
+// [OpenAIExtraFieldImageWidth], [OpenAIExtraFieldImageHeight], and
+// [OpenAIExtraFieldImageDetail].
 type OpenAiGenerator struct {
 	client OpenAICompletionService
 }
@@ -445,7 +454,8 @@ func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
 	}
 }
 
-// Generate implements gai.Generator
+// Generate sends one Chat Completions request and normalizes candidates, text,
+// audio, tool calls, usage, and provider failures into [Response].
 func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("openai: client not initialized")
@@ -745,7 +755,8 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationReques
 	return result, nil
 }
 
-// Stream builds the request inside the iterator and emits ordered content, tools, audio, usage, and terminal failures.
+// Stream starts one Chat Completions stream when iterated and emits ordered
+// text, audio, tool-call, usage, and terminal-error [StreamChunk] values.
 func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {
@@ -1042,30 +1053,19 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 	}
 }
 
+// OpenAICompletionService is the Chat Completions SDK subset required by
+// [OpenAiGenerator]. The OpenAI SDK's client.Chat.Completions service satisfies
+// this interface.
 type OpenAICompletionService interface {
+	// New performs one non-streaming Chat Completions request.
 	New(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (res *oai.ChatCompletion, err error)
+	// NewStreaming starts one streaming Chat Completions request.
 	NewStreaming(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (stream *oaissestream.Stream[oai.ChatCompletionChunk])
 }
 
-// NewOpenAiGenerator creates a stateless OpenAI generator.
-// The returned generator implements Generator, StreamingGenerator, and TokenCounter.
-//
-// Parameters:
-//   - client: An OpenAI completion service (typically &client.Chat.Completions)
-//
-// Supported modalities:
-//   - Text: Both input and output
-//   - Image: Input only (base64 encoded, including PDFs with MIME type "application/pdf")
-//   - Audio: Input only (base64 encoded, WAV and MP3 formats)
-//
-// For audio input, use models with audio support like:
-//   - openai.ChatModelGPT4oAudioPreview
-//   - openai.ChatModelGPT4oMiniAudioPreview
-//
-// PDF documents are supported as a special case of the Image modality. Use the PDFBlock
-// helper function to create PDF content blocks.
-//
-// This generator fully supports the anyOf JSON Schema feature.
+// NewOpenAiGenerator returns a stateless OpenAI Chat Completions adapter backed
+// by client. The OpenAI SDK's client.Chat.Completions service satisfies
+// [OpenAICompletionService].
 func NewOpenAiGenerator(client OpenAICompletionService) *OpenAiGenerator {
 	return &OpenAiGenerator{client: client}
 }
@@ -1309,12 +1309,12 @@ func getTokensForModel(model string) (baseTokens, tileTokens int) {
 	}
 }
 
-// Count uses tiktoken-go to count the request's model, instructions, dialog,
-// and tools without making an API call.
+// Count uses tiktoken to count the request model, instructions, dialog, and
+// tools without a provider call.
 //
-// Image token counts use the request model and image dimensions. Dimensions come
-// from image data or ExtraFields. PDF counting is unsupported because providers
-// convert PDFs to images server-side and do not expose exact dimensions.
+// Image counts use dimensions decoded from image data or supplied through
+// [OpenAIExtraFieldImageWidth] and [OpenAIExtraFieldImageHeight]. [PDFBlock]
+// counting is unsupported because server-side page conversion is not observable.
 func (g *OpenAiGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	select {
 	case <-ctx.Done():
