@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"math"
 	"net/http"
 	"strings"
 
@@ -16,8 +17,8 @@ import (
 	"github.com/spachava753/gai/internal/zai"
 )
 
-// ZaiGenerator adapts Z.AI Chat Completions to [Generator] and
-// [StreamingGenerator]. It accepts text plus supported image, video, and PDF URL
+// ZaiGenerator adapts Z.AI Chat Completions to [Generator],
+// [StreamingGenerator], and [TokenCounter]. It accepts text plus supported image, video, and PDF URL
 // input, produces text, supports function tools, and preserves interleaved
 // reasoning for assistant replay.
 //
@@ -1079,6 +1080,70 @@ func decodeZaiToolCallArguments(raw json.RawMessage, params *map[string]any) err
 	return json.Unmarshal(raw, params)
 }
 
+// Count sends the model, instructions, dialog, tools, and multimodal input to
+// Z.AI's tokenizer endpoint. It uses the same message conversion as generation,
+// returns total input tokens, and honors context cancellation.
+func (g *ZaiGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
+	// Count builds the matching text or vision request before calling Z.AI.
+	if g.client == nil {
+		return 0, fmt.Errorf("zai: client not initialized")
+	}
+	if len(request.Dialog) == 0 {
+		return 0, ErrEmptyDialog
+	}
+
+	instructions, err := joinedTextInstructions(request.Instructions)
+	if err != nil {
+		return 0, err
+	}
+	tools, err := convertToolsToZai(request.Tools)
+	if err != nil {
+		return 0, err
+	}
+
+	var tokenizerRequest zai.PaasV4TokenizerPostReq
+	if g.dialogNeedsVision(request.Dialog) {
+		messages, err := g.buildVisionMessages(request.Dialog, instructions)
+		if err != nil {
+			return 0, fmt.Errorf("zai: prepare token counting messages: %w", err)
+		}
+		providerRequest := zai.ChatCompletionVisionRequest{
+			Model:    zai.ChatCompletionVisionRequestModel(request.Model),
+			Messages: messages,
+		}
+		for _, tool := range tools {
+			providerRequest.Tools = append(providerRequest.Tools, zai.NewFunctionToolSchemaChatCompletionVisionRequestToolsItem(tool))
+		}
+		tokenizerRequest = zai.NewChatCompletionVisionRequestPaasV4TokenizerPostReq(providerRequest)
+	} else {
+		messages, err := g.buildTextMessages(request.Dialog, instructions)
+		if err != nil {
+			return 0, fmt.Errorf("zai: prepare token counting messages: %w", err)
+		}
+		providerRequest := zai.ChatCompletionTextRequest{
+			Model:    zai.ChatCompletionTextRequestModel(request.Model),
+			Messages: messages,
+		}
+		for _, tool := range tools {
+			providerRequest.Tools = append(providerRequest.Tools, zai.NewFunctionToolSchemaChatCompletionTextRequestToolsItem(tool))
+		}
+		tokenizerRequest = zai.NewChatCompletionTextRequestPaasV4TokenizerPostReq(providerRequest)
+	}
+
+	response, err := g.client.PaasV4TokenizerPost(ctx, tokenizerRequest)
+	if err != nil {
+		return 0, mapZAIError(err)
+	}
+	total, ok := response.Usage.TotalTokens.Get()
+	if !ok {
+		return 0, fmt.Errorf("zai: token counting response missing total_tokens")
+	}
+	if math.IsNaN(total) || math.IsInf(total, 0) || total < 0 || math.Trunc(total) != total || total >= float64(^uint(0)) {
+		return 0, fmt.Errorf("zai: token counting response has invalid total_tokens %v", total)
+	}
+	return uint(total), nil
+}
+
 func mapZAIError(err error) error {
 	var statusErr *zai.ErrorResponseStatusCode
 	if !errors.As(err, &statusErr) {
@@ -1103,3 +1168,4 @@ func mapZAIError(err error) error {
 
 var _ Generator = (*ZaiGenerator)(nil)
 var _ StreamingGenerator = (*ZaiGenerator)(nil)
+var _ TokenCounter = (*ZaiGenerator)(nil)

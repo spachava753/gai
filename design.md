@@ -89,9 +89,9 @@ type TokenCounter interface {
 }
 ```
 
-All three methods receive the same request. In particular, token counting includes the model, instructions, dialog, and tools instead of relying on configuration hidden in the generator. OpenAI counts locally with `tiktoken`; Anthropic and Gemini call their token-counting APIs.
+All three methods receive the same request. In particular, token counting includes the model, instructions, dialog, and tools instead of relying on configuration hidden in the generator. OpenAI counts locally with `tiktoken`; Anthropic, Gemini, and Z.AI call their token-counting APIs.
 
-Every provider adapter listed below implements generation and streaming. OpenAI, Anthropic, and Gemini also implement token counting.
+Every provider adapter listed below implements generation and streaming. OpenAI, Anthropic, Gemini, and Z.AI also implement token counting.
 
 ## Messages and instructions
 
@@ -323,7 +323,7 @@ A provider generator keeps only what it needs to send a request:
 | `CerebrasGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 | `OpenRouterGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 | `ResponsesGenerator` | Responses service | `Generator`, `StreamingGenerator` |
-| `ZaiGenerator` | private generated client | `Generator`, `StreamingGenerator` |
+| `ZaiGenerator` | private generated client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `DeepSeekGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 
 Constructors set up those connections. Generated clients under `internal/` never appear in public constructor parameters or return types. The generated-client adapters accept a standard `*http.Client`, base URL, and API key, then construct their private client internally. An empty base URL selects an exported provider default that aliases the `DefaultServer` constant generated from the OpenAPI spec. The API key must be non-empty; constructors do not read credentials from environment variables or other global state. Constructors return client setup errors instead of retaining an invalid client.

@@ -91,7 +91,7 @@ A response contains generated candidate messages, a normalized finish reason, us
 | Cerebras | `NewCerebrasGenerator` | `StreamingGenerator` |
 | OpenRouter | `NewOpenRouterGenerator` | `StreamingGenerator` |
 | DeepSeek | `NewDeepSeekGenerator` | `StreamingGenerator` |
-| Z.AI | `NewZaiGenerator` | `StreamingGenerator` |
+| Z.AI | `NewZaiGenerator` | `StreamingGenerator`, `TokenCounter` |
 
 Provider type documentation lists supported content, common options, native options, response metadata, and replay requirements. See the [package documentation](https://pkg.go.dev/github.com/spachava753/gai).
 

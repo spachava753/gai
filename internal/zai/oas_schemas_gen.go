@@ -3864,6 +3864,52 @@ func (o OptInt) Or(d int) int {
 	return d
 }
 
+// NewOptInt64 returns new OptInt64 with value set to v.
+func NewOptInt64(v int64) OptInt64 {
+	return OptInt64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptInt64 is optional int64.
+type OptInt64 struct {
+	Value int64
+	Set   bool
+}
+
+// IsSet returns true if OptInt64 was set.
+func (o OptInt64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptInt64) Reset() {
+	var v int64
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptInt64) SetTo(v int64) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptInt64) Get() (v int64, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptInt64) Or(d int64) int64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptNilString returns new OptNilString with value set to v.
 func NewOptNilString(v string) OptNilString {
 	return OptNilString{
@@ -4574,6 +4620,75 @@ func NewChatCompletionVisionRequestPaasV4ChatCompletionsPostReq(v ChatCompletion
 	return s
 }
 
+// PaasV4TokenizerPostReq represents sum type.
+type PaasV4TokenizerPostReq struct {
+	// Type selects the active sum variant, switch on this field.
+	Type                        PaasV4TokenizerPostReqType
+	ChatCompletionTextRequest   ChatCompletionTextRequest
+	ChatCompletionVisionRequest ChatCompletionVisionRequest
+}
+
+// PaasV4TokenizerPostReqType is oneOf type of PaasV4TokenizerPostReq.
+type PaasV4TokenizerPostReqType string
+
+// Possible values for PaasV4TokenizerPostReqType.
+const (
+	ChatCompletionTextRequestPaasV4TokenizerPostReq   PaasV4TokenizerPostReqType = "ChatCompletionTextRequest"
+	ChatCompletionVisionRequestPaasV4TokenizerPostReq PaasV4TokenizerPostReqType = "ChatCompletionVisionRequest"
+)
+
+// IsChatCompletionTextRequest reports whether PaasV4TokenizerPostReq is ChatCompletionTextRequest.
+func (s PaasV4TokenizerPostReq) IsChatCompletionTextRequest() bool {
+	return s.Type == ChatCompletionTextRequestPaasV4TokenizerPostReq
+}
+
+// IsChatCompletionVisionRequest reports whether PaasV4TokenizerPostReq is ChatCompletionVisionRequest.
+func (s PaasV4TokenizerPostReq) IsChatCompletionVisionRequest() bool {
+	return s.Type == ChatCompletionVisionRequestPaasV4TokenizerPostReq
+}
+
+// SetChatCompletionTextRequest sets PaasV4TokenizerPostReq to ChatCompletionTextRequest.
+func (s *PaasV4TokenizerPostReq) SetChatCompletionTextRequest(v ChatCompletionTextRequest) {
+	s.Type = ChatCompletionTextRequestPaasV4TokenizerPostReq
+	s.ChatCompletionTextRequest = v
+}
+
+// GetChatCompletionTextRequest returns ChatCompletionTextRequest and true boolean if PaasV4TokenizerPostReq is ChatCompletionTextRequest.
+func (s PaasV4TokenizerPostReq) GetChatCompletionTextRequest() (v ChatCompletionTextRequest, ok bool) {
+	if !s.IsChatCompletionTextRequest() {
+		return v, false
+	}
+	return s.ChatCompletionTextRequest, true
+}
+
+// NewChatCompletionTextRequestPaasV4TokenizerPostReq returns new PaasV4TokenizerPostReq from ChatCompletionTextRequest.
+func NewChatCompletionTextRequestPaasV4TokenizerPostReq(v ChatCompletionTextRequest) PaasV4TokenizerPostReq {
+	var s PaasV4TokenizerPostReq
+	s.SetChatCompletionTextRequest(v)
+	return s
+}
+
+// SetChatCompletionVisionRequest sets PaasV4TokenizerPostReq to ChatCompletionVisionRequest.
+func (s *PaasV4TokenizerPostReq) SetChatCompletionVisionRequest(v ChatCompletionVisionRequest) {
+	s.Type = ChatCompletionVisionRequestPaasV4TokenizerPostReq
+	s.ChatCompletionVisionRequest = v
+}
+
+// GetChatCompletionVisionRequest returns ChatCompletionVisionRequest and true boolean if PaasV4TokenizerPostReq is ChatCompletionVisionRequest.
+func (s PaasV4TokenizerPostReq) GetChatCompletionVisionRequest() (v ChatCompletionVisionRequest, ok bool) {
+	if !s.IsChatCompletionVisionRequest() {
+		return v, false
+	}
+	return s.ChatCompletionVisionRequest, true
+}
+
+// NewChatCompletionVisionRequestPaasV4TokenizerPostReq returns new PaasV4TokenizerPostReq from ChatCompletionVisionRequest.
+func NewChatCompletionVisionRequestPaasV4TokenizerPostReq(v ChatCompletionVisionRequest) PaasV4TokenizerPostReq {
+	var s PaasV4TokenizerPostReq
+	s.SetChatCompletionVisionRequest(v)
+	return s
+}
+
 // Ref: #/components/schemas/RetrievalObject
 type RetrievalObject struct {
 	// Knowledge base ID, created or obtained from the platform.
@@ -4665,6 +4780,106 @@ func (s *RetrievalToolSchemaType) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/TokenizerResponse
+type TokenizerResponse struct {
+	Created   OptInt64       `json:"created"`
+	ID        string         `json:"id"`
+	RequestID OptString      `json:"request_id"`
+	Usage     TokenizerUsage `json:"usage"`
+}
+
+// GetCreated returns the value of Created.
+func (s *TokenizerResponse) GetCreated() OptInt64 {
+	return s.Created
+}
+
+// GetID returns the value of ID.
+func (s *TokenizerResponse) GetID() string {
+	return s.ID
+}
+
+// GetRequestID returns the value of RequestID.
+func (s *TokenizerResponse) GetRequestID() OptString {
+	return s.RequestID
+}
+
+// GetUsage returns the value of Usage.
+func (s *TokenizerResponse) GetUsage() TokenizerUsage {
+	return s.Usage
+}
+
+// SetCreated sets the value of Created.
+func (s *TokenizerResponse) SetCreated(val OptInt64) {
+	s.Created = val
+}
+
+// SetID sets the value of ID.
+func (s *TokenizerResponse) SetID(val string) {
+	s.ID = val
+}
+
+// SetRequestID sets the value of RequestID.
+func (s *TokenizerResponse) SetRequestID(val OptString) {
+	s.RequestID = val
+}
+
+// SetUsage sets the value of Usage.
+func (s *TokenizerResponse) SetUsage(val TokenizerUsage) {
+	s.Usage = val
+}
+
+// Ref: #/components/schemas/TokenizerUsage
+type TokenizerUsage struct {
+	// Prompt tokens in the input.
+	PromptTokens OptFloat64 `json:"prompt_tokens"`
+	// Image tokens in the input.
+	ImageTokens OptFloat64 `json:"image_tokens"`
+	// Video tokens in the input.
+	VideoTokens OptFloat64 `json:"video_tokens"`
+	// Total tokens in the input.
+	TotalTokens OptFloat64 `json:"total_tokens"`
+}
+
+// GetPromptTokens returns the value of PromptTokens.
+func (s *TokenizerUsage) GetPromptTokens() OptFloat64 {
+	return s.PromptTokens
+}
+
+// GetImageTokens returns the value of ImageTokens.
+func (s *TokenizerUsage) GetImageTokens() OptFloat64 {
+	return s.ImageTokens
+}
+
+// GetVideoTokens returns the value of VideoTokens.
+func (s *TokenizerUsage) GetVideoTokens() OptFloat64 {
+	return s.VideoTokens
+}
+
+// GetTotalTokens returns the value of TotalTokens.
+func (s *TokenizerUsage) GetTotalTokens() OptFloat64 {
+	return s.TotalTokens
+}
+
+// SetPromptTokens sets the value of PromptTokens.
+func (s *TokenizerUsage) SetPromptTokens(val OptFloat64) {
+	s.PromptTokens = val
+}
+
+// SetImageTokens sets the value of ImageTokens.
+func (s *TokenizerUsage) SetImageTokens(val OptFloat64) {
+	s.ImageTokens = val
+}
+
+// SetVideoTokens sets the value of VideoTokens.
+func (s *TokenizerUsage) SetVideoTokens(val OptFloat64) {
+	s.VideoTokens = val
+}
+
+// SetTotalTokens sets the value of TotalTokens.
+func (s *TokenizerUsage) SetTotalTokens(val OptFloat64) {
+	s.TotalTokens = val
 }
 
 // Ref: #/components/schemas/VisionMultimodalContentItem

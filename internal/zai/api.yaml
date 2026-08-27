@@ -167,6 +167,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /paas/v4/tokenizer:
+    post:
+      summary: Count prompt tokens
+      description: >-
+        Tokenizes messages and function declarations for the selected model and
+        returns prompt, image, video, and total token counts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ChatCompletionTextRequest"
+                  title: Text prompt
+                - $ref: "#/components/schemas/ChatCompletionVisionRequest"
+                  title: Multimodal prompt
+      responses:
+        "200":
+          description: Processing successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenizerResponse"
+        default:
+          description: The request has failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   parameters:
     AcceptLanguage:
@@ -181,6 +210,36 @@ components:
           - en-US,en
       required: false
   schemas:
+    TokenizerResponse:
+      type: object
+      required:
+        - id
+        - usage
+      properties:
+        created:
+          type: integer
+          format: int64
+        id:
+          type: string
+        request_id:
+          type: string
+        usage:
+          $ref: "#/components/schemas/TokenizerUsage"
+    TokenizerUsage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: number
+          description: Prompt tokens in the input.
+        image_tokens:
+          type: number
+          description: Image tokens in the input.
+        video_tokens:
+          type: number
+          description: Video tokens in the input.
+        total_tokens:
+          type: number
+          description: Total tokens in the input.
     ChatCompletionTextRequest:
       required:
         - model

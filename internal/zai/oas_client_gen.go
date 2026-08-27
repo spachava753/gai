@@ -4,6 +4,7 @@ package zai
 
 import (
 	"context"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -195,6 +196,13 @@ type Invoker interface {
 	//
 	// POST /paas/v4/chat/completions
 	PaasV4ChatCompletionsPost(ctx context.Context, request PaasV4ChatCompletionsPostReq, params PaasV4ChatCompletionsPostParams) (PaasV4ChatCompletionsPostRes, error)
+	// PaasV4TokenizerPost invokes POST /paas/v4/tokenizer operation.
+	//
+	// Tokenizes messages and function declarations for the selected model and returns prompt, image,
+	// video, and total token counts.
+	//
+	// POST /paas/v4/tokenizer
+	PaasV4TokenizerPost(ctx context.Context, request PaasV4TokenizerPostReq) (*TokenizerResponse, error)
 }
 
 // Client implements OAS client.
@@ -468,6 +476,139 @@ func (c *Client) sendPaasV4ChatCompletionsPost(ctx context.Context, request Paas
 		}, sseOptions)
 	} else {
 		_ = resp.Body.Close()
+	}
+
+	return result, nil
+}
+
+// PaasV4TokenizerPost invokes POST /paas/v4/tokenizer operation.
+//
+// Tokenizes messages and function declarations for the selected model and returns prompt, image,
+// video, and total token counts.
+//
+// POST /paas/v4/tokenizer
+func (c *Client) PaasV4TokenizerPost(ctx context.Context, request PaasV4TokenizerPostReq) (*TokenizerResponse, error) {
+	res, err := c.sendPaasV4TokenizerPost(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendPaasV4TokenizerPost(ctx context.Context, request PaasV4TokenizerPostReq) (res *TokenizerResponse, err error) {
+	// Validate request before sending.
+	if err := func() error {
+		if err := request.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return res, errors.Wrap(err, "validate")
+	}
+	otelAttrs := []attribute.KeyValue{
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/paas/v4/tokenizer"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PaasV4TokenizerPostOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/paas/v4/tokenizer"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePaasV4TokenizerPostRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:BearerAuth"
+			switch err := c.securityBearerAuth(ctx, PaasV4TokenizerPostOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"BearerAuth\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	if err := c.onRequest(ctx, r); err != nil {
+		return res, errors.Wrap(err, "client edit request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := c.onResponse(ctx, resp); err != nil {
+		return res, errors.Wrap(err, "client edit response")
+	}
+
+	stage = "DecodeResponse"
+	result, err := decodePaasV4TokenizerPostResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
 	}
 
 	return result, nil

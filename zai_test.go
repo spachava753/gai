@@ -64,6 +64,245 @@ func TestGLMAdapterScenarios(t *testing.T) {
 	t.Run("ZaiGeneratorUsesGeneratedJSONClient", testZaiGeneratorUsesGeneratedJSONClient)
 	t.Run("ZaiGeneratorUsesGeneratedSSEClient", testZaiGeneratorUsesGeneratedSSEClient)
 	t.Run("ZaiRejectsUnsupportedToolChoice", testZaiRejectsUnsupportedToolChoice)
+	t.Run("ZaiTokenCounterCountsToolTrajectory", testZaiTokenCounterCountsToolTrajectory)
+	t.Run("ZaiTokenCounterMapsGeneratedErrors", testZaiTokenCounterMapsGeneratedErrors)
+	t.Run("ZaiTokenCounterRejectsInvalidRequests", testZaiTokenCounterRejectsInvalidRequests)
+	t.Run("ZaiTokenCounterRejectsInvalidTotals", testZaiTokenCounterRejectsInvalidTotals)
+	t.Run("ZaiTokenCounterUsesGeneratedClient", testZaiTokenCounterUsesGeneratedClient)
+}
+
+func testZaiTokenCounterUsesGeneratedClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/paas/v4/tokenizer" {
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			http.Error(w, "missing authorization", http.StatusUnauthorized)
+			return
+		}
+
+		var request struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+			Tools []struct {
+				Type     string `json:"type"`
+				Function struct {
+					Name       string         `json:"name"`
+					Parameters map[string]any `json:"parameters"`
+				} `json:"function"`
+			} `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "decode request", http.StatusBadRequest)
+			return
+		}
+		if request.Model != "glm-5.3-flash" {
+			t.Errorf("model = %q, want glm-5.3-flash", request.Model)
+		}
+		if len(request.Messages) != 4 {
+			t.Errorf("messages = %d, want 4", len(request.Messages))
+		} else {
+			roles := []string{"system", "user", "assistant", "user"}
+			for i, role := range roles {
+				if request.Messages[i].Role != role {
+					t.Errorf("message %d role = %q, want %q", i, request.Messages[i].Role, role)
+				}
+			}
+			if !strings.Contains(string(request.Messages[1].Content), "data:image/png;base64,aW1hZ2U=") {
+				t.Errorf("multimodal user content = %s", request.Messages[1].Content)
+			}
+		}
+		if len(request.Tools) != 1 {
+			t.Errorf("tools = %+v", request.Tools)
+		} else {
+			if request.Tools[0].Type != "function" || request.Tools[0].Function.Name != "get_weather" {
+				t.Errorf("tools = %+v", request.Tools)
+			}
+			if _, ok := request.Tools[0].Function.Parameters["properties"]; !ok {
+				t.Errorf("tool parameters = %v", request.Tools[0].Function.Parameters)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"tokenizer_1","created":42,"usage":{"prompt_tokens":9,"image_tokens":4,"video_tokens":0,"total_tokens":13}}`))
+	}))
+	defer server.Close()
+
+	schema, err := GenerateSchema[struct {
+		City string `json:"city"`
+	}]()
+	if err != nil {
+		t.Fatalf("generate schema: %v", err)
+	}
+	count, err := newZaiTestGenerator(t, server).Count(t.Context(), GenerationRequest{
+		Model:        "glm-5.3-flash",
+		Instructions: SystemMessage(TextBlock("Answer briefly.")),
+		Dialog: Dialog{
+			{Role: User, Blocks: []Block{TextBlock("What is shown?"), ImageBlock([]byte("image"), "image/png")}},
+			{Role: Assistant, Blocks: []Block{TextBlock("A weather map.")}},
+			{Role: User, Blocks: []Block{TextBlock("Count this prompt.")}},
+		},
+		Tools: []Tool{{Name: "get_weather", Description: "Get weather.", InputSchema: schema}},
+	})
+	if err != nil {
+		t.Fatalf("count tokens: %v", err)
+	}
+	if count != 13 {
+		t.Fatalf("count = %d, want 13", count)
+	}
+}
+
+func testZaiTokenCounterCountsToolTrajectory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Messages []struct {
+				Role       string          `json:"role"`
+				Content    json.RawMessage `json:"content"`
+				ToolCallID string          `json:"tool_call_id"`
+				ToolCalls  []struct {
+					ID       string `json:"id"`
+					Type     string `json:"type"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "decode request", http.StatusBadRequest)
+			return
+		}
+		if len(request.Messages) != 4 {
+			t.Errorf("messages = %d, want 4", len(request.Messages))
+		} else {
+			roles := []string{"user", "assistant", "tool", "user"}
+			for i, role := range roles {
+				if request.Messages[i].Role != role {
+					t.Errorf("message %d role = %q, want %q", i, request.Messages[i].Role, role)
+				}
+			}
+			assistant := request.Messages[1]
+			if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "call_1" ||
+				assistant.ToolCalls[0].Type != "function" || assistant.ToolCalls[0].Function.Name != "get_weather" ||
+				!strings.Contains(assistant.ToolCalls[0].Function.Arguments, `"city":"Paris"`) {
+				t.Errorf("assistant tool calls = %+v", assistant.ToolCalls)
+			}
+			if request.Messages[2].ToolCallID != "call_1" || string(request.Messages[2].Content) != `"sunny"` {
+				t.Errorf("tool result = %+v", request.Messages[2])
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"tokenizer_1","usage":{"total_tokens":21}}`))
+	}))
+	defer server.Close()
+
+	toolCall, err := ToolCallBlock("call_1", "get_weather", map[string]any{"city": "Paris"})
+	if err != nil {
+		t.Fatalf("create tool call: %v", err)
+	}
+	count, err := newZaiTestGenerator(t, server).Count(t.Context(), GenerationRequest{
+		Model: "glm-5.3",
+		Dialog: Dialog{
+			{Role: User, Blocks: []Block{TextBlock("What is the weather in Paris?")}},
+			{Role: Assistant, Blocks: []Block{toolCall}},
+			ToolResultMessage("call_1", TextBlock("sunny")),
+			{Role: User, Blocks: []Block{TextBlock("Summarize that.")}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("count tool trajectory: %v", err)
+	}
+	if count != 21 {
+		t.Fatalf("count = %d, want 21", count)
+	}
+}
+
+func testZaiTokenCounterMapsGeneratedErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":1113,"message":"quota exceeded"}`))
+	}))
+	defer server.Close()
+
+	_, err := newZaiTestGenerator(t, server).Count(t.Context(), GenerationRequest{
+		Model:  "glm-5.3",
+		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
+	})
+	var apiErr *ApiErr
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %T %v, want ApiErr", err, err)
+	}
+	if apiErr.Provider != ProviderZAI || apiErr.Kind != APIErrorKindRateLimit || apiErr.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("api error = %+v", apiErr)
+	}
+}
+
+func testZaiTokenCounterRejectsInvalidRequests(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "request should not reach server", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	generator := newZaiTestGenerator(t, server)
+
+	tests := []struct {
+		name    string
+		request GenerationRequest
+		want    string
+	}{
+		{name: "empty dialog", request: GenerationRequest{Model: "glm-5.3"}, want: ErrEmptyDialog.Error()},
+		{
+			name: "unsupported audio",
+			request: GenerationRequest{
+				Model:  "glm-5.3-flash",
+				Dialog: Dialog{{Role: User, Blocks: []Block{AudioBlock([]byte("audio"), "audio/wav")}}},
+			},
+			want: UnsupportedInputModalityErr(Audio.String()).Error(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := generator.Count(t.Context(), tt.request)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func testZaiTokenCounterRejectsInvalidTotals(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage string
+	}{
+		{name: "missing", usage: `{"prompt_tokens":3}`},
+		{name: "fractional", usage: `{"total_tokens":3.5}`},
+		{name: "negative", usage: `{"total_tokens":-1}`},
+		{name: "overflow", usage: `{"total_tokens":18446744073709551616}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"tokenizer_1","usage":` + tt.usage + `}`))
+			}))
+			defer server.Close()
+
+			_, err := newZaiTestGenerator(t, server).Count(t.Context(), GenerationRequest{
+				Model:  "glm-5.3",
+				Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
+			})
+			if err == nil || !strings.Contains(err.Error(), "total_tokens") {
+				t.Fatalf("error = %v, want invalid total_tokens", err)
+			}
+		})
+	}
 }
 
 func testZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
@@ -275,6 +514,90 @@ func testZaiRejectsUnsupportedToolChoice(t *testing.T) {
 }
 
 func testZaiGenerator(t *testing.T) {
+	t.Run("Count", func(t *testing.T) {
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
+		count, err := newLiveZaiGenerator(t, apiKey).Count(context.Background(), GenerationRequest{
+			Model:        "glm-4.6",
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+			Dialog:       Dialog{{Role: User, Blocks: []Block{TextBlock("Hello!")}}},
+		})
+		if err != nil {
+			t.Fatalf("count tokens: %v", err)
+		}
+		if count == 0 {
+			t.Fatal("token count is zero")
+		}
+	})
+
+	t.Run("CountToolTrajectory", func(t *testing.T) {
+		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
+		generator := newLiveZaiGenerator(t, apiKey)
+		tools := []Tool{{Name: "get_weather", Description: "Get weather for a city."}}
+		userMessage := Message{Role: User, Blocks: []Block{TextBlock("What is the weather in Paris?")}}
+
+		shortCall, err := ToolCallBlock("call_1", "get_weather", map[string]any{"city": "Paris"})
+		if err != nil {
+			t.Fatalf("create short tool call: %v", err)
+		}
+		longCall, err := ToolCallBlock("call_1", "get_weather", map[string]any{
+			"city": strings.Repeat("Paris weather context ", 40),
+		})
+		if err != nil {
+			t.Fatalf("create long tool call: %v", err)
+		}
+
+		count := func(dialog Dialog) uint {
+			t.Helper()
+			value, err := generator.Count(context.Background(), GenerationRequest{
+				Model:  "glm-4.6",
+				Dialog: dialog,
+				Tools:  tools,
+			})
+			if err != nil {
+				t.Fatalf("count tool trajectory: %v", err)
+			}
+			return value
+		}
+
+		baselineCount := count(Dialog{
+			userMessage,
+			{Role: Assistant},
+		})
+		shortCallCount := count(Dialog{
+			userMessage,
+			{Role: Assistant, Blocks: []Block{shortCall}},
+		})
+		longCallCount := count(Dialog{
+			userMessage,
+			{Role: Assistant, Blocks: []Block{longCall}},
+		})
+		shortResultCount := count(Dialog{
+			userMessage,
+			{Role: Assistant, Blocks: []Block{shortCall}},
+			ToolResultMessage("call_1", TextBlock("sunny")),
+		})
+		longResultCount := count(Dialog{
+			userMessage,
+			{Role: Assistant, Blocks: []Block{shortCall}},
+			ToolResultMessage("call_1", TextBlock(strings.Repeat("sunny weather with mild wind and clear skies. ", 40))),
+		})
+
+		t.Logf("token counts: baseline=%d short_call=%d long_call=%d short_result=%d long_result=%d",
+			baselineCount, shortCallCount, longCallCount, shortResultCount, longResultCount)
+		if shortCallCount <= baselineCount {
+			t.Fatalf("short tool call count = %d, want greater than baseline %d", shortCallCount, baselineCount)
+		}
+		if longCallCount <= shortCallCount {
+			t.Fatalf("long tool call count = %d, want greater than short call %d", longCallCount, shortCallCount)
+		}
+		if shortResultCount <= shortCallCount {
+			t.Fatalf("short tool result count = %d, want greater than tool call %d", shortResultCount, shortCallCount)
+		}
+		if longResultCount <= shortResultCount {
+			t.Fatalf("long tool result count = %d, want greater than short result %d", longResultCount, shortResultCount)
+		}
+	})
+
 	t.Run("Generate", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "Z_API_KEY")
 		gen := newLiveZaiGenerator(t, apiKey)

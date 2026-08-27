@@ -1658,6 +1658,23 @@ func (s PaasV4ChatCompletionsPostReq) Validate() error {
 	}
 }
 
+func (s PaasV4TokenizerPostReq) Validate() error {
+	switch s.Type {
+	case ChatCompletionTextRequestPaasV4TokenizerPostReq:
+		if err := s.ChatCompletionTextRequest.Validate(); err != nil {
+			return err
+		}
+		return nil
+	case ChatCompletionVisionRequestPaasV4TokenizerPostReq:
+		if err := s.ChatCompletionVisionRequest.Validate(); err != nil {
+			return err
+		}
+		return nil
+	default:
+		return errors.Errorf("invalid type %q", s.Type)
+	}
+}
+
 func (s *RetrievalToolSchema) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -1688,6 +1705,113 @@ func (s RetrievalToolSchemaType) Validate() error {
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
+}
+
+func (s *TokenizerResponse) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Usage.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "usage",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *TokenizerUsage) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if value, ok := s.PromptTokens.Get(); ok {
+			if err := func() error {
+				if err := (validate.Float{}).Validate(float64(value)); err != nil {
+					return errors.Wrap(err, "float")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "prompt_tokens",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.ImageTokens.Get(); ok {
+			if err := func() error {
+				if err := (validate.Float{}).Validate(float64(value)); err != nil {
+					return errors.Wrap(err, "float")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "image_tokens",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.VideoTokens.Get(); ok {
+			if err := func() error {
+				if err := (validate.Float{}).Validate(float64(value)); err != nil {
+					return errors.Wrap(err, "float")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "video_tokens",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.TotalTokens.Get(); ok {
+			if err := func() error {
+				if err := (validate.Float{}).Validate(float64(value)); err != nil {
+					return errors.Wrap(err, "float")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "total_tokens",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
 }
 
 func (s VisionMultimodalContentItem) Validate() error {

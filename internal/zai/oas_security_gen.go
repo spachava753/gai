@@ -21,6 +21,7 @@ type SecuritySource interface {
 // operationRolesBearerAuth is a private map storing roles per operation.
 var operationRolesBearerAuth = map[string][]string{
 	PaasV4ChatCompletionsPostOperation: []string{},
+	PaasV4TokenizerPostOperation:       []string{},
 }
 
 // GetRolesForBearerAuth returns the required roles for the given operation.

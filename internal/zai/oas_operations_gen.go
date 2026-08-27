@@ -7,4 +7,5 @@ type OperationName = string
 
 const (
 	PaasV4ChatCompletionsPostOperation OperationName = "PaasV4ChatCompletionsPost"
+	PaasV4TokenizerPostOperation       OperationName = "PaasV4TokenizerPost"
 )

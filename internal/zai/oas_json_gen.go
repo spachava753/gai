@@ -6117,6 +6117,41 @@ func (s *OptInt) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes int64 as json.
+func (o OptInt64) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Int64(int64(o.Value))
+}
+
+// Decode decodes int64 from json.
+func (o *OptInt64) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptInt64 to nil")
+	}
+	o.Set = true
+	v, err := d.Int64()
+	if err != nil {
+		return err
+	}
+	o.Value = int64(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptInt64) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptInt64) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes string as json.
 func (o OptNilString) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -6704,6 +6739,324 @@ func (s *PaasV4ChatCompletionsPostReq) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes PaasV4TokenizerPostReq as json.
+func (s PaasV4TokenizerPostReq) Encode(e *jx.Encoder) {
+	switch s.Type {
+	case ChatCompletionTextRequestPaasV4TokenizerPostReq:
+		s.ChatCompletionTextRequest.Encode(e)
+	case ChatCompletionVisionRequestPaasV4TokenizerPostReq:
+		s.ChatCompletionVisionRequest.Encode(e)
+	}
+}
+
+func (s PaasV4TokenizerPostReq) encodeFields(e *jx.Encoder) {
+	switch s.Type {
+	case ChatCompletionTextRequestPaasV4TokenizerPostReq:
+		s.ChatCompletionTextRequest.encodeFields(e)
+	case ChatCompletionVisionRequestPaasV4TokenizerPostReq:
+		s.ChatCompletionVisionRequest.encodeFields(e)
+	}
+}
+
+// Decode decodes PaasV4TokenizerPostReq from json.
+func (s *PaasV4TokenizerPostReq) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode PaasV4TokenizerPostReq to nil")
+	}
+	// Sum type fields.
+	if typ := d.Next(); typ != jx.Object {
+		return errors.Errorf("unexpected json type %q", typ)
+	}
+
+	var found bool
+	if err := d.Capture(func(d *jx.Decoder) error {
+		return d.ObjBytes(func(d *jx.Decoder, key []byte) error {
+			switch string(key) {
+			case "reasoning_effort":
+				// Multiple variants have this field - use type checking to discriminate
+				typ := d.Next()
+				switch typ {
+				case jx.String:
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				default:
+					// Unknown type for this field
+					return d.Skip()
+				}
+			case "response_format":
+				// Type-based discrimination: check if field has expected JSON type
+				if typ := d.Next(); typ != jx.Object {
+					// Field exists but has wrong type, not a match for this variant
+					return d.Skip()
+				}
+				match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+				if found && s.Type != match {
+					s.Type = ""
+					return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+				}
+				found = true
+				s.Type = match
+			case "tool_choice":
+				// Multiple variants have this field - use type checking to discriminate
+				typ := d.Next()
+				switch typ {
+				case jx.String:
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				default:
+					// Unknown type for this field
+					return d.Skip()
+				}
+			case "tool_stream":
+				// Type-based discrimination: check if field has expected JSON type
+				if typ := d.Next(); typ != jx.Bool {
+					// Field exists but has wrong type, not a match for this variant
+					return d.Skip()
+				}
+				match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+				if found && s.Type != match {
+					s.Type = ""
+					return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+				}
+				found = true
+				s.Type = match
+			case "model":
+				// Value-based discrimination: check enum value
+				if typ := d.Next(); typ != jx.String {
+					return d.Skip()
+				}
+				value, err := d.StrBytes()
+				if err != nil {
+					return err
+				}
+				switch string(value) {
+				case "autoglm-phone-multilingual":
+					match := ChatCompletionVisionRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4-32b-0414-128k":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.5":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.5-air":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.5-airx":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.5-flash":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.5-x":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.5v":
+					match := ChatCompletionVisionRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.6":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.6v":
+					match := ChatCompletionVisionRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.6v-flash":
+					match := ChatCompletionVisionRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.6v-flashx":
+					match := ChatCompletionVisionRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.7":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.7-flash":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-4.7-flashx":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-5":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-5-turbo":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-5.1":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-5.2":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-5.3":
+					match := ChatCompletionTextRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-5.3-flash":
+					match := ChatCompletionVisionRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-5v-turbo":
+					match := ChatCompletionVisionRequestPaasV4TokenizerPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				default:
+					// Unknown enum value, ignore and continue
+				}
+				return nil
+			}
+			return d.Skip()
+		})
+	}); err != nil {
+		return errors.Wrap(err, "capture")
+	}
+	if !found {
+		return errors.New("unable to detect sum type variant")
+	}
+	switch s.Type {
+	case ChatCompletionTextRequestPaasV4TokenizerPostReq:
+		if err := s.ChatCompletionTextRequest.Decode(d); err != nil {
+			return err
+		}
+	case ChatCompletionVisionRequestPaasV4TokenizerPostReq:
+		if err := s.ChatCompletionVisionRequest.Decode(d); err != nil {
+			return err
+		}
+	default:
+		return errors.Errorf("inferred invalid type: %s", s.Type)
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s PaasV4TokenizerPostReq) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *PaasV4TokenizerPostReq) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode implements json.Marshaler.
 func (s *RetrievalObject) Encode(e *jx.Encoder) {
 	e.ObjStart()
@@ -6961,6 +7314,265 @@ func (s RetrievalToolSchemaType) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *RetrievalToolSchemaType) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *TokenizerResponse) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *TokenizerResponse) encodeFields(e *jx.Encoder) {
+	{
+		if s.Created.Set {
+			e.FieldStart("created")
+			s.Created.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("id")
+		e.Str(s.ID)
+	}
+	{
+		if s.RequestID.Set {
+			e.FieldStart("request_id")
+			s.RequestID.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("usage")
+		s.Usage.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfTokenizerResponse = [4]string{
+	0: "created",
+	1: "id",
+	2: "request_id",
+	3: "usage",
+}
+
+// Decode decodes TokenizerResponse from json.
+func (s *TokenizerResponse) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode TokenizerResponse to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "created":
+			if err := func() error {
+				s.Created.Reset()
+				if err := s.Created.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"created\"")
+			}
+		case "id":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.ID = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"id\"")
+			}
+		case "request_id":
+			if err := func() error {
+				s.RequestID.Reset()
+				if err := s.RequestID.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"request_id\"")
+			}
+		case "usage":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				if err := s.Usage.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"usage\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode TokenizerResponse")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00001010,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfTokenizerResponse) {
+					name = jsonFieldsNameOfTokenizerResponse[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *TokenizerResponse) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *TokenizerResponse) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *TokenizerUsage) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *TokenizerUsage) encodeFields(e *jx.Encoder) {
+	{
+		if s.PromptTokens.Set {
+			e.FieldStart("prompt_tokens")
+			s.PromptTokens.Encode(e)
+		}
+	}
+	{
+		if s.ImageTokens.Set {
+			e.FieldStart("image_tokens")
+			s.ImageTokens.Encode(e)
+		}
+	}
+	{
+		if s.VideoTokens.Set {
+			e.FieldStart("video_tokens")
+			s.VideoTokens.Encode(e)
+		}
+	}
+	{
+		if s.TotalTokens.Set {
+			e.FieldStart("total_tokens")
+			s.TotalTokens.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfTokenizerUsage = [4]string{
+	0: "prompt_tokens",
+	1: "image_tokens",
+	2: "video_tokens",
+	3: "total_tokens",
+}
+
+// Decode decodes TokenizerUsage from json.
+func (s *TokenizerUsage) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode TokenizerUsage to nil")
+	}
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "prompt_tokens":
+			if err := func() error {
+				s.PromptTokens.Reset()
+				if err := s.PromptTokens.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"prompt_tokens\"")
+			}
+		case "image_tokens":
+			if err := func() error {
+				s.ImageTokens.Reset()
+				if err := s.ImageTokens.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"image_tokens\"")
+			}
+		case "video_tokens":
+			if err := func() error {
+				s.VideoTokens.Reset()
+				if err := s.VideoTokens.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"video_tokens\"")
+			}
+		case "total_tokens":
+			if err := func() error {
+				s.TotalTokens.Reset()
+				if err := s.TotalTokens.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"total_tokens\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode TokenizerUsage")
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *TokenizerUsage) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *TokenizerUsage) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
