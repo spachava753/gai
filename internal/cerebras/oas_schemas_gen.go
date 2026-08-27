@@ -132,6 +132,7 @@ func (s *BearerAuth) SetRoles(val []string) {
 type ChatChoice struct {
 	Index        int                    `json:"index"`
 	FinishReason ChatChoiceFinishReason `json:"finish_reason"`
+	Logprobs     OptLogProbs            `json:"logprobs"`
 	Message      ResponseMessage        `json:"message"`
 }
 
@@ -143,6 +144,11 @@ func (s *ChatChoice) GetIndex() int {
 // GetFinishReason returns the value of FinishReason.
 func (s *ChatChoice) GetFinishReason() ChatChoiceFinishReason {
 	return s.FinishReason
+}
+
+// GetLogprobs returns the value of Logprobs.
+func (s *ChatChoice) GetLogprobs() OptLogProbs {
+	return s.Logprobs
 }
 
 // GetMessage returns the value of Message.
@@ -158,6 +164,11 @@ func (s *ChatChoice) SetIndex(val int) {
 // SetFinishReason sets the value of FinishReason.
 func (s *ChatChoice) SetFinishReason(val ChatChoiceFinishReason) {
 	s.FinishReason = val
+}
+
+// SetLogprobs sets the value of Logprobs.
+func (s *ChatChoice) SetLogprobs(val OptLogProbs) {
+	s.Logprobs = val
 }
 
 // SetMessage sets the value of Message.
@@ -222,13 +233,16 @@ func (s *ChatChoiceFinishReason) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/ChatCompletionChunk
 type ChatCompletionChunk struct {
-	ID                string                      `json:"id"`
-	Object            ChatCompletionChunkObject   `json:"object"`
-	Created           int64                       `json:"created"`
-	Model             string                      `json:"model"`
-	SystemFingerprint OptString                   `json:"system_fingerprint"`
-	Choices           []ChatCompletionChunkChoice `json:"choices"`
-	Usage             OptUsage                    `json:"usage"`
+	ID                string                                   `json:"id"`
+	Object            ChatCompletionChunkObject                `json:"object"`
+	Created           int64                                    `json:"created"`
+	Model             string                                   `json:"model"`
+	SystemFingerprint OptString                                `json:"system_fingerprint"`
+	ServiceTier       OptNilString                             `json:"service_tier"`
+	ServiceTierUsed   OptNilChatCompletionChunkServiceTierUsed `json:"service_tier_used"`
+	Choices           []ChatCompletionChunkChoice              `json:"choices"`
+	Usage             OptUsage                                 `json:"usage"`
+	TimeInfo          OptTimeInfo                              `json:"time_info"`
 }
 
 // GetID returns the value of ID.
@@ -256,6 +270,16 @@ func (s *ChatCompletionChunk) GetSystemFingerprint() OptString {
 	return s.SystemFingerprint
 }
 
+// GetServiceTier returns the value of ServiceTier.
+func (s *ChatCompletionChunk) GetServiceTier() OptNilString {
+	return s.ServiceTier
+}
+
+// GetServiceTierUsed returns the value of ServiceTierUsed.
+func (s *ChatCompletionChunk) GetServiceTierUsed() OptNilChatCompletionChunkServiceTierUsed {
+	return s.ServiceTierUsed
+}
+
 // GetChoices returns the value of Choices.
 func (s *ChatCompletionChunk) GetChoices() []ChatCompletionChunkChoice {
 	return s.Choices
@@ -264,6 +288,11 @@ func (s *ChatCompletionChunk) GetChoices() []ChatCompletionChunkChoice {
 // GetUsage returns the value of Usage.
 func (s *ChatCompletionChunk) GetUsage() OptUsage {
 	return s.Usage
+}
+
+// GetTimeInfo returns the value of TimeInfo.
+func (s *ChatCompletionChunk) GetTimeInfo() OptTimeInfo {
+	return s.TimeInfo
 }
 
 // SetID sets the value of ID.
@@ -291,6 +320,16 @@ func (s *ChatCompletionChunk) SetSystemFingerprint(val OptString) {
 	s.SystemFingerprint = val
 }
 
+// SetServiceTier sets the value of ServiceTier.
+func (s *ChatCompletionChunk) SetServiceTier(val OptNilString) {
+	s.ServiceTier = val
+}
+
+// SetServiceTierUsed sets the value of ServiceTierUsed.
+func (s *ChatCompletionChunk) SetServiceTierUsed(val OptNilChatCompletionChunkServiceTierUsed) {
+	s.ServiceTierUsed = val
+}
+
 // SetChoices sets the value of Choices.
 func (s *ChatCompletionChunk) SetChoices(val []ChatCompletionChunkChoice) {
 	s.Choices = val
@@ -301,11 +340,17 @@ func (s *ChatCompletionChunk) SetUsage(val OptUsage) {
 	s.Usage = val
 }
 
+// SetTimeInfo sets the value of TimeInfo.
+func (s *ChatCompletionChunk) SetTimeInfo(val OptTimeInfo) {
+	s.TimeInfo = val
+}
+
 // Ref: #/components/schemas/ChatCompletionChunkChoice
 type ChatCompletionChunkChoice struct {
 	Index        int                                         `json:"index"`
 	Delta        ChatCompletionChunkDelta                    `json:"delta"`
 	FinishReason OptNilChatCompletionChunkChoiceFinishReason `json:"finish_reason"`
+	Logprobs     OptLogProbs                                 `json:"logprobs"`
 }
 
 // GetIndex returns the value of Index.
@@ -323,6 +368,11 @@ func (s *ChatCompletionChunkChoice) GetFinishReason() OptNilChatCompletionChunkC
 	return s.FinishReason
 }
 
+// GetLogprobs returns the value of Logprobs.
+func (s *ChatCompletionChunkChoice) GetLogprobs() OptLogProbs {
+	return s.Logprobs
+}
+
 // SetIndex sets the value of Index.
 func (s *ChatCompletionChunkChoice) SetIndex(val int) {
 	s.Index = val
@@ -336,6 +386,11 @@ func (s *ChatCompletionChunkChoice) SetDelta(val ChatCompletionChunkDelta) {
 // SetFinishReason sets the value of FinishReason.
 func (s *ChatCompletionChunkChoice) SetFinishReason(val OptNilChatCompletionChunkChoiceFinishReason) {
 	s.FinishReason = val
+}
+
+// SetLogprobs sets the value of Logprobs.
+func (s *ChatCompletionChunkChoice) SetLogprobs(val OptLogProbs) {
+	s.Logprobs = val
 }
 
 type ChatCompletionChunkChoiceFinishReason string
@@ -509,6 +564,54 @@ func (s *ChatCompletionChunkObject) UnmarshalText(data []byte) error {
 	}
 }
 
+type ChatCompletionChunkServiceTierUsed string
+
+const (
+	ChatCompletionChunkServiceTierUsedPriority ChatCompletionChunkServiceTierUsed = "priority"
+	ChatCompletionChunkServiceTierUsedDefault  ChatCompletionChunkServiceTierUsed = "default"
+	ChatCompletionChunkServiceTierUsedFlex     ChatCompletionChunkServiceTierUsed = "flex"
+)
+
+// AllValues returns all ChatCompletionChunkServiceTierUsed values.
+func (ChatCompletionChunkServiceTierUsed) AllValues() []ChatCompletionChunkServiceTierUsed {
+	return []ChatCompletionChunkServiceTierUsed{
+		ChatCompletionChunkServiceTierUsedPriority,
+		ChatCompletionChunkServiceTierUsedDefault,
+		ChatCompletionChunkServiceTierUsedFlex,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ChatCompletionChunkServiceTierUsed) MarshalText() ([]byte, error) {
+	switch s {
+	case ChatCompletionChunkServiceTierUsedPriority:
+		return []byte(s), nil
+	case ChatCompletionChunkServiceTierUsedDefault:
+		return []byte(s), nil
+	case ChatCompletionChunkServiceTierUsedFlex:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ChatCompletionChunkServiceTierUsed) UnmarshalText(data []byte) error {
+	switch ChatCompletionChunkServiceTierUsed(data) {
+	case ChatCompletionChunkServiceTierUsedPriority:
+		*s = ChatCompletionChunkServiceTierUsedPriority
+		return nil
+	case ChatCompletionChunkServiceTierUsedDefault:
+		*s = ChatCompletionChunkServiceTierUsedDefault
+		return nil
+	case ChatCompletionChunkServiceTierUsedFlex:
+		*s = ChatCompletionChunkServiceTierUsedFlex
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/ChatCompletionChunkToolCall
 type ChatCompletionChunkToolCall struct {
 	Index    int                                 `json:"index"`
@@ -619,16 +722,28 @@ func (s *ChatCompletionChunkToolCallType) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/ChatCompletionRequest
 type ChatCompletionRequest struct {
-	Model               string             `json:"model"`
-	Messages            []Message          `json:"messages"`
-	Temperature         OptFloat64         `json:"temperature"`
-	TopP                OptFloat64         `json:"top_p"`
-	MaxCompletionTokens OptInt             `json:"max_completion_tokens"`
-	Stop                OptStop            `json:"stop"`
-	Tools               []FunctionTool     `json:"tools"`
-	ToolChoice          OptToolChoice      `json:"tool_choice"`
-	ReasoningEffort     OptReasoningEffort `json:"reasoning_effort"`
-	Stream              OptBool            `json:"stream"`
+	Model               string                            `json:"model"`
+	Messages            []Message                         `json:"messages"`
+	Temperature         OptFloat64                        `json:"temperature"`
+	TopP                OptFloat64                        `json:"top_p"`
+	FrequencyPenalty    OptFloat64                        `json:"frequency_penalty"`
+	PresencePenalty     OptFloat64                        `json:"presence_penalty"`
+	LogitBias           OptChatCompletionRequestLogitBias `json:"logit_bias"`
+	Logprobs            OptBool                           `json:"logprobs"`
+	MaxCompletionTokens OptInt                            `json:"max_completion_tokens"`
+	ParallelToolCalls   OptBool                           `json:"parallel_tool_calls"`
+	Prediction          OptPrediction                     `json:"prediction"`
+	PromptCacheKey      OptString                         `json:"prompt_cache_key"`
+	ResponseFormat      OptResponseFormat                 `json:"response_format"`
+	Seed                OptInt                            `json:"seed"`
+	ServiceTier         OptServiceTier                    `json:"service_tier"`
+	TopLogprobs         OptInt                            `json:"top_logprobs"`
+	User                OptString                         `json:"user"`
+	Stop                OptStop                           `json:"stop"`
+	Tools               []FunctionTool                    `json:"tools"`
+	ToolChoice          OptToolChoice                     `json:"tool_choice"`
+	ReasoningEffort     OptReasoningEffort                `json:"reasoning_effort"`
+	Stream              OptBool                           `json:"stream"`
 }
 
 // GetModel returns the value of Model.
@@ -651,9 +766,69 @@ func (s *ChatCompletionRequest) GetTopP() OptFloat64 {
 	return s.TopP
 }
 
+// GetFrequencyPenalty returns the value of FrequencyPenalty.
+func (s *ChatCompletionRequest) GetFrequencyPenalty() OptFloat64 {
+	return s.FrequencyPenalty
+}
+
+// GetPresencePenalty returns the value of PresencePenalty.
+func (s *ChatCompletionRequest) GetPresencePenalty() OptFloat64 {
+	return s.PresencePenalty
+}
+
+// GetLogitBias returns the value of LogitBias.
+func (s *ChatCompletionRequest) GetLogitBias() OptChatCompletionRequestLogitBias {
+	return s.LogitBias
+}
+
+// GetLogprobs returns the value of Logprobs.
+func (s *ChatCompletionRequest) GetLogprobs() OptBool {
+	return s.Logprobs
+}
+
 // GetMaxCompletionTokens returns the value of MaxCompletionTokens.
 func (s *ChatCompletionRequest) GetMaxCompletionTokens() OptInt {
 	return s.MaxCompletionTokens
+}
+
+// GetParallelToolCalls returns the value of ParallelToolCalls.
+func (s *ChatCompletionRequest) GetParallelToolCalls() OptBool {
+	return s.ParallelToolCalls
+}
+
+// GetPrediction returns the value of Prediction.
+func (s *ChatCompletionRequest) GetPrediction() OptPrediction {
+	return s.Prediction
+}
+
+// GetPromptCacheKey returns the value of PromptCacheKey.
+func (s *ChatCompletionRequest) GetPromptCacheKey() OptString {
+	return s.PromptCacheKey
+}
+
+// GetResponseFormat returns the value of ResponseFormat.
+func (s *ChatCompletionRequest) GetResponseFormat() OptResponseFormat {
+	return s.ResponseFormat
+}
+
+// GetSeed returns the value of Seed.
+func (s *ChatCompletionRequest) GetSeed() OptInt {
+	return s.Seed
+}
+
+// GetServiceTier returns the value of ServiceTier.
+func (s *ChatCompletionRequest) GetServiceTier() OptServiceTier {
+	return s.ServiceTier
+}
+
+// GetTopLogprobs returns the value of TopLogprobs.
+func (s *ChatCompletionRequest) GetTopLogprobs() OptInt {
+	return s.TopLogprobs
+}
+
+// GetUser returns the value of User.
+func (s *ChatCompletionRequest) GetUser() OptString {
+	return s.User
 }
 
 // GetStop returns the value of Stop.
@@ -701,9 +876,69 @@ func (s *ChatCompletionRequest) SetTopP(val OptFloat64) {
 	s.TopP = val
 }
 
+// SetFrequencyPenalty sets the value of FrequencyPenalty.
+func (s *ChatCompletionRequest) SetFrequencyPenalty(val OptFloat64) {
+	s.FrequencyPenalty = val
+}
+
+// SetPresencePenalty sets the value of PresencePenalty.
+func (s *ChatCompletionRequest) SetPresencePenalty(val OptFloat64) {
+	s.PresencePenalty = val
+}
+
+// SetLogitBias sets the value of LogitBias.
+func (s *ChatCompletionRequest) SetLogitBias(val OptChatCompletionRequestLogitBias) {
+	s.LogitBias = val
+}
+
+// SetLogprobs sets the value of Logprobs.
+func (s *ChatCompletionRequest) SetLogprobs(val OptBool) {
+	s.Logprobs = val
+}
+
 // SetMaxCompletionTokens sets the value of MaxCompletionTokens.
 func (s *ChatCompletionRequest) SetMaxCompletionTokens(val OptInt) {
 	s.MaxCompletionTokens = val
+}
+
+// SetParallelToolCalls sets the value of ParallelToolCalls.
+func (s *ChatCompletionRequest) SetParallelToolCalls(val OptBool) {
+	s.ParallelToolCalls = val
+}
+
+// SetPrediction sets the value of Prediction.
+func (s *ChatCompletionRequest) SetPrediction(val OptPrediction) {
+	s.Prediction = val
+}
+
+// SetPromptCacheKey sets the value of PromptCacheKey.
+func (s *ChatCompletionRequest) SetPromptCacheKey(val OptString) {
+	s.PromptCacheKey = val
+}
+
+// SetResponseFormat sets the value of ResponseFormat.
+func (s *ChatCompletionRequest) SetResponseFormat(val OptResponseFormat) {
+	s.ResponseFormat = val
+}
+
+// SetSeed sets the value of Seed.
+func (s *ChatCompletionRequest) SetSeed(val OptInt) {
+	s.Seed = val
+}
+
+// SetServiceTier sets the value of ServiceTier.
+func (s *ChatCompletionRequest) SetServiceTier(val OptServiceTier) {
+	s.ServiceTier = val
+}
+
+// SetTopLogprobs sets the value of TopLogprobs.
+func (s *ChatCompletionRequest) SetTopLogprobs(val OptInt) {
+	s.TopLogprobs = val
+}
+
+// SetUser sets the value of User.
+func (s *ChatCompletionRequest) SetUser(val OptString) {
+	s.User = val
 }
 
 // SetStop sets the value of Stop.
@@ -731,15 +966,29 @@ func (s *ChatCompletionRequest) SetStream(val OptBool) {
 	s.Stream = val
 }
 
+type ChatCompletionRequestLogitBias map[string]float64
+
+func (s *ChatCompletionRequestLogitBias) init() ChatCompletionRequestLogitBias {
+	m := *s
+	if m == nil {
+		m = map[string]float64{}
+		*s = m
+	}
+	return m
+}
+
 // Ref: #/components/schemas/ChatCompletionResponse
 type ChatCompletionResponse struct {
-	ID                string                       `json:"id"`
-	Object            ChatCompletionResponseObject `json:"object"`
-	Created           int64                        `json:"created"`
-	Model             string                       `json:"model"`
-	SystemFingerprint OptString                    `json:"system_fingerprint"`
-	Choices           []ChatChoice                 `json:"choices"`
-	Usage             OptUsage                     `json:"usage"`
+	ID                string                                      `json:"id"`
+	Object            ChatCompletionResponseObject                `json:"object"`
+	Created           int64                                       `json:"created"`
+	Model             string                                      `json:"model"`
+	SystemFingerprint OptString                                   `json:"system_fingerprint"`
+	ServiceTier       OptNilString                                `json:"service_tier"`
+	ServiceTierUsed   OptNilChatCompletionResponseServiceTierUsed `json:"service_tier_used"`
+	Choices           []ChatChoice                                `json:"choices"`
+	Usage             OptUsage                                    `json:"usage"`
+	TimeInfo          OptTimeInfo                                 `json:"time_info"`
 }
 
 // GetID returns the value of ID.
@@ -767,6 +1016,16 @@ func (s *ChatCompletionResponse) GetSystemFingerprint() OptString {
 	return s.SystemFingerprint
 }
 
+// GetServiceTier returns the value of ServiceTier.
+func (s *ChatCompletionResponse) GetServiceTier() OptNilString {
+	return s.ServiceTier
+}
+
+// GetServiceTierUsed returns the value of ServiceTierUsed.
+func (s *ChatCompletionResponse) GetServiceTierUsed() OptNilChatCompletionResponseServiceTierUsed {
+	return s.ServiceTierUsed
+}
+
 // GetChoices returns the value of Choices.
 func (s *ChatCompletionResponse) GetChoices() []ChatChoice {
 	return s.Choices
@@ -775,6 +1034,11 @@ func (s *ChatCompletionResponse) GetChoices() []ChatChoice {
 // GetUsage returns the value of Usage.
 func (s *ChatCompletionResponse) GetUsage() OptUsage {
 	return s.Usage
+}
+
+// GetTimeInfo returns the value of TimeInfo.
+func (s *ChatCompletionResponse) GetTimeInfo() OptTimeInfo {
+	return s.TimeInfo
 }
 
 // SetID sets the value of ID.
@@ -802,6 +1066,16 @@ func (s *ChatCompletionResponse) SetSystemFingerprint(val OptString) {
 	s.SystemFingerprint = val
 }
 
+// SetServiceTier sets the value of ServiceTier.
+func (s *ChatCompletionResponse) SetServiceTier(val OptNilString) {
+	s.ServiceTier = val
+}
+
+// SetServiceTierUsed sets the value of ServiceTierUsed.
+func (s *ChatCompletionResponse) SetServiceTierUsed(val OptNilChatCompletionResponseServiceTierUsed) {
+	s.ServiceTierUsed = val
+}
+
 // SetChoices sets the value of Choices.
 func (s *ChatCompletionResponse) SetChoices(val []ChatChoice) {
 	s.Choices = val
@@ -810,6 +1084,11 @@ func (s *ChatCompletionResponse) SetChoices(val []ChatChoice) {
 // SetUsage sets the value of Usage.
 func (s *ChatCompletionResponse) SetUsage(val OptUsage) {
 	s.Usage = val
+}
+
+// SetTimeInfo sets the value of TimeInfo.
+func (s *ChatCompletionResponse) SetTimeInfo(val OptTimeInfo) {
+	s.TimeInfo = val
 }
 
 func (*ChatCompletionResponse) createChatCompletionRes()                      {}
@@ -843,6 +1122,54 @@ func (s *ChatCompletionResponseObject) UnmarshalText(data []byte) error {
 	switch ChatCompletionResponseObject(data) {
 	case ChatCompletionResponseObjectChatCompletion:
 		*s = ChatCompletionResponseObjectChatCompletion
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type ChatCompletionResponseServiceTierUsed string
+
+const (
+	ChatCompletionResponseServiceTierUsedPriority ChatCompletionResponseServiceTierUsed = "priority"
+	ChatCompletionResponseServiceTierUsedDefault  ChatCompletionResponseServiceTierUsed = "default"
+	ChatCompletionResponseServiceTierUsedFlex     ChatCompletionResponseServiceTierUsed = "flex"
+)
+
+// AllValues returns all ChatCompletionResponseServiceTierUsed values.
+func (ChatCompletionResponseServiceTierUsed) AllValues() []ChatCompletionResponseServiceTierUsed {
+	return []ChatCompletionResponseServiceTierUsed{
+		ChatCompletionResponseServiceTierUsedPriority,
+		ChatCompletionResponseServiceTierUsedDefault,
+		ChatCompletionResponseServiceTierUsedFlex,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ChatCompletionResponseServiceTierUsed) MarshalText() ([]byte, error) {
+	switch s {
+	case ChatCompletionResponseServiceTierUsedPriority:
+		return []byte(s), nil
+	case ChatCompletionResponseServiceTierUsedDefault:
+		return []byte(s), nil
+	case ChatCompletionResponseServiceTierUsedFlex:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ChatCompletionResponseServiceTierUsed) UnmarshalText(data []byte) error {
+	switch ChatCompletionResponseServiceTierUsed(data) {
+	case ChatCompletionResponseServiceTierUsedPriority:
+		*s = ChatCompletionResponseServiceTierUsedPriority
+		return nil
+	case ChatCompletionResponseServiceTierUsedDefault:
+		*s = ChatCompletionResponseServiceTierUsedDefault
+		return nil
+	case ChatCompletionResponseServiceTierUsedFlex:
+		*s = ChatCompletionResponseServiceTierUsedFlex
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -1449,6 +1776,152 @@ func (s *FunctionToolType) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/ImageContentPart
+type ImageContentPart struct {
+	Type     ImageContentPartType `json:"type"`
+	ImageURL ImageURL             `json:"image_url"`
+}
+
+// GetType returns the value of Type.
+func (s *ImageContentPart) GetType() ImageContentPartType {
+	return s.Type
+}
+
+// GetImageURL returns the value of ImageURL.
+func (s *ImageContentPart) GetImageURL() ImageURL {
+	return s.ImageURL
+}
+
+// SetType sets the value of Type.
+func (s *ImageContentPart) SetType(val ImageContentPartType) {
+	s.Type = val
+}
+
+// SetImageURL sets the value of ImageURL.
+func (s *ImageContentPart) SetImageURL(val ImageURL) {
+	s.ImageURL = val
+}
+
+type ImageContentPartType string
+
+const (
+	ImageContentPartTypeImageURL ImageContentPartType = "image_url"
+)
+
+// AllValues returns all ImageContentPartType values.
+func (ImageContentPartType) AllValues() []ImageContentPartType {
+	return []ImageContentPartType{
+		ImageContentPartTypeImageURL,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ImageContentPartType) MarshalText() ([]byte, error) {
+	switch s {
+	case ImageContentPartTypeImageURL:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ImageContentPartType) UnmarshalText(data []byte) error {
+	switch ImageContentPartType(data) {
+	case ImageContentPartTypeImageURL:
+		*s = ImageContentPartTypeImageURL
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ImageURL
+type ImageURL struct {
+	URL string `json:"url"`
+}
+
+// GetURL returns the value of URL.
+func (s *ImageURL) GetURL() string {
+	return s.URL
+}
+
+// SetURL sets the value of URL.
+func (s *ImageURL) SetURL(val string) {
+	s.URL = val
+}
+
+// Ref: #/components/schemas/JSONSchemaFormat
+type JSONSchemaFormat struct {
+	Name        string                    `json:"name"`
+	Description OptString                 `json:"description"`
+	Schema      OptJSONSchemaFormatSchema `json:"schema"`
+	Strict      OptBool                   `json:"strict"`
+}
+
+// GetName returns the value of Name.
+func (s *JSONSchemaFormat) GetName() string {
+	return s.Name
+}
+
+// GetDescription returns the value of Description.
+func (s *JSONSchemaFormat) GetDescription() OptString {
+	return s.Description
+}
+
+// GetSchema returns the value of Schema.
+func (s *JSONSchemaFormat) GetSchema() OptJSONSchemaFormatSchema {
+	return s.Schema
+}
+
+// GetStrict returns the value of Strict.
+func (s *JSONSchemaFormat) GetStrict() OptBool {
+	return s.Strict
+}
+
+// SetName sets the value of Name.
+func (s *JSONSchemaFormat) SetName(val string) {
+	s.Name = val
+}
+
+// SetDescription sets the value of Description.
+func (s *JSONSchemaFormat) SetDescription(val OptString) {
+	s.Description = val
+}
+
+// SetSchema sets the value of Schema.
+func (s *JSONSchemaFormat) SetSchema(val OptJSONSchemaFormatSchema) {
+	s.Schema = val
+}
+
+// SetStrict sets the value of Strict.
+func (s *JSONSchemaFormat) SetStrict(val OptBool) {
+	s.Strict = val
+}
+
+type JSONSchemaFormatSchema map[string]jx.Raw
+
+func (s *JSONSchemaFormatSchema) init() JSONSchemaFormatSchema {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
+	}
+	return m
+}
+
+// Ref: #/components/schemas/LogProbs
+type LogProbs map[string]jx.Raw
+
+func (s *LogProbs) init() LogProbs {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
+	}
+	return m
+}
+
 // Ref: #/components/schemas/Message
 // Message represents sum type.
 type Message struct {
@@ -1705,6 +2178,52 @@ func (o OptChatCompletionChunkToolCallType) Or(d ChatCompletionChunkToolCallType
 	return d
 }
 
+// NewOptChatCompletionRequestLogitBias returns new OptChatCompletionRequestLogitBias with value set to v.
+func NewOptChatCompletionRequestLogitBias(v ChatCompletionRequestLogitBias) OptChatCompletionRequestLogitBias {
+	return OptChatCompletionRequestLogitBias{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatCompletionRequestLogitBias is optional ChatCompletionRequestLogitBias.
+type OptChatCompletionRequestLogitBias struct {
+	Value ChatCompletionRequestLogitBias
+	Set   bool
+}
+
+// IsSet returns true if OptChatCompletionRequestLogitBias was set.
+func (o OptChatCompletionRequestLogitBias) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatCompletionRequestLogitBias) Reset() {
+	var v ChatCompletionRequestLogitBias
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatCompletionRequestLogitBias) SetTo(v ChatCompletionRequestLogitBias) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatCompletionRequestLogitBias) Get() (v ChatCompletionRequestLogitBias, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatCompletionRequestLogitBias) Or(d ChatCompletionRequestLogitBias) ChatCompletionRequestLogitBias {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptCompletionTokensDetails returns new OptCompletionTokensDetails with value set to v.
 func NewOptCompletionTokensDetails(v CompletionTokensDetails) OptCompletionTokensDetails {
 	return OptCompletionTokensDetails{
@@ -1935,6 +2454,98 @@ func (o OptInt) Or(d int) int {
 	return d
 }
 
+// NewOptJSONSchemaFormatSchema returns new OptJSONSchemaFormatSchema with value set to v.
+func NewOptJSONSchemaFormatSchema(v JSONSchemaFormatSchema) OptJSONSchemaFormatSchema {
+	return OptJSONSchemaFormatSchema{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJSONSchemaFormatSchema is optional JSONSchemaFormatSchema.
+type OptJSONSchemaFormatSchema struct {
+	Value JSONSchemaFormatSchema
+	Set   bool
+}
+
+// IsSet returns true if OptJSONSchemaFormatSchema was set.
+func (o OptJSONSchemaFormatSchema) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJSONSchemaFormatSchema) Reset() {
+	var v JSONSchemaFormatSchema
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJSONSchemaFormatSchema) SetTo(v JSONSchemaFormatSchema) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJSONSchemaFormatSchema) Get() (v JSONSchemaFormatSchema, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJSONSchemaFormatSchema) Or(d JSONSchemaFormatSchema) JSONSchemaFormatSchema {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptLogProbs returns new OptLogProbs with value set to v.
+func NewOptLogProbs(v LogProbs) OptLogProbs {
+	return OptLogProbs{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptLogProbs is optional LogProbs.
+type OptLogProbs struct {
+	Value LogProbs
+	Set   bool
+}
+
+// IsSet returns true if OptLogProbs was set.
+func (o OptLogProbs) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptLogProbs) Reset() {
+	var v LogProbs
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptLogProbs) SetTo(v LogProbs) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptLogProbs) Get() (v LogProbs, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptLogProbs) Or(d LogProbs) LogProbs {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptNilChatCompletionChunkChoiceFinishReason returns new OptNilChatCompletionChunkChoiceFinishReason with value set to v.
 func NewOptNilChatCompletionChunkChoiceFinishReason(v ChatCompletionChunkChoiceFinishReason) OptNilChatCompletionChunkChoiceFinishReason {
 	return OptNilChatCompletionChunkChoiceFinishReason{
@@ -1997,6 +2608,142 @@ func (o OptNilChatCompletionChunkChoiceFinishReason) Get() (v ChatCompletionChun
 
 // Or returns value if set, or given parameter if does not.
 func (o OptNilChatCompletionChunkChoiceFinishReason) Or(d ChatCompletionChunkChoiceFinishReason) ChatCompletionChunkChoiceFinishReason {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilChatCompletionChunkServiceTierUsed returns new OptNilChatCompletionChunkServiceTierUsed with value set to v.
+func NewOptNilChatCompletionChunkServiceTierUsed(v ChatCompletionChunkServiceTierUsed) OptNilChatCompletionChunkServiceTierUsed {
+	return OptNilChatCompletionChunkServiceTierUsed{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilChatCompletionChunkServiceTierUsed is optional nullable ChatCompletionChunkServiceTierUsed.
+type OptNilChatCompletionChunkServiceTierUsed struct {
+	Value ChatCompletionChunkServiceTierUsed
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilChatCompletionChunkServiceTierUsed was set.
+func (o OptNilChatCompletionChunkServiceTierUsed) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilChatCompletionChunkServiceTierUsed) Reset() {
+	var v ChatCompletionChunkServiceTierUsed
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilChatCompletionChunkServiceTierUsed) SetTo(v ChatCompletionChunkServiceTierUsed) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilChatCompletionChunkServiceTierUsed) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilChatCompletionChunkServiceTierUsed) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v ChatCompletionChunkServiceTierUsed
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilChatCompletionChunkServiceTierUsed) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilChatCompletionChunkServiceTierUsed) Get() (v ChatCompletionChunkServiceTierUsed, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilChatCompletionChunkServiceTierUsed) Or(d ChatCompletionChunkServiceTierUsed) ChatCompletionChunkServiceTierUsed {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilChatCompletionResponseServiceTierUsed returns new OptNilChatCompletionResponseServiceTierUsed with value set to v.
+func NewOptNilChatCompletionResponseServiceTierUsed(v ChatCompletionResponseServiceTierUsed) OptNilChatCompletionResponseServiceTierUsed {
+	return OptNilChatCompletionResponseServiceTierUsed{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilChatCompletionResponseServiceTierUsed is optional nullable ChatCompletionResponseServiceTierUsed.
+type OptNilChatCompletionResponseServiceTierUsed struct {
+	Value ChatCompletionResponseServiceTierUsed
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilChatCompletionResponseServiceTierUsed was set.
+func (o OptNilChatCompletionResponseServiceTierUsed) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilChatCompletionResponseServiceTierUsed) Reset() {
+	var v ChatCompletionResponseServiceTierUsed
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilChatCompletionResponseServiceTierUsed) SetTo(v ChatCompletionResponseServiceTierUsed) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilChatCompletionResponseServiceTierUsed) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilChatCompletionResponseServiceTierUsed) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v ChatCompletionResponseServiceTierUsed
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilChatCompletionResponseServiceTierUsed) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilChatCompletionResponseServiceTierUsed) Get() (v ChatCompletionResponseServiceTierUsed, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilChatCompletionResponseServiceTierUsed) Or(d ChatCompletionResponseServiceTierUsed) ChatCompletionResponseServiceTierUsed {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2139,6 +2886,52 @@ func (o OptNilToolCallArray) Or(d []ToolCall) []ToolCall {
 	return d
 }
 
+// NewOptPrediction returns new OptPrediction with value set to v.
+func NewOptPrediction(v Prediction) OptPrediction {
+	return OptPrediction{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptPrediction is optional Prediction.
+type OptPrediction struct {
+	Value Prediction
+	Set   bool
+}
+
+// IsSet returns true if OptPrediction was set.
+func (o OptPrediction) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptPrediction) Reset() {
+	var v Prediction
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptPrediction) SetTo(v Prediction) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptPrediction) Get() (v Prediction, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptPrediction) Or(d Prediction) Prediction {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptPromptTokensDetails returns new OptPromptTokensDetails with value set to v.
 func NewOptPromptTokensDetails(v PromptTokensDetails) OptPromptTokensDetails {
 	return OptPromptTokensDetails{
@@ -2225,6 +3018,98 @@ func (o OptReasoningEffort) Get() (v ReasoningEffort, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptReasoningEffort) Or(d ReasoningEffort) ReasoningEffort {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptResponseFormat returns new OptResponseFormat with value set to v.
+func NewOptResponseFormat(v ResponseFormat) OptResponseFormat {
+	return OptResponseFormat{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptResponseFormat is optional ResponseFormat.
+type OptResponseFormat struct {
+	Value ResponseFormat
+	Set   bool
+}
+
+// IsSet returns true if OptResponseFormat was set.
+func (o OptResponseFormat) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptResponseFormat) Reset() {
+	var v ResponseFormat
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptResponseFormat) SetTo(v ResponseFormat) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptResponseFormat) Get() (v ResponseFormat, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptResponseFormat) Or(d ResponseFormat) ResponseFormat {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptServiceTier returns new OptServiceTier with value set to v.
+func NewOptServiceTier(v ServiceTier) OptServiceTier {
+	return OptServiceTier{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptServiceTier is optional ServiceTier.
+type OptServiceTier struct {
+	Value ServiceTier
+	Set   bool
+}
+
+// IsSet returns true if OptServiceTier was set.
+func (o OptServiceTier) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptServiceTier) Reset() {
+	var v ServiceTier
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptServiceTier) SetTo(v ServiceTier) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptServiceTier) Get() (v ServiceTier, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptServiceTier) Or(d ServiceTier) ServiceTier {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2323,6 +3208,52 @@ func (o OptString) Or(d string) string {
 	return d
 }
 
+// NewOptTimeInfo returns new OptTimeInfo with value set to v.
+func NewOptTimeInfo(v TimeInfo) OptTimeInfo {
+	return OptTimeInfo{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTimeInfo is optional TimeInfo.
+type OptTimeInfo struct {
+	Value TimeInfo
+	Set   bool
+}
+
+// IsSet returns true if OptTimeInfo was set.
+func (o OptTimeInfo) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTimeInfo) Reset() {
+	var v TimeInfo
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTimeInfo) SetTo(v TimeInfo) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTimeInfo) Get() (v TimeInfo, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTimeInfo) Or(d TimeInfo) TimeInfo {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptToolChoice returns new OptToolChoice with value set to v.
 func NewOptToolChoice(v ToolChoice) OptToolChoice {
 	return OptToolChoice{
@@ -2415,6 +3346,193 @@ func (o OptUsage) Or(d Usage) Usage {
 	return d
 }
 
+// Ref: #/components/schemas/Prediction
+type Prediction struct {
+	Type    PredictionType    `json:"type"`
+	Content PredictionContent `json:"content"`
+}
+
+// GetType returns the value of Type.
+func (s *Prediction) GetType() PredictionType {
+	return s.Type
+}
+
+// GetContent returns the value of Content.
+func (s *Prediction) GetContent() PredictionContent {
+	return s.Content
+}
+
+// SetType sets the value of Type.
+func (s *Prediction) SetType(val PredictionType) {
+	s.Type = val
+}
+
+// SetContent sets the value of Content.
+func (s *Prediction) SetContent(val PredictionContent) {
+	s.Content = val
+}
+
+// PredictionContent represents sum type.
+type PredictionContent struct {
+	// Type selects the active sum variant, switch on this field.
+	Type                    PredictionContentType
+	String                  string
+	PredictionTextPartArray []PredictionTextPart
+}
+
+// PredictionContentType is oneOf type of PredictionContent.
+type PredictionContentType string
+
+// Possible values for PredictionContentType.
+const (
+	StringPredictionContent                  PredictionContentType = "string"
+	PredictionTextPartArrayPredictionContent PredictionContentType = "[]PredictionTextPart"
+)
+
+// IsString reports whether PredictionContent is string.
+func (s PredictionContent) IsString() bool { return s.Type == StringPredictionContent }
+
+// IsPredictionTextPartArray reports whether PredictionContent is []PredictionTextPart.
+func (s PredictionContent) IsPredictionTextPartArray() bool {
+	return s.Type == PredictionTextPartArrayPredictionContent
+}
+
+// SetString sets PredictionContent to string.
+func (s *PredictionContent) SetString(v string) {
+	s.Type = StringPredictionContent
+	s.String = v
+}
+
+// GetString returns string and true boolean if PredictionContent is string.
+func (s PredictionContent) GetString() (v string, ok bool) {
+	if !s.IsString() {
+		return v, false
+	}
+	return s.String, true
+}
+
+// NewStringPredictionContent returns new PredictionContent from string.
+func NewStringPredictionContent(v string) PredictionContent {
+	var s PredictionContent
+	s.SetString(v)
+	return s
+}
+
+// SetPredictionTextPartArray sets PredictionContent to []PredictionTextPart.
+func (s *PredictionContent) SetPredictionTextPartArray(v []PredictionTextPart) {
+	s.Type = PredictionTextPartArrayPredictionContent
+	s.PredictionTextPartArray = v
+}
+
+// GetPredictionTextPartArray returns []PredictionTextPart and true boolean if PredictionContent is []PredictionTextPart.
+func (s PredictionContent) GetPredictionTextPartArray() (v []PredictionTextPart, ok bool) {
+	if !s.IsPredictionTextPartArray() {
+		return v, false
+	}
+	return s.PredictionTextPartArray, true
+}
+
+// NewPredictionTextPartArrayPredictionContent returns new PredictionContent from []PredictionTextPart.
+func NewPredictionTextPartArrayPredictionContent(v []PredictionTextPart) PredictionContent {
+	var s PredictionContent
+	s.SetPredictionTextPartArray(v)
+	return s
+}
+
+// Ref: #/components/schemas/PredictionTextPart
+type PredictionTextPart struct {
+	Type PredictionTextPartType `json:"type"`
+	Text string                 `json:"text"`
+}
+
+// GetType returns the value of Type.
+func (s *PredictionTextPart) GetType() PredictionTextPartType {
+	return s.Type
+}
+
+// GetText returns the value of Text.
+func (s *PredictionTextPart) GetText() string {
+	return s.Text
+}
+
+// SetType sets the value of Type.
+func (s *PredictionTextPart) SetType(val PredictionTextPartType) {
+	s.Type = val
+}
+
+// SetText sets the value of Text.
+func (s *PredictionTextPart) SetText(val string) {
+	s.Text = val
+}
+
+type PredictionTextPartType string
+
+const (
+	PredictionTextPartTypeText PredictionTextPartType = "text"
+)
+
+// AllValues returns all PredictionTextPartType values.
+func (PredictionTextPartType) AllValues() []PredictionTextPartType {
+	return []PredictionTextPartType{
+		PredictionTextPartTypeText,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s PredictionTextPartType) MarshalText() ([]byte, error) {
+	switch s {
+	case PredictionTextPartTypeText:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *PredictionTextPartType) UnmarshalText(data []byte) error {
+	switch PredictionTextPartType(data) {
+	case PredictionTextPartTypeText:
+		*s = PredictionTextPartTypeText
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type PredictionType string
+
+const (
+	PredictionTypeContent PredictionType = "content"
+)
+
+// AllValues returns all PredictionType values.
+func (PredictionType) AllValues() []PredictionType {
+	return []PredictionType{
+		PredictionTypeContent,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s PredictionType) MarshalText() ([]byte, error) {
+	switch s {
+	case PredictionTypeContent:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *PredictionType) UnmarshalText(data []byte) error {
+	switch PredictionType(data) {
+	case PredictionTypeContent:
+		*s = PredictionTypeContent
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/PromptTokensDetails
 type PromptTokensDetails struct {
 	CachedTokens OptInt `json:"cached_tokens"`
@@ -2480,6 +3598,262 @@ func (s *ReasoningEffort) UnmarshalText(data []byte) error {
 		return nil
 	case ReasoningEffortNone:
 		*s = ReasoningEffortNone
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ResponseFormat
+// ResponseFormat represents sum type.
+type ResponseFormat struct {
+	// Type selects the active sum variant, switch on this field.
+	Type                     ResponseFormatType
+	ResponseFormatText       ResponseFormatText
+	ResponseFormatJSONSchema ResponseFormatJSONSchema
+	ResponseFormatJSONObject ResponseFormatJSONObject
+}
+
+// ResponseFormatType is oneOf type of ResponseFormat.
+type ResponseFormatType string
+
+// Possible values for ResponseFormatType.
+const (
+	ResponseFormatTextResponseFormat       ResponseFormatType = "ResponseFormatText"
+	ResponseFormatJSONSchemaResponseFormat ResponseFormatType = "ResponseFormatJSONSchema"
+	ResponseFormatJSONObjectResponseFormat ResponseFormatType = "ResponseFormatJSONObject"
+)
+
+// IsResponseFormatText reports whether ResponseFormat is ResponseFormatText.
+func (s ResponseFormat) IsResponseFormatText() bool {
+	return s.Type == ResponseFormatTextResponseFormat
+}
+
+// IsResponseFormatJSONSchema reports whether ResponseFormat is ResponseFormatJSONSchema.
+func (s ResponseFormat) IsResponseFormatJSONSchema() bool {
+	return s.Type == ResponseFormatJSONSchemaResponseFormat
+}
+
+// IsResponseFormatJSONObject reports whether ResponseFormat is ResponseFormatJSONObject.
+func (s ResponseFormat) IsResponseFormatJSONObject() bool {
+	return s.Type == ResponseFormatJSONObjectResponseFormat
+}
+
+// SetResponseFormatText sets ResponseFormat to ResponseFormatText.
+func (s *ResponseFormat) SetResponseFormatText(v ResponseFormatText) {
+	s.Type = ResponseFormatTextResponseFormat
+	s.ResponseFormatText = v
+}
+
+// GetResponseFormatText returns ResponseFormatText and true boolean if ResponseFormat is ResponseFormatText.
+func (s ResponseFormat) GetResponseFormatText() (v ResponseFormatText, ok bool) {
+	if !s.IsResponseFormatText() {
+		return v, false
+	}
+	return s.ResponseFormatText, true
+}
+
+// NewResponseFormatTextResponseFormat returns new ResponseFormat from ResponseFormatText.
+func NewResponseFormatTextResponseFormat(v ResponseFormatText) ResponseFormat {
+	var s ResponseFormat
+	s.SetResponseFormatText(v)
+	return s
+}
+
+// SetResponseFormatJSONSchema sets ResponseFormat to ResponseFormatJSONSchema.
+func (s *ResponseFormat) SetResponseFormatJSONSchema(v ResponseFormatJSONSchema) {
+	s.Type = ResponseFormatJSONSchemaResponseFormat
+	s.ResponseFormatJSONSchema = v
+}
+
+// GetResponseFormatJSONSchema returns ResponseFormatJSONSchema and true boolean if ResponseFormat is ResponseFormatJSONSchema.
+func (s ResponseFormat) GetResponseFormatJSONSchema() (v ResponseFormatJSONSchema, ok bool) {
+	if !s.IsResponseFormatJSONSchema() {
+		return v, false
+	}
+	return s.ResponseFormatJSONSchema, true
+}
+
+// NewResponseFormatJSONSchemaResponseFormat returns new ResponseFormat from ResponseFormatJSONSchema.
+func NewResponseFormatJSONSchemaResponseFormat(v ResponseFormatJSONSchema) ResponseFormat {
+	var s ResponseFormat
+	s.SetResponseFormatJSONSchema(v)
+	return s
+}
+
+// SetResponseFormatJSONObject sets ResponseFormat to ResponseFormatJSONObject.
+func (s *ResponseFormat) SetResponseFormatJSONObject(v ResponseFormatJSONObject) {
+	s.Type = ResponseFormatJSONObjectResponseFormat
+	s.ResponseFormatJSONObject = v
+}
+
+// GetResponseFormatJSONObject returns ResponseFormatJSONObject and true boolean if ResponseFormat is ResponseFormatJSONObject.
+func (s ResponseFormat) GetResponseFormatJSONObject() (v ResponseFormatJSONObject, ok bool) {
+	if !s.IsResponseFormatJSONObject() {
+		return v, false
+	}
+	return s.ResponseFormatJSONObject, true
+}
+
+// NewResponseFormatJSONObjectResponseFormat returns new ResponseFormat from ResponseFormatJSONObject.
+func NewResponseFormatJSONObjectResponseFormat(v ResponseFormatJSONObject) ResponseFormat {
+	var s ResponseFormat
+	s.SetResponseFormatJSONObject(v)
+	return s
+}
+
+// Ref: #/components/schemas/ResponseFormatJSONObject
+type ResponseFormatJSONObject struct {
+	Type ResponseFormatJSONObjectType `json:"type"`
+}
+
+// GetType returns the value of Type.
+func (s *ResponseFormatJSONObject) GetType() ResponseFormatJSONObjectType {
+	return s.Type
+}
+
+// SetType sets the value of Type.
+func (s *ResponseFormatJSONObject) SetType(val ResponseFormatJSONObjectType) {
+	s.Type = val
+}
+
+type ResponseFormatJSONObjectType string
+
+const (
+	ResponseFormatJSONObjectTypeJSONObject ResponseFormatJSONObjectType = "json_object"
+)
+
+// AllValues returns all ResponseFormatJSONObjectType values.
+func (ResponseFormatJSONObjectType) AllValues() []ResponseFormatJSONObjectType {
+	return []ResponseFormatJSONObjectType{
+		ResponseFormatJSONObjectTypeJSONObject,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ResponseFormatJSONObjectType) MarshalText() ([]byte, error) {
+	switch s {
+	case ResponseFormatJSONObjectTypeJSONObject:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ResponseFormatJSONObjectType) UnmarshalText(data []byte) error {
+	switch ResponseFormatJSONObjectType(data) {
+	case ResponseFormatJSONObjectTypeJSONObject:
+		*s = ResponseFormatJSONObjectTypeJSONObject
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ResponseFormatJSONSchema
+type ResponseFormatJSONSchema struct {
+	Type       ResponseFormatJSONSchemaType `json:"type"`
+	JSONSchema JSONSchemaFormat             `json:"json_schema"`
+}
+
+// GetType returns the value of Type.
+func (s *ResponseFormatJSONSchema) GetType() ResponseFormatJSONSchemaType {
+	return s.Type
+}
+
+// GetJSONSchema returns the value of JSONSchema.
+func (s *ResponseFormatJSONSchema) GetJSONSchema() JSONSchemaFormat {
+	return s.JSONSchema
+}
+
+// SetType sets the value of Type.
+func (s *ResponseFormatJSONSchema) SetType(val ResponseFormatJSONSchemaType) {
+	s.Type = val
+}
+
+// SetJSONSchema sets the value of JSONSchema.
+func (s *ResponseFormatJSONSchema) SetJSONSchema(val JSONSchemaFormat) {
+	s.JSONSchema = val
+}
+
+type ResponseFormatJSONSchemaType string
+
+const (
+	ResponseFormatJSONSchemaTypeJSONSchema ResponseFormatJSONSchemaType = "json_schema"
+)
+
+// AllValues returns all ResponseFormatJSONSchemaType values.
+func (ResponseFormatJSONSchemaType) AllValues() []ResponseFormatJSONSchemaType {
+	return []ResponseFormatJSONSchemaType{
+		ResponseFormatJSONSchemaTypeJSONSchema,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ResponseFormatJSONSchemaType) MarshalText() ([]byte, error) {
+	switch s {
+	case ResponseFormatJSONSchemaTypeJSONSchema:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ResponseFormatJSONSchemaType) UnmarshalText(data []byte) error {
+	switch ResponseFormatJSONSchemaType(data) {
+	case ResponseFormatJSONSchemaTypeJSONSchema:
+		*s = ResponseFormatJSONSchemaTypeJSONSchema
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ResponseFormatText
+type ResponseFormatText struct {
+	Type ResponseFormatTextType `json:"type"`
+}
+
+// GetType returns the value of Type.
+func (s *ResponseFormatText) GetType() ResponseFormatTextType {
+	return s.Type
+}
+
+// SetType sets the value of Type.
+func (s *ResponseFormatText) SetType(val ResponseFormatTextType) {
+	s.Type = val
+}
+
+type ResponseFormatTextType string
+
+const (
+	ResponseFormatTextTypeText ResponseFormatTextType = "text"
+)
+
+// AllValues returns all ResponseFormatTextType values.
+func (ResponseFormatTextType) AllValues() []ResponseFormatTextType {
+	return []ResponseFormatTextType{
+		ResponseFormatTextTypeText,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ResponseFormatTextType) MarshalText() ([]byte, error) {
+	switch s {
+	case ResponseFormatTextTypeText:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ResponseFormatTextType) UnmarshalText(data []byte) error {
+	switch ResponseFormatTextType(data) {
+	case ResponseFormatTextTypeText:
+		*s = ResponseFormatTextTypeText
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -2573,6 +3947,62 @@ func (s *ResponseMessageRole) UnmarshalText(data []byte) error {
 	switch ResponseMessageRole(data) {
 	case ResponseMessageRoleAssistant:
 		*s = ResponseMessageRoleAssistant
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ServiceTier
+type ServiceTier string
+
+const (
+	ServiceTierPriority ServiceTier = "priority"
+	ServiceTierDefault  ServiceTier = "default"
+	ServiceTierAuto     ServiceTier = "auto"
+	ServiceTierFlex     ServiceTier = "flex"
+)
+
+// AllValues returns all ServiceTier values.
+func (ServiceTier) AllValues() []ServiceTier {
+	return []ServiceTier{
+		ServiceTierPriority,
+		ServiceTierDefault,
+		ServiceTierAuto,
+		ServiceTierFlex,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ServiceTier) MarshalText() ([]byte, error) {
+	switch s {
+	case ServiceTierPriority:
+		return []byte(s), nil
+	case ServiceTierDefault:
+		return []byte(s), nil
+	case ServiceTierAuto:
+		return []byte(s), nil
+	case ServiceTierFlex:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ServiceTier) UnmarshalText(data []byte) error {
+	switch ServiceTier(data) {
+	case ServiceTierPriority:
+		*s = ServiceTierPriority
+		return nil
+	case ServiceTierDefault:
+		*s = ServiceTierDefault
+		return nil
+	case ServiceTierAuto:
+		*s = ServiceTierAuto
+		return nil
+	case ServiceTierFlex:
+		*s = ServiceTierFlex
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -2703,6 +4133,125 @@ func (s *SystemMessageRole) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/TextContentPart
+type TextContentPart struct {
+	Type TextContentPartType `json:"type"`
+	Text string              `json:"text"`
+}
+
+// GetType returns the value of Type.
+func (s *TextContentPart) GetType() TextContentPartType {
+	return s.Type
+}
+
+// GetText returns the value of Text.
+func (s *TextContentPart) GetText() string {
+	return s.Text
+}
+
+// SetType sets the value of Type.
+func (s *TextContentPart) SetType(val TextContentPartType) {
+	s.Type = val
+}
+
+// SetText sets the value of Text.
+func (s *TextContentPart) SetText(val string) {
+	s.Text = val
+}
+
+type TextContentPartType string
+
+const (
+	TextContentPartTypeText TextContentPartType = "text"
+)
+
+// AllValues returns all TextContentPartType values.
+func (TextContentPartType) AllValues() []TextContentPartType {
+	return []TextContentPartType{
+		TextContentPartTypeText,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TextContentPartType) MarshalText() ([]byte, error) {
+	switch s {
+	case TextContentPartTypeText:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TextContentPartType) UnmarshalText(data []byte) error {
+	switch TextContentPartType(data) {
+	case TextContentPartTypeText:
+		*s = TextContentPartTypeText
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/TimeInfo
+type TimeInfo struct {
+	QueueTime      OptFloat64 `json:"queue_time"`
+	PromptTime     OptFloat64 `json:"prompt_time"`
+	CompletionTime OptFloat64 `json:"completion_time"`
+	TotalTime      OptFloat64 `json:"total_time"`
+	Created        OptFloat64 `json:"created"`
+}
+
+// GetQueueTime returns the value of QueueTime.
+func (s *TimeInfo) GetQueueTime() OptFloat64 {
+	return s.QueueTime
+}
+
+// GetPromptTime returns the value of PromptTime.
+func (s *TimeInfo) GetPromptTime() OptFloat64 {
+	return s.PromptTime
+}
+
+// GetCompletionTime returns the value of CompletionTime.
+func (s *TimeInfo) GetCompletionTime() OptFloat64 {
+	return s.CompletionTime
+}
+
+// GetTotalTime returns the value of TotalTime.
+func (s *TimeInfo) GetTotalTime() OptFloat64 {
+	return s.TotalTime
+}
+
+// GetCreated returns the value of Created.
+func (s *TimeInfo) GetCreated() OptFloat64 {
+	return s.Created
+}
+
+// SetQueueTime sets the value of QueueTime.
+func (s *TimeInfo) SetQueueTime(val OptFloat64) {
+	s.QueueTime = val
+}
+
+// SetPromptTime sets the value of PromptTime.
+func (s *TimeInfo) SetPromptTime(val OptFloat64) {
+	s.PromptTime = val
+}
+
+// SetCompletionTime sets the value of CompletionTime.
+func (s *TimeInfo) SetCompletionTime(val OptFloat64) {
+	s.CompletionTime = val
+}
+
+// SetTotalTime sets the value of TotalTime.
+func (s *TimeInfo) SetTotalTime(val OptFloat64) {
+	s.TotalTime = val
+}
+
+// SetCreated sets the value of Created.
+func (s *TimeInfo) SetCreated(val OptFloat64) {
+	s.Created = val
 }
 
 // Ref: #/components/schemas/ToolCall
@@ -3067,6 +4616,7 @@ type Usage struct {
 	PromptTokens            OptInt                     `json:"prompt_tokens"`
 	CompletionTokens        OptInt                     `json:"completion_tokens"`
 	TotalTokens             OptInt                     `json:"total_tokens"`
+	ImageTokens             OptInt                     `json:"image_tokens"`
 	PromptTokensDetails     OptPromptTokensDetails     `json:"prompt_tokens_details"`
 	CompletionTokensDetails OptCompletionTokensDetails `json:"completion_tokens_details"`
 }
@@ -3084,6 +4634,11 @@ func (s *Usage) GetCompletionTokens() OptInt {
 // GetTotalTokens returns the value of TotalTokens.
 func (s *Usage) GetTotalTokens() OptInt {
 	return s.TotalTokens
+}
+
+// GetImageTokens returns the value of ImageTokens.
+func (s *Usage) GetImageTokens() OptInt {
+	return s.ImageTokens
 }
 
 // GetPromptTokensDetails returns the value of PromptTokensDetails.
@@ -3111,6 +4666,11 @@ func (s *Usage) SetTotalTokens(val OptInt) {
 	s.TotalTokens = val
 }
 
+// SetImageTokens sets the value of ImageTokens.
+func (s *Usage) SetImageTokens(val OptInt) {
+	s.ImageTokens = val
+}
+
 // SetPromptTokensDetails sets the value of PromptTokensDetails.
 func (s *Usage) SetPromptTokensDetails(val OptPromptTokensDetails) {
 	s.PromptTokensDetails = val
@@ -3121,10 +4681,76 @@ func (s *Usage) SetCompletionTokensDetails(val OptCompletionTokensDetails) {
 	s.CompletionTokensDetails = val
 }
 
+// Ref: #/components/schemas/UserContentPart
+// UserContentPart represents sum type.
+type UserContentPart struct {
+	// Type selects the active sum variant, switch on this field.
+	Type             UserContentPartType
+	TextContentPart  TextContentPart
+	ImageContentPart ImageContentPart
+}
+
+// UserContentPartType is oneOf type of UserContentPart.
+type UserContentPartType string
+
+// Possible values for UserContentPartType.
+const (
+	TextContentPartUserContentPart  UserContentPartType = "TextContentPart"
+	ImageContentPartUserContentPart UserContentPartType = "ImageContentPart"
+)
+
+// IsTextContentPart reports whether UserContentPart is TextContentPart.
+func (s UserContentPart) IsTextContentPart() bool { return s.Type == TextContentPartUserContentPart }
+
+// IsImageContentPart reports whether UserContentPart is ImageContentPart.
+func (s UserContentPart) IsImageContentPart() bool { return s.Type == ImageContentPartUserContentPart }
+
+// SetTextContentPart sets UserContentPart to TextContentPart.
+func (s *UserContentPart) SetTextContentPart(v TextContentPart) {
+	s.Type = TextContentPartUserContentPart
+	s.TextContentPart = v
+}
+
+// GetTextContentPart returns TextContentPart and true boolean if UserContentPart is TextContentPart.
+func (s UserContentPart) GetTextContentPart() (v TextContentPart, ok bool) {
+	if !s.IsTextContentPart() {
+		return v, false
+	}
+	return s.TextContentPart, true
+}
+
+// NewTextContentPartUserContentPart returns new UserContentPart from TextContentPart.
+func NewTextContentPartUserContentPart(v TextContentPart) UserContentPart {
+	var s UserContentPart
+	s.SetTextContentPart(v)
+	return s
+}
+
+// SetImageContentPart sets UserContentPart to ImageContentPart.
+func (s *UserContentPart) SetImageContentPart(v ImageContentPart) {
+	s.Type = ImageContentPartUserContentPart
+	s.ImageContentPart = v
+}
+
+// GetImageContentPart returns ImageContentPart and true boolean if UserContentPart is ImageContentPart.
+func (s UserContentPart) GetImageContentPart() (v ImageContentPart, ok bool) {
+	if !s.IsImageContentPart() {
+		return v, false
+	}
+	return s.ImageContentPart, true
+}
+
+// NewImageContentPartUserContentPart returns new UserContentPart from ImageContentPart.
+func NewImageContentPartUserContentPart(v ImageContentPart) UserContentPart {
+	var s UserContentPart
+	s.SetImageContentPart(v)
+	return s
+}
+
 // Ref: #/components/schemas/UserMessage
 type UserMessage struct {
-	Role    UserMessageRole `json:"role"`
-	Content string          `json:"content"`
+	Role    UserMessageRole    `json:"role"`
+	Content UserMessageContent `json:"content"`
 }
 
 // GetRole returns the value of Role.
@@ -3133,7 +4759,7 @@ func (s *UserMessage) GetRole() UserMessageRole {
 }
 
 // GetContent returns the value of Content.
-func (s *UserMessage) GetContent() string {
+func (s *UserMessage) GetContent() UserMessageContent {
 	return s.Content
 }
 
@@ -3143,8 +4769,76 @@ func (s *UserMessage) SetRole(val UserMessageRole) {
 }
 
 // SetContent sets the value of Content.
-func (s *UserMessage) SetContent(val string) {
+func (s *UserMessage) SetContent(val UserMessageContent) {
 	s.Content = val
+}
+
+// Ref: #/components/schemas/UserMessageContent
+// UserMessageContent represents sum type.
+type UserMessageContent struct {
+	// Type selects the active sum variant, switch on this field.
+	Type                 UserMessageContentType
+	String               string
+	UserContentPartArray []UserContentPart
+}
+
+// UserMessageContentType is oneOf type of UserMessageContent.
+type UserMessageContentType string
+
+// Possible values for UserMessageContentType.
+const (
+	StringUserMessageContent               UserMessageContentType = "string"
+	UserContentPartArrayUserMessageContent UserMessageContentType = "[]UserContentPart"
+)
+
+// IsString reports whether UserMessageContent is string.
+func (s UserMessageContent) IsString() bool { return s.Type == StringUserMessageContent }
+
+// IsUserContentPartArray reports whether UserMessageContent is []UserContentPart.
+func (s UserMessageContent) IsUserContentPartArray() bool {
+	return s.Type == UserContentPartArrayUserMessageContent
+}
+
+// SetString sets UserMessageContent to string.
+func (s *UserMessageContent) SetString(v string) {
+	s.Type = StringUserMessageContent
+	s.String = v
+}
+
+// GetString returns string and true boolean if UserMessageContent is string.
+func (s UserMessageContent) GetString() (v string, ok bool) {
+	if !s.IsString() {
+		return v, false
+	}
+	return s.String, true
+}
+
+// NewStringUserMessageContent returns new UserMessageContent from string.
+func NewStringUserMessageContent(v string) UserMessageContent {
+	var s UserMessageContent
+	s.SetString(v)
+	return s
+}
+
+// SetUserContentPartArray sets UserMessageContent to []UserContentPart.
+func (s *UserMessageContent) SetUserContentPartArray(v []UserContentPart) {
+	s.Type = UserContentPartArrayUserMessageContent
+	s.UserContentPartArray = v
+}
+
+// GetUserContentPartArray returns []UserContentPart and true boolean if UserMessageContent is []UserContentPart.
+func (s UserMessageContent) GetUserContentPartArray() (v []UserContentPart, ok bool) {
+	if !s.IsUserContentPartArray() {
+		return v, false
+	}
+	return s.UserContentPartArray, true
+}
+
+// NewUserContentPartArrayUserMessageContent returns new UserMessageContent from []UserContentPart.
+func NewUserContentPartArrayUserMessageContent(v []UserContentPart) UserMessageContent {
+	var s UserMessageContent
+	s.SetUserContentPartArray(v)
+	return s
 }
 
 type UserMessageRole string

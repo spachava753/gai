@@ -167,6 +167,39 @@ func TestStreamingAdapterBlockCompression(t *testing.T) {
 	})
 }
 
+func TestStreamingAdapterPreservesResponseExtraFields(t *testing.T) {
+	adapter := &StreamingAdapter{S: &mockStreamingGenerator{chunks: []StreamChunk{
+		{
+			Block:               TextBlock("hello"),
+			ResponseExtraFields: map[string]interface{}{"request_id": "req_123"},
+		},
+		{
+			Block:               MetadataBlock(Metadata{UsageMetricInputTokens: 1}),
+			ResponseExtraFields: map[string]interface{}{"request_id": "req_123", "model": "test-model"},
+		},
+	}}}
+
+	response, err := adapter.Generate(t.Context(), GenerationRequest{})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.ExtraFields["request_id"] != "req_123" || response.ExtraFields["model"] != "test-model" {
+		t.Fatalf("response extra fields = %v", response.ExtraFields)
+	}
+}
+
+func TestStreamingAdapterRejectsConflictingResponseExtraFields(t *testing.T) {
+	adapter := &StreamingAdapter{S: &mockStreamingGenerator{chunks: []StreamChunk{
+		{Block: TextBlock("hello"), ResponseExtraFields: map[string]interface{}{"request_id": "req_1"}},
+		{Block: TextBlock(" world"), ResponseExtraFields: map[string]interface{}{"request_id": "req_2"}},
+	}}}
+
+	_, err := adapter.Generate(t.Context(), GenerationRequest{})
+	if err == nil || !strings.Contains(err.Error(), "conflicting response extra field") {
+		t.Fatalf("Generate() error = %v, want conflicting response extra field", err)
+	}
+}
+
 func TestStreamChunkErrorIsNotSerialized(t *testing.T) {
 	chunk := StreamChunk{
 		Block: TextBlock("partial"),

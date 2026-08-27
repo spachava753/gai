@@ -72,6 +72,16 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        top_k:
+          type: integer
+        logit_bias:
+          type: object
+          additionalProperties:
+            type: number
+        logprobs:
+          type: boolean
+        min_p:
+          type: number
         frequency_penalty:
           type: number
           minimum: -2
@@ -83,6 +93,39 @@ components:
         n:
           type: integer
           minimum: 1
+        models:
+          type: array
+          items:
+            type: string
+        parallel_tool_calls:
+          type: boolean
+        prediction:
+          $ref: "#/components/schemas/Prediction"
+        prompt_cache_key:
+          type: string
+        provider:
+          type: object
+          additionalProperties: {}
+        repetition_penalty:
+          type: number
+        response_format:
+          type: object
+          additionalProperties: {}
+        seed:
+          type: integer
+        service_tier:
+          $ref: "#/components/schemas/ServiceTier"
+        session_id:
+          type: string
+          maxLength: 256
+        top_a:
+          type: number
+        top_logprobs:
+          type: integer
+          minimum: 0
+          maximum: 20
+        user:
+          type: string
         max_completion_tokens:
           type: integer
           minimum: 1
@@ -105,6 +148,27 @@ components:
           maxItems: 4
           items:
             type: string
+    ServiceTier:
+      type: string
+      enum:
+        - auto
+        - default
+        - fast
+        - flex
+        - priority
+        - scale
+    Prediction:
+      type: object
+      required:
+        - type
+        - content
+      properties:
+        type:
+          type: string
+          enum:
+            - content
+        content:
+          type: string
     ReasoningConfig:
       type: object
       properties:
@@ -430,6 +494,12 @@ components:
         system_fingerprint:
           type: string
           nullable: true
+        service_tier:
+          type: string
+          nullable: true
+        openrouter_metadata:
+          type: object
+          additionalProperties: {}
         choices:
           type: array
           items:
@@ -447,6 +517,8 @@ components:
         finish_reason:
           type: string
           nullable: true
+        logprobs:
+          $ref: "#/components/schemas/LogProbs"
         message:
           $ref: "#/components/schemas/AssistantMessage"
         error:
@@ -471,6 +543,14 @@ components:
           format: int64
         model:
           type: string
+        system_fingerprint:
+          type: string
+        service_tier:
+          type: string
+          nullable: true
+        openrouter_metadata:
+          type: object
+          additionalProperties: {}
         choices:
           type: array
           items:
@@ -492,6 +572,8 @@ components:
         finish_reason:
           type: string
           nullable: true
+        logprobs:
+          $ref: "#/components/schemas/LogProbs"
         error:
           $ref: "#/components/schemas/ErrorDetail"
     ChatCompletionChunkDelta:
@@ -547,6 +629,15 @@ components:
           type: integer
         total_tokens:
           type: integer
+        cost:
+          type: number
+          nullable: true
+        cost_details:
+          $ref: "#/components/schemas/CostDetails"
+        is_byok:
+          type: boolean
+        server_tool_use_details:
+          $ref: "#/components/schemas/ServerToolUseDetails"
         prompt_tokens_details:
           $ref: "#/components/schemas/PromptTokensDetails"
         completion_tokens_details:
@@ -558,11 +649,49 @@ components:
           type: integer
         cache_write_tokens:
           type: integer
+        audio_tokens:
+          type: integer
+        video_tokens:
+          type: integer
     CompletionTokensDetails:
       type: object
       properties:
         reasoning_tokens:
           type: integer
+        audio_tokens:
+          type: integer
+          nullable: true
+        accepted_prediction_tokens:
+          type: integer
+          nullable: true
+        rejected_prediction_tokens:
+          type: integer
+          nullable: true
+    CostDetails:
+      type: object
+      properties:
+        upstream_inference_cost:
+          type: number
+          nullable: true
+        upstream_inference_prompt_cost:
+          type: number
+        upstream_inference_completions_cost:
+          type: number
+    ServerToolUseDetails:
+      type: object
+      properties:
+        tool_calls_requested:
+          type: integer
+          nullable: true
+        tool_calls_executed:
+          type: integer
+          nullable: true
+        web_search_requests:
+          type: integer
+          nullable: true
+    LogProbs:
+      type: object
+      additionalProperties: {}
     ErrorEnvelope:
       type: object
       required:

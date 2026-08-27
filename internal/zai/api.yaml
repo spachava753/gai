@@ -166,7 +166,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   parameters:
     AcceptLanguage:
@@ -190,12 +190,14 @@ components:
         model:
           type: string
           description: >-
-            The model code to be called. GLM-5.1, GLM-5, GLM-5-Turbo are the
-            latest flagship model series, foundational models specifically
-            designed for agent applications.
-          example: glm-5.1
-          default: glm-5.1
+            The model code to be called. GLM-5.3, GLM-5.2, GLM-5.1, GLM-5-Turbo
+            are the latest flagship model series, foundational models
+            specifically designed for agent applications.
+          example: glm-5.3
+          default: glm-5.3
           enum:
+            - glm-5.3
+            - glm-5.2
             - glm-5.1
             - glm-5-turbo
             - glm-5
@@ -351,6 +353,19 @@ components:
             message will be returned.
         thinking:
           $ref: "#/components/schemas/ChatThinking"
+        reasoning_effort:
+          type: string
+          description: >-
+            Controls reasoning effort when thinking is enabled. Supported levels
+            depend on the selected model.
+          enum:
+            - max
+            - xhigh
+            - high
+            - medium
+            - low
+            - minimal
+            - none
         temperature:
           type: number
           description: >-
@@ -475,12 +490,12 @@ components:
         model:
           type: string
           description: >-
-            The model code to be called. GLM-5V-Turbo are the new generation of
-            visual reasoning models. `AutoGLM-Phone-Multilingual` is mobile
-            intelligent assistant model.
-          example: glm-5v-turbo
-          default: glm-5v-turbo
+            The model code to be called. The GLM-5.3-Flash series supports
+            visual understanding and multimodal tool calling.
+          example: glm-5.3-flash
+          default: glm-5.3-flash
           enum:
+            - glm-5.3-flash
             - glm-5v-turbo
             - glm-4.6v
             - autoglm-phone-multilingual
@@ -580,6 +595,13 @@ components:
             message will be returned.
         thinking:
           $ref: "#/components/schemas/ChatThinking"
+        reasoning_effort:
+          type: string
+          description: Controls reasoning effort when thinking is enabled.
+          enum:
+            - max
+            - high
+            - low
         temperature:
           type: number
           description: >-
@@ -804,6 +826,17 @@ components:
       properties:
         cached_tokens:
           type: number
+    ErrorResponse:
+      oneOf:
+        - $ref: "#/components/schemas/Error"
+        - $ref: "#/components/schemas/ErrorEnvelope"
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
     Error:
       required:
         - code
@@ -812,12 +845,16 @@ components:
       description: The request has failed.
       properties:
         code:
-          type: integer
-          format: int32
-          description: Error code.
+          $ref: "#/components/schemas/ErrorCode"
         message:
           type: string
           description: Error message.
+    ErrorCode:
+      description: Provider error code. Z.AI documentation shows both numeric and string encodings.
+      oneOf:
+        - type: integer
+          format: int32
+        - type: string
     ChatThinking:
       type: object
       description: >-

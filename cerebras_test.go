@@ -54,9 +54,13 @@ func TestCerebrasGeneratorUsesGeneratedJSONClient(t *testing.T) {
 			"object":"chat.completion",
 			"created":1,
 			"model":"gpt-oss-120b",
+			"system_fingerprint":"fp_test",
+			"service_tier":"auto",
+			"service_tier_used":"priority",
 			"choices":[{
 				"index":0,
 				"finish_reason":"tool_calls",
+				"logprobs":{"content":[{"token":"answer","logprob":-0.1}]},
 				"message":{
 					"role":"assistant",
 					"reasoning":"thinking",
@@ -72,8 +76,16 @@ func TestCerebrasGeneratorUsesGeneratedJSONClient(t *testing.T) {
 				"prompt_tokens":10,
 				"completion_tokens":5,
 				"total_tokens":15,
+				"image_tokens":3,
 				"prompt_tokens_details":{"cached_tokens":4},
 				"completion_tokens_details":{"reasoning_tokens":2}
+			},
+			"time_info":{
+				"queue_time":0.01,
+				"prompt_time":0.02,
+				"completion_time":0.03,
+				"total_time":0.06,
+				"created":123.5
 			}
 		}`))
 	}))
@@ -96,6 +108,18 @@ func TestCerebrasGeneratorUsesGeneratedJSONClient(t *testing.T) {
 		}},
 		Options: NewGenerationOptions(
 			WithTemperature(0.2),
+			WithFrequencyPenalty(0.3),
+			WithPresencePenalty(-0.4),
+			WithCerebrasLogitBias(map[string]float64{"42": -1.5}),
+			WithCerebrasLogprobs(true),
+			WithCerebrasTopLogprobs(3),
+			WithCerebrasParallelToolCalls(false),
+			WithCerebrasPrediction("known output"),
+			WithCerebrasPromptCacheKey("conversation-1"),
+			WithCerebrasResponseFormat(map[string]any{"type": "json_object"}),
+			WithCerebrasSeed(7),
+			WithCerebrasServiceTier(CerebrasServiceTierAuto),
+			WithCerebrasUser("user-1"),
 			WithMaxGenerationTokens(64),
 			WithStopSequences("END", "STOP"),
 			WithToolChoice("get_weather"),
@@ -122,17 +146,55 @@ func TestCerebrasGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	if call.Name != "get_weather" || call.Parameters["city"] != "Paris" {
 		t.Fatalf("tool call = %+v", call)
 	}
+	if response.ExtraFields[CerebrasResponseExtraFieldID] != "completion_1" ||
+		response.ExtraFields[CerebrasResponseExtraFieldModel] != "gpt-oss-120b" ||
+		response.ExtraFields[CerebrasResponseExtraFieldCreated] != int64(1) ||
+		response.ExtraFields[CerebrasResponseExtraFieldSystemFingerprint] != "fp_test" ||
+		response.ExtraFields[CerebrasResponseExtraFieldServiceTier] != "auto" ||
+		response.ExtraFields[CerebrasResponseExtraFieldServiceTierUsed] != "priority" {
+		t.Fatalf("response extra fields = %v", response.ExtraFields)
+	}
+	logprobs, ok := response.Candidates[0].ExtraFields[CerebrasMessageExtraFieldLogprobs].(map[string]any)
+	if !ok {
+		t.Fatalf("candidate logprobs = %v", response.Candidates[0].ExtraFields)
+	}
+	logprobItems, ok := logprobs["content"].([]any)
+	if !ok || len(logprobItems) != 1 {
+		t.Fatalf("candidate logprobs = %v", response.Candidates[0].ExtraFields)
+	}
 	if response.UsageMetadata[UsageMetricInputTokens] != 10 ||
 		response.UsageMetadata[UsageMetricGenerationTokens] != 5 ||
 		response.UsageMetadata[UsageMetricCacheReadTokens] != 4 ||
-		response.UsageMetadata[UsageMetricReasoningTokens] != 2 {
+		response.UsageMetadata[UsageMetricReasoningTokens] != 2 ||
+		response.UsageMetadata[CerebrasUsageMetricImageTokens] != 3 ||
+		response.UsageMetadata[CerebrasUsageMetricQueueTimeSeconds] != 0.01 ||
+		response.UsageMetadata[CerebrasUsageMetricPromptTimeSeconds] != 0.02 ||
+		response.UsageMetadata[CerebrasUsageMetricCompletionTimeSeconds] != 0.03 ||
+		response.UsageMetadata[CerebrasUsageMetricTotalTimeSeconds] != 0.06 ||
+		response.UsageMetadata[CerebrasUsageMetricTimeInfoCreated] != 123.5 {
 		t.Fatalf("usage metadata = %v", response.UsageMetadata)
 	}
 
 	request := <-requests
 	if request["stream"] != false || request["temperature"] != 0.2 ||
+		request["frequency_penalty"] != 0.3 || request["presence_penalty"] != -0.4 ||
+		request["logprobs"] != true || request["top_logprobs"] != float64(3) ||
+		request["parallel_tool_calls"] != false || request["prompt_cache_key"] != "conversation-1" ||
+		request["seed"] != float64(7) || request["service_tier"] != "auto" || request["user"] != "user-1" ||
 		request["max_completion_tokens"] != float64(64) || request["reasoning_effort"] != "medium" {
 		t.Fatalf("request options = %v", request)
+	}
+	logitBias, ok := request["logit_bias"].(map[string]any)
+	if !ok || logitBias["42"] != -1.5 {
+		t.Fatalf("logit bias = %v", request["logit_bias"])
+	}
+	prediction, ok := request["prediction"].(map[string]any)
+	if !ok || prediction["type"] != "content" || prediction["content"] != "known output" {
+		t.Fatalf("prediction = %v", request["prediction"])
+	}
+	responseFormat, ok := request["response_format"].(map[string]any)
+	if !ok || responseFormat["type"] != "json_object" {
+		t.Fatalf("response format = %v", request["response_format"])
 	}
 	stop, ok := request["stop"].([]any)
 	if !ok || len(stop) != 2 || stop[0] != "END" || stop[1] != "STOP" {
@@ -141,6 +203,99 @@ func TestCerebrasGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	toolChoice, ok := request["tool_choice"].(map[string]any)
 	if !ok || toolChoice["type"] != "function" {
 		t.Fatalf("tool choice = %v", request["tool_choice"])
+	}
+}
+
+func TestCerebrasBuildRequestSupportsImageInput(t *testing.T) {
+	request, err := (&CerebrasGenerator{}).buildRequest(GenerationRequest{
+		Model: "gemma-4-31b",
+		Dialog: Dialog{{Role: User, Blocks: []Block{
+			TextBlock("Describe this image."),
+			ImageBlock([]byte("png"), "image/png"),
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	messages, ok := payload["messages"].([]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("messages = %v", payload["messages"])
+	}
+	message, ok := messages[0].(map[string]any)
+	if !ok {
+		t.Fatalf("message = %T %v", messages[0], messages[0])
+	}
+	parts, ok := message["content"].([]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("content parts = %v", message["content"])
+	}
+	textPart, _ := parts[0].(map[string]any)
+	imagePart, _ := parts[1].(map[string]any)
+	imageURL, _ := imagePart["image_url"].(map[string]any)
+	if textPart["type"] != "text" || textPart["text"] != "Describe this image." ||
+		imagePart["type"] != "image_url" || imageURL["url"] != "data:image/png;base64,cG5n" {
+		t.Fatalf("content parts = %v", parts)
+	}
+}
+
+func TestCerebrasBuildRequestRejectsUnsupportedImageInput(t *testing.T) {
+	_, err := (&CerebrasGenerator{}).buildRequest(GenerationRequest{
+		Model: "gemma-4-31b",
+		Dialog: Dialog{{Role: User, Blocks: []Block{{
+			BlockType: Content, ModalityType: Image, MimeType: "image/gif", Content: Str("R0lG"),
+		}}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported image MIME type") {
+		t.Fatalf("error = %v, want unsupported image MIME type", err)
+	}
+}
+
+func TestCerebrasBuildRequestRejectsInvalidProviderOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		options GenerationOptions
+		want    string
+	}{
+		{
+			name:    "top logprobs without logprobs",
+			options: NewGenerationOptions(WithCerebrasTopLogprobs(3)),
+			want:    CerebrasGenerationOptionTopLogprobs,
+		},
+		{
+			name:    "invalid service tier",
+			options: NewGenerationOptions(WithCerebrasServiceTier("fast")),
+			want:    CerebrasGenerationOptionServiceTier,
+		},
+		{
+			name:    "invalid response format",
+			options: NewGenerationOptions(WithCerebrasResponseFormat(map[string]any{"type": "xml"})),
+			want:    CerebrasGenerationOptionResponseFormat,
+		},
+		{
+			name:    "invalid logit bias",
+			options: NewGenerationOptions(WithCerebrasLogitBias(map[string]float64{"42": 101})),
+			want:    CerebrasGenerationOptionLogitBias,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := (&CerebrasGenerator{}).buildRequest(GenerationRequest{
+				Model:   "gpt-oss-120b",
+				Dialog:  Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
+				Options: tt.options,
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("buildRequest() error = %v, want parameter %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -154,11 +309,11 @@ func TestCerebrasGeneratorUsesGeneratedSSEClient(t *testing.T) {
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(
-			"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\"thinking\"},\"finish_reason\":null}]}\n\n" +
-				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":null}]}\n\n" +
+			"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"system_fingerprint\":\"fp_stream\",\"service_tier\":\"default\",\"service_tier_used\":\"flex\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\"thinking\"},\"finish_reason\":null,\"logprobs\":{\"content\":[{\"token\":\"a\",\"logprob\":-0.1}]}}]}\n\n" +
+				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":null,\"logprobs\":{\"content\":[{\"token\":\"b\",\"logprob\":-0.2}]}}]}\n\n" +
 				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\"}}]},\"finish_reason\":null}]}\n\n" +
 				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"Paris\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n" +
-				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[],\"usage\":{\"prompt_tokens\":6,\"completion_tokens\":4,\"total_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":2},\"completion_tokens_details\":{\"reasoning_tokens\":1}}}\n\n" +
+				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[],\"usage\":{\"prompt_tokens\":6,\"completion_tokens\":4,\"total_tokens\":10,\"image_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":2},\"completion_tokens_details\":{\"reasoning_tokens\":1}},\"time_info\":{\"queue_time\":0.1,\"prompt_time\":0.2,\"completion_time\":0.3,\"total_time\":0.6,\"created\":456.5}}\n\n" +
 				"data: [DONE]\n\n",
 		))
 	}))
@@ -166,7 +321,9 @@ func TestCerebrasGeneratorUsesGeneratedSSEClient(t *testing.T) {
 
 	var thinking, content string
 	var toolBlocks []Block
-	var usage map[string]int
+	var usage map[string]float64
+	responseExtraFields := make(map[string]interface{})
+	messageExtraFields := make(map[string]interface{})
 	for chunk := range newCerebrasTestGenerator(t, server).Stream(t.Context(), GenerationRequest{
 		Model:  "gpt-oss-120b",
 		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("weather")}}},
@@ -176,6 +333,12 @@ func TestCerebrasGeneratorUsesGeneratedSSEClient(t *testing.T) {
 		}
 		if chunk.CandidatesIndex != 0 {
 			t.Fatalf("candidate index = %d, want 0", chunk.CandidatesIndex)
+		}
+		for key, value := range chunk.ResponseExtraFields {
+			responseExtraFields[key] = value
+		}
+		for key, value := range chunk.MessageExtraFields {
+			messageExtraFields[key] = value
 		}
 		switch chunk.Block.BlockType {
 		case Thinking:
@@ -196,6 +359,20 @@ func TestCerebrasGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	if thinking != "thinking" || content != "answer" {
 		t.Fatalf("thinking = %q, content = %q", thinking, content)
 	}
+	if responseExtraFields[CerebrasResponseExtraFieldID] != "chunk_1" ||
+		responseExtraFields[CerebrasResponseExtraFieldSystemFingerprint] != "fp_stream" ||
+		responseExtraFields[CerebrasResponseExtraFieldServiceTier] != "default" ||
+		responseExtraFields[CerebrasResponseExtraFieldServiceTierUsed] != "flex" {
+		t.Fatalf("stream response extra fields = %v", responseExtraFields)
+	}
+	streamLogprobs, ok := messageExtraFields[CerebrasMessageExtraFieldLogprobs].(map[string]any)
+	if !ok {
+		t.Fatalf("stream message extra fields = %v", messageExtraFields)
+	}
+	logprobContent, ok := streamLogprobs["content"].([]any)
+	if !ok || len(logprobContent) != 2 {
+		t.Fatalf("stream logprobs = %v", streamLogprobs)
+	}
 	compressed, err := compressStreamingBlocks(toolBlocks)
 	if err != nil {
 		t.Fatalf("assemble streamed tool call: %v", err)
@@ -211,7 +388,13 @@ func TestCerebrasGeneratorUsesGeneratedSSEClient(t *testing.T) {
 		t.Fatalf("streamed tool call = %+v", call)
 	}
 	if usage[UsageMetricInputTokens] != 6 || usage[UsageMetricGenerationTokens] != 4 ||
-		usage[UsageMetricCacheReadTokens] != 2 || usage[UsageMetricReasoningTokens] != 1 {
+		usage[UsageMetricCacheReadTokens] != 2 || usage[UsageMetricReasoningTokens] != 1 ||
+		usage[CerebrasUsageMetricImageTokens] != 2 ||
+		usage[CerebrasUsageMetricQueueTimeSeconds] != 0.1 ||
+		usage[CerebrasUsageMetricPromptTimeSeconds] != 0.2 ||
+		usage[CerebrasUsageMetricCompletionTimeSeconds] != 0.3 ||
+		usage[CerebrasUsageMetricTotalTimeSeconds] != 0.6 ||
+		usage[CerebrasUsageMetricTimeInfoCreated] != 456.5 {
 		t.Fatalf("usage metadata = %v", usage)
 	}
 }

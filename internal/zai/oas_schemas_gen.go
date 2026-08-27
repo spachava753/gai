@@ -17,7 +17,7 @@ import (
 	"github.com/ogen-go/ogen/sse"
 )
 
-func (s *ErrorStatusCode) Error() string {
+func (s *ErrorResponseStatusCode) Error() string {
 	return fmt.Sprintf("code %d: %+v", s.StatusCode, s.Response)
 }
 
@@ -711,8 +711,8 @@ func (s *ChatCompletionStreamUsage) SetPromptTokensDetails(val OptChatCompletion
 
 // Ref: #/components/schemas/ChatCompletionTextRequest
 type ChatCompletionTextRequest struct {
-	// The model code to be called. GLM-5.1, GLM-5, GLM-5-Turbo are the latest flagship model series,
-	// foundational models specifically designed for agent applications.
+	// The model code to be called. GLM-5.3, GLM-5.2, GLM-5.1, GLM-5-Turbo are the latest flagship model
+	// series, foundational models specifically designed for agent applications.
 	Model ChatCompletionTextRequestModel `json:"model"`
 	// The current conversation message list as the model’s prompt input, provided in JSON array format,
 	// e.g.,`{“role”: “user”, “content”: “Hello”}`. Possible message types include system
@@ -728,6 +728,8 @@ type ChatCompletionTextRequest struct {
 	// Event Stream ends, a `data: [DONE]` message will be returned.
 	Stream   OptBool         `json:"stream"`
 	Thinking OptChatThinking `json:"thinking"`
+	// Controls reasoning effort when thinking is enabled. Supported levels depend on the selected model.
+	ReasoningEffort OptChatCompletionTextRequestReasoningEffort `json:"reasoning_effort"`
 	// Sampling temperature, controls the randomness of the output, must be a positive number within the
 	// range: `[0.0, 1.0]`. The GLM-5.1, GLM-5, GLM-4.7, GLM-4.6 series default value is `1.0`, GLM-4.5
 	// series default value is `0.6`, GLM-4-32B-0414-128K default value is `0.75`.
@@ -788,6 +790,11 @@ func (s *ChatCompletionTextRequest) GetStream() OptBool {
 // GetThinking returns the value of Thinking.
 func (s *ChatCompletionTextRequest) GetThinking() OptChatThinking {
 	return s.Thinking
+}
+
+// GetReasoningEffort returns the value of ReasoningEffort.
+func (s *ChatCompletionTextRequest) GetReasoningEffort() OptChatCompletionTextRequestReasoningEffort {
+	return s.ReasoningEffort
 }
 
 // GetTemperature returns the value of Temperature.
@@ -863,6 +870,11 @@ func (s *ChatCompletionTextRequest) SetStream(val OptBool) {
 // SetThinking sets the value of Thinking.
 func (s *ChatCompletionTextRequest) SetThinking(val OptChatThinking) {
 	s.Thinking = val
+}
+
+// SetReasoningEffort sets the value of ReasoningEffort.
+func (s *ChatCompletionTextRequest) SetReasoningEffort(val OptChatCompletionTextRequestReasoningEffort) {
+	s.ReasoningEffort = val
 }
 
 // SetTemperature sets the value of Temperature.
@@ -1425,11 +1437,13 @@ func (s *ChatCompletionTextRequestMessagesItem3Role) UnmarshalText(data []byte) 
 	}
 }
 
-// The model code to be called. GLM-5.1, GLM-5, GLM-5-Turbo are the latest flagship model series,
-// foundational models specifically designed for agent applications.
+// The model code to be called. GLM-5.3, GLM-5.2, GLM-5.1, GLM-5-Turbo are the latest flagship model
+// series, foundational models specifically designed for agent applications.
 type ChatCompletionTextRequestModel string
 
 const (
+	ChatCompletionTextRequestModelGlm53           ChatCompletionTextRequestModel = "glm-5.3"
+	ChatCompletionTextRequestModelGlm52           ChatCompletionTextRequestModel = "glm-5.2"
 	ChatCompletionTextRequestModelGlm51           ChatCompletionTextRequestModel = "glm-5.1"
 	ChatCompletionTextRequestModelGlm5Turbo       ChatCompletionTextRequestModel = "glm-5-turbo"
 	ChatCompletionTextRequestModelGlm5            ChatCompletionTextRequestModel = "glm-5"
@@ -1448,6 +1462,8 @@ const (
 // AllValues returns all ChatCompletionTextRequestModel values.
 func (ChatCompletionTextRequestModel) AllValues() []ChatCompletionTextRequestModel {
 	return []ChatCompletionTextRequestModel{
+		ChatCompletionTextRequestModelGlm53,
+		ChatCompletionTextRequestModelGlm52,
 		ChatCompletionTextRequestModelGlm51,
 		ChatCompletionTextRequestModelGlm5Turbo,
 		ChatCompletionTextRequestModelGlm5,
@@ -1467,6 +1483,10 @@ func (ChatCompletionTextRequestModel) AllValues() []ChatCompletionTextRequestMod
 // MarshalText implements encoding.TextMarshaler.
 func (s ChatCompletionTextRequestModel) MarshalText() ([]byte, error) {
 	switch s {
+	case ChatCompletionTextRequestModelGlm53:
+		return []byte(s), nil
+	case ChatCompletionTextRequestModelGlm52:
+		return []byte(s), nil
 	case ChatCompletionTextRequestModelGlm51:
 		return []byte(s), nil
 	case ChatCompletionTextRequestModelGlm5Turbo:
@@ -1501,6 +1521,12 @@ func (s ChatCompletionTextRequestModel) MarshalText() ([]byte, error) {
 // UnmarshalText implements encoding.TextUnmarshaler.
 func (s *ChatCompletionTextRequestModel) UnmarshalText(data []byte) error {
 	switch ChatCompletionTextRequestModel(data) {
+	case ChatCompletionTextRequestModelGlm53:
+		*s = ChatCompletionTextRequestModelGlm53
+		return nil
+	case ChatCompletionTextRequestModelGlm52:
+		*s = ChatCompletionTextRequestModelGlm52
+		return nil
 	case ChatCompletionTextRequestModelGlm51:
 		*s = ChatCompletionTextRequestModelGlm51
 		return nil
@@ -1539,6 +1565,83 @@ func (s *ChatCompletionTextRequestModel) UnmarshalText(data []byte) error {
 		return nil
 	case ChatCompletionTextRequestModelGlm432b0414128k:
 		*s = ChatCompletionTextRequestModelGlm432b0414128k
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Controls reasoning effort when thinking is enabled. Supported levels depend on the selected model.
+type ChatCompletionTextRequestReasoningEffort string
+
+const (
+	ChatCompletionTextRequestReasoningEffortMax     ChatCompletionTextRequestReasoningEffort = "max"
+	ChatCompletionTextRequestReasoningEffortXhigh   ChatCompletionTextRequestReasoningEffort = "xhigh"
+	ChatCompletionTextRequestReasoningEffortHigh    ChatCompletionTextRequestReasoningEffort = "high"
+	ChatCompletionTextRequestReasoningEffortMedium  ChatCompletionTextRequestReasoningEffort = "medium"
+	ChatCompletionTextRequestReasoningEffortLow     ChatCompletionTextRequestReasoningEffort = "low"
+	ChatCompletionTextRequestReasoningEffortMinimal ChatCompletionTextRequestReasoningEffort = "minimal"
+	ChatCompletionTextRequestReasoningEffortNone    ChatCompletionTextRequestReasoningEffort = "none"
+)
+
+// AllValues returns all ChatCompletionTextRequestReasoningEffort values.
+func (ChatCompletionTextRequestReasoningEffort) AllValues() []ChatCompletionTextRequestReasoningEffort {
+	return []ChatCompletionTextRequestReasoningEffort{
+		ChatCompletionTextRequestReasoningEffortMax,
+		ChatCompletionTextRequestReasoningEffortXhigh,
+		ChatCompletionTextRequestReasoningEffortHigh,
+		ChatCompletionTextRequestReasoningEffortMedium,
+		ChatCompletionTextRequestReasoningEffortLow,
+		ChatCompletionTextRequestReasoningEffortMinimal,
+		ChatCompletionTextRequestReasoningEffortNone,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ChatCompletionTextRequestReasoningEffort) MarshalText() ([]byte, error) {
+	switch s {
+	case ChatCompletionTextRequestReasoningEffortMax:
+		return []byte(s), nil
+	case ChatCompletionTextRequestReasoningEffortXhigh:
+		return []byte(s), nil
+	case ChatCompletionTextRequestReasoningEffortHigh:
+		return []byte(s), nil
+	case ChatCompletionTextRequestReasoningEffortMedium:
+		return []byte(s), nil
+	case ChatCompletionTextRequestReasoningEffortLow:
+		return []byte(s), nil
+	case ChatCompletionTextRequestReasoningEffortMinimal:
+		return []byte(s), nil
+	case ChatCompletionTextRequestReasoningEffortNone:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ChatCompletionTextRequestReasoningEffort) UnmarshalText(data []byte) error {
+	switch ChatCompletionTextRequestReasoningEffort(data) {
+	case ChatCompletionTextRequestReasoningEffortMax:
+		*s = ChatCompletionTextRequestReasoningEffortMax
+		return nil
+	case ChatCompletionTextRequestReasoningEffortXhigh:
+		*s = ChatCompletionTextRequestReasoningEffortXhigh
+		return nil
+	case ChatCompletionTextRequestReasoningEffortHigh:
+		*s = ChatCompletionTextRequestReasoningEffortHigh
+		return nil
+	case ChatCompletionTextRequestReasoningEffortMedium:
+		*s = ChatCompletionTextRequestReasoningEffortMedium
+		return nil
+	case ChatCompletionTextRequestReasoningEffortLow:
+		*s = ChatCompletionTextRequestReasoningEffortLow
+		return nil
+	case ChatCompletionTextRequestReasoningEffortMinimal:
+		*s = ChatCompletionTextRequestReasoningEffortMinimal
+		return nil
+	case ChatCompletionTextRequestReasoningEffortNone:
+		*s = ChatCompletionTextRequestReasoningEffortNone
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -1740,8 +1843,8 @@ func NewWebSearchToolSchemaChatCompletionTextRequestToolsItem(v WebSearchToolSch
 
 // Ref: #/components/schemas/ChatCompletionVisionRequest
 type ChatCompletionVisionRequest struct {
-	// The model code to be called. GLM-5V-Turbo are the new generation of visual reasoning models.
-	// `AutoGLM-Phone-Multilingual` is mobile intelligent assistant model.
+	// The model code to be called. The GLM-5.3-Flash series supports visual understanding and multimodal
+	// tool calling.
 	Model ChatCompletionVisionRequestModel `json:"model"`
 	// The current conversation message list as the model’s prompt input, provided in JSON array format,
 	// e.g.,`{“role”: “user”, “content”: “Hello”}`. Possible message types include system
@@ -1756,6 +1859,8 @@ type ChatCompletionVisionRequest struct {
 	// Event Stream ends, a `data: [DONE]` message will be returned.
 	Stream   OptBool         `json:"stream"`
 	Thinking OptChatThinking `json:"thinking"`
+	// Controls reasoning effort when thinking is enabled.
+	ReasoningEffort OptChatCompletionVisionRequestReasoningEffort `json:"reasoning_effort"`
 	// Sampling temperature, controls the randomness of the output, must be a positive number within the
 	// range: `[0.0, 1.0]`. The GLM-5V-Turbo, GLM-4.6V, GLM-4.5V series default value is `0.8`, the
 	// autoglm-phone-multilingual default value is `0.0`.
@@ -1807,6 +1912,11 @@ func (s *ChatCompletionVisionRequest) GetStream() OptBool {
 // GetThinking returns the value of Thinking.
 func (s *ChatCompletionVisionRequest) GetThinking() OptChatThinking {
 	return s.Thinking
+}
+
+// GetReasoningEffort returns the value of ReasoningEffort.
+func (s *ChatCompletionVisionRequest) GetReasoningEffort() OptChatCompletionVisionRequestReasoningEffort {
+	return s.ReasoningEffort
 }
 
 // GetTemperature returns the value of Temperature.
@@ -1872,6 +1982,11 @@ func (s *ChatCompletionVisionRequest) SetStream(val OptBool) {
 // SetThinking sets the value of Thinking.
 func (s *ChatCompletionVisionRequest) SetThinking(val OptChatThinking) {
 	s.Thinking = val
+}
+
+// SetReasoningEffort sets the value of ReasoningEffort.
+func (s *ChatCompletionVisionRequest) SetReasoningEffort(val OptChatCompletionVisionRequestReasoningEffort) {
+	s.ReasoningEffort = val
 }
 
 // SetTemperature sets the value of Temperature.
@@ -2264,11 +2379,12 @@ func (s *ChatCompletionVisionRequestMessagesItem2Role) UnmarshalText(data []byte
 	}
 }
 
-// The model code to be called. GLM-5V-Turbo are the new generation of visual reasoning models.
-// `AutoGLM-Phone-Multilingual` is mobile intelligent assistant model.
+// The model code to be called. The GLM-5.3-Flash series supports visual understanding and multimodal
+// tool calling.
 type ChatCompletionVisionRequestModel string
 
 const (
+	ChatCompletionVisionRequestModelGlm53Flash               ChatCompletionVisionRequestModel = "glm-5.3-flash"
 	ChatCompletionVisionRequestModelGlm5vTurbo               ChatCompletionVisionRequestModel = "glm-5v-turbo"
 	ChatCompletionVisionRequestModelGlm46v                   ChatCompletionVisionRequestModel = "glm-4.6v"
 	ChatCompletionVisionRequestModelAutoglmPhoneMultilingual ChatCompletionVisionRequestModel = "autoglm-phone-multilingual"
@@ -2280,6 +2396,7 @@ const (
 // AllValues returns all ChatCompletionVisionRequestModel values.
 func (ChatCompletionVisionRequestModel) AllValues() []ChatCompletionVisionRequestModel {
 	return []ChatCompletionVisionRequestModel{
+		ChatCompletionVisionRequestModelGlm53Flash,
 		ChatCompletionVisionRequestModelGlm5vTurbo,
 		ChatCompletionVisionRequestModelGlm46v,
 		ChatCompletionVisionRequestModelAutoglmPhoneMultilingual,
@@ -2292,6 +2409,8 @@ func (ChatCompletionVisionRequestModel) AllValues() []ChatCompletionVisionReques
 // MarshalText implements encoding.TextMarshaler.
 func (s ChatCompletionVisionRequestModel) MarshalText() ([]byte, error) {
 	switch s {
+	case ChatCompletionVisionRequestModelGlm53Flash:
+		return []byte(s), nil
 	case ChatCompletionVisionRequestModelGlm5vTurbo:
 		return []byte(s), nil
 	case ChatCompletionVisionRequestModelGlm46v:
@@ -2312,6 +2431,9 @@ func (s ChatCompletionVisionRequestModel) MarshalText() ([]byte, error) {
 // UnmarshalText implements encoding.TextUnmarshaler.
 func (s *ChatCompletionVisionRequestModel) UnmarshalText(data []byte) error {
 	switch ChatCompletionVisionRequestModel(data) {
+	case ChatCompletionVisionRequestModelGlm53Flash:
+		*s = ChatCompletionVisionRequestModelGlm53Flash
+		return nil
 	case ChatCompletionVisionRequestModelGlm5vTurbo:
 		*s = ChatCompletionVisionRequestModelGlm5vTurbo
 		return nil
@@ -2329,6 +2451,55 @@ func (s *ChatCompletionVisionRequestModel) UnmarshalText(data []byte) error {
 		return nil
 	case ChatCompletionVisionRequestModelGlm45v:
 		*s = ChatCompletionVisionRequestModelGlm45v
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Controls reasoning effort when thinking is enabled.
+type ChatCompletionVisionRequestReasoningEffort string
+
+const (
+	ChatCompletionVisionRequestReasoningEffortMax  ChatCompletionVisionRequestReasoningEffort = "max"
+	ChatCompletionVisionRequestReasoningEffortHigh ChatCompletionVisionRequestReasoningEffort = "high"
+	ChatCompletionVisionRequestReasoningEffortLow  ChatCompletionVisionRequestReasoningEffort = "low"
+)
+
+// AllValues returns all ChatCompletionVisionRequestReasoningEffort values.
+func (ChatCompletionVisionRequestReasoningEffort) AllValues() []ChatCompletionVisionRequestReasoningEffort {
+	return []ChatCompletionVisionRequestReasoningEffort{
+		ChatCompletionVisionRequestReasoningEffortMax,
+		ChatCompletionVisionRequestReasoningEffortHigh,
+		ChatCompletionVisionRequestReasoningEffortLow,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ChatCompletionVisionRequestReasoningEffort) MarshalText() ([]byte, error) {
+	switch s {
+	case ChatCompletionVisionRequestReasoningEffortMax:
+		return []byte(s), nil
+	case ChatCompletionVisionRequestReasoningEffortHigh:
+		return []byte(s), nil
+	case ChatCompletionVisionRequestReasoningEffortLow:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ChatCompletionVisionRequestReasoningEffort) UnmarshalText(data []byte) error {
+	switch ChatCompletionVisionRequestReasoningEffort(data) {
+	case ChatCompletionVisionRequestReasoningEffortMax:
+		*s = ChatCompletionVisionRequestReasoningEffortMax
+		return nil
+	case ChatCompletionVisionRequestReasoningEffortHigh:
+		*s = ChatCompletionVisionRequestReasoningEffortHigh
+		return nil
+	case ChatCompletionVisionRequestReasoningEffortLow:
+		*s = ChatCompletionVisionRequestReasoningEffortLow
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -2505,14 +2676,13 @@ func (s *ChatThinkingType) UnmarshalText(data []byte) error {
 // The request has failed.
 // Ref: #/components/schemas/Error
 type Error struct {
-	// Error code.
-	Code int32 `json:"code"`
+	Code ErrorCode `json:"code"`
 	// Error message.
 	Message string `json:"message"`
 }
 
 // GetCode returns the value of Code.
-func (s *Error) GetCode() int32 {
+func (s *Error) GetCode() ErrorCode {
 	return s.Code
 }
 
@@ -2522,7 +2692,7 @@ func (s *Error) GetMessage() string {
 }
 
 // SetCode sets the value of Code.
-func (s *Error) SetCode(val int32) {
+func (s *Error) SetCode(val ErrorCode) {
 	s.Code = val
 }
 
@@ -2531,29 +2701,177 @@ func (s *Error) SetMessage(val string) {
 	s.Message = val
 }
 
-// ErrorStatusCode wraps Error with StatusCode.
-type ErrorStatusCode struct {
+// Provider error code. Z.AI documentation shows both numeric and string encodings.
+// Ref: #/components/schemas/ErrorCode
+// ErrorCode represents sum type.
+type ErrorCode struct {
+	// Type selects the active sum variant, switch on this field.
+	Type   ErrorCodeType
+	Int32  int32
+	String string
+}
+
+// ErrorCodeType is oneOf type of ErrorCode.
+type ErrorCodeType string
+
+// Possible values for ErrorCodeType.
+const (
+	Int32ErrorCode  ErrorCodeType = "int32"
+	StringErrorCode ErrorCodeType = "string"
+)
+
+// IsInt32 reports whether ErrorCode is int32.
+func (s ErrorCode) IsInt32() bool { return s.Type == Int32ErrorCode }
+
+// IsString reports whether ErrorCode is string.
+func (s ErrorCode) IsString() bool { return s.Type == StringErrorCode }
+
+// SetInt32 sets ErrorCode to int32.
+func (s *ErrorCode) SetInt32(v int32) {
+	s.Type = Int32ErrorCode
+	s.Int32 = v
+}
+
+// GetInt32 returns int32 and true boolean if ErrorCode is int32.
+func (s ErrorCode) GetInt32() (v int32, ok bool) {
+	if !s.IsInt32() {
+		return v, false
+	}
+	return s.Int32, true
+}
+
+// NewInt32ErrorCode returns new ErrorCode from int32.
+func NewInt32ErrorCode(v int32) ErrorCode {
+	var s ErrorCode
+	s.SetInt32(v)
+	return s
+}
+
+// SetString sets ErrorCode to string.
+func (s *ErrorCode) SetString(v string) {
+	s.Type = StringErrorCode
+	s.String = v
+}
+
+// GetString returns string and true boolean if ErrorCode is string.
+func (s ErrorCode) GetString() (v string, ok bool) {
+	if !s.IsString() {
+		return v, false
+	}
+	return s.String, true
+}
+
+// NewStringErrorCode returns new ErrorCode from string.
+func NewStringErrorCode(v string) ErrorCode {
+	var s ErrorCode
+	s.SetString(v)
+	return s
+}
+
+// Ref: #/components/schemas/ErrorEnvelope
+type ErrorEnvelope struct {
+	Error Error `json:"error"`
+}
+
+// GetError returns the value of Error.
+func (s *ErrorEnvelope) GetError() Error {
+	return s.Error
+}
+
+// SetError sets the value of Error.
+func (s *ErrorEnvelope) SetError(val Error) {
+	s.Error = val
+}
+
+// Ref: #/components/schemas/ErrorResponse
+// ErrorResponse represents sum type.
+type ErrorResponse struct {
+	// Type selects the active sum variant, switch on this field.
+	Type          ErrorResponseType
+	Error         Error
+	ErrorEnvelope ErrorEnvelope
+}
+
+// ErrorResponseType is oneOf type of ErrorResponse.
+type ErrorResponseType string
+
+// Possible values for ErrorResponseType.
+const (
+	ErrorErrorResponse         ErrorResponseType = "Error"
+	ErrorEnvelopeErrorResponse ErrorResponseType = "ErrorEnvelope"
+)
+
+// IsError reports whether ErrorResponse is Error.
+func (s ErrorResponse) IsError() bool { return s.Type == ErrorErrorResponse }
+
+// IsErrorEnvelope reports whether ErrorResponse is ErrorEnvelope.
+func (s ErrorResponse) IsErrorEnvelope() bool { return s.Type == ErrorEnvelopeErrorResponse }
+
+// SetError sets ErrorResponse to Error.
+func (s *ErrorResponse) SetError(v Error) {
+	s.Type = ErrorErrorResponse
+	s.Error = v
+}
+
+// GetError returns Error and true boolean if ErrorResponse is Error.
+func (s ErrorResponse) GetError() (v Error, ok bool) {
+	if !s.IsError() {
+		return v, false
+	}
+	return s.Error, true
+}
+
+// NewErrorErrorResponse returns new ErrorResponse from Error.
+func NewErrorErrorResponse(v Error) ErrorResponse {
+	var s ErrorResponse
+	s.SetError(v)
+	return s
+}
+
+// SetErrorEnvelope sets ErrorResponse to ErrorEnvelope.
+func (s *ErrorResponse) SetErrorEnvelope(v ErrorEnvelope) {
+	s.Type = ErrorEnvelopeErrorResponse
+	s.ErrorEnvelope = v
+}
+
+// GetErrorEnvelope returns ErrorEnvelope and true boolean if ErrorResponse is ErrorEnvelope.
+func (s ErrorResponse) GetErrorEnvelope() (v ErrorEnvelope, ok bool) {
+	if !s.IsErrorEnvelope() {
+		return v, false
+	}
+	return s.ErrorEnvelope, true
+}
+
+// NewErrorEnvelopeErrorResponse returns new ErrorResponse from ErrorEnvelope.
+func NewErrorEnvelopeErrorResponse(v ErrorEnvelope) ErrorResponse {
+	var s ErrorResponse
+	s.SetErrorEnvelope(v)
+	return s
+}
+
+// ErrorResponseStatusCode wraps ErrorResponse with StatusCode.
+type ErrorResponseStatusCode struct {
 	StatusCode int
-	Response   Error
+	Response   ErrorResponse
 }
 
 // GetStatusCode returns the value of StatusCode.
-func (s *ErrorStatusCode) GetStatusCode() int {
+func (s *ErrorResponseStatusCode) GetStatusCode() int {
 	return s.StatusCode
 }
 
 // GetResponse returns the value of Response.
-func (s *ErrorStatusCode) GetResponse() Error {
+func (s *ErrorResponseStatusCode) GetResponse() ErrorResponse {
 	return s.Response
 }
 
 // SetStatusCode sets the value of StatusCode.
-func (s *ErrorStatusCode) SetStatusCode(val int) {
+func (s *ErrorResponseStatusCode) SetStatusCode(val int) {
 	s.StatusCode = val
 }
 
 // SetResponse sets the value of Response.
-func (s *ErrorStatusCode) SetResponse(val Error) {
+func (s *ErrorResponseStatusCode) SetResponse(val ErrorResponse) {
 	s.Response = val
 }
 
@@ -3086,6 +3404,52 @@ func (o OptChatCompletionTextRequestMessagesItem2ToolCallsItemFunction) Or(d Cha
 	return d
 }
 
+// NewOptChatCompletionTextRequestReasoningEffort returns new OptChatCompletionTextRequestReasoningEffort with value set to v.
+func NewOptChatCompletionTextRequestReasoningEffort(v ChatCompletionTextRequestReasoningEffort) OptChatCompletionTextRequestReasoningEffort {
+	return OptChatCompletionTextRequestReasoningEffort{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatCompletionTextRequestReasoningEffort is optional ChatCompletionTextRequestReasoningEffort.
+type OptChatCompletionTextRequestReasoningEffort struct {
+	Value ChatCompletionTextRequestReasoningEffort
+	Set   bool
+}
+
+// IsSet returns true if OptChatCompletionTextRequestReasoningEffort was set.
+func (o OptChatCompletionTextRequestReasoningEffort) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatCompletionTextRequestReasoningEffort) Reset() {
+	var v ChatCompletionTextRequestReasoningEffort
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatCompletionTextRequestReasoningEffort) SetTo(v ChatCompletionTextRequestReasoningEffort) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatCompletionTextRequestReasoningEffort) Get() (v ChatCompletionTextRequestReasoningEffort, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatCompletionTextRequestReasoningEffort) Or(d ChatCompletionTextRequestReasoningEffort) ChatCompletionTextRequestReasoningEffort {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptChatCompletionTextRequestResponseFormat returns new OptChatCompletionTextRequestResponseFormat with value set to v.
 func NewOptChatCompletionTextRequestResponseFormat(v ChatCompletionTextRequestResponseFormat) OptChatCompletionTextRequestResponseFormat {
 	return OptChatCompletionTextRequestResponseFormat{
@@ -3172,6 +3536,52 @@ func (o OptChatCompletionTextRequestToolChoice) Get() (v ChatCompletionTextReque
 
 // Or returns value if set, or given parameter if does not.
 func (o OptChatCompletionTextRequestToolChoice) Or(d ChatCompletionTextRequestToolChoice) ChatCompletionTextRequestToolChoice {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptChatCompletionVisionRequestReasoningEffort returns new OptChatCompletionVisionRequestReasoningEffort with value set to v.
+func NewOptChatCompletionVisionRequestReasoningEffort(v ChatCompletionVisionRequestReasoningEffort) OptChatCompletionVisionRequestReasoningEffort {
+	return OptChatCompletionVisionRequestReasoningEffort{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatCompletionVisionRequestReasoningEffort is optional ChatCompletionVisionRequestReasoningEffort.
+type OptChatCompletionVisionRequestReasoningEffort struct {
+	Value ChatCompletionVisionRequestReasoningEffort
+	Set   bool
+}
+
+// IsSet returns true if OptChatCompletionVisionRequestReasoningEffort was set.
+func (o OptChatCompletionVisionRequestReasoningEffort) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatCompletionVisionRequestReasoningEffort) Reset() {
+	var v ChatCompletionVisionRequestReasoningEffort
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatCompletionVisionRequestReasoningEffort) SetTo(v ChatCompletionVisionRequestReasoningEffort) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatCompletionVisionRequestReasoningEffort) Get() (v ChatCompletionVisionRequestReasoningEffort, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatCompletionVisionRequestReasoningEffort) Or(d ChatCompletionVisionRequestReasoningEffort) ChatCompletionVisionRequestReasoningEffort {
 	if v, ok := o.Get(); ok {
 		return v
 	}

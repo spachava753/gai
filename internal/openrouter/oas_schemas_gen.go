@@ -298,6 +298,7 @@ func (s *BearerAuth) SetRoles(val []string) {
 type ChatChoice struct {
 	Index        int              `json:"index"`
 	FinishReason OptNilString     `json:"finish_reason"`
+	Logprobs     OptLogProbs      `json:"logprobs"`
 	Message      AssistantMessage `json:"message"`
 	Error        OptErrorDetail   `json:"error"`
 }
@@ -310,6 +311,11 @@ func (s *ChatChoice) GetIndex() int {
 // GetFinishReason returns the value of FinishReason.
 func (s *ChatChoice) GetFinishReason() OptNilString {
 	return s.FinishReason
+}
+
+// GetLogprobs returns the value of Logprobs.
+func (s *ChatChoice) GetLogprobs() OptLogProbs {
+	return s.Logprobs
 }
 
 // GetMessage returns the value of Message.
@@ -332,6 +338,11 @@ func (s *ChatChoice) SetFinishReason(val OptNilString) {
 	s.FinishReason = val
 }
 
+// SetLogprobs sets the value of Logprobs.
+func (s *ChatChoice) SetLogprobs(val OptLogProbs) {
+	s.Logprobs = val
+}
+
 // SetMessage sets the value of Message.
 func (s *ChatChoice) SetMessage(val AssistantMessage) {
 	s.Message = val
@@ -344,13 +355,16 @@ func (s *ChatChoice) SetError(val OptErrorDetail) {
 
 // Ref: #/components/schemas/ChatCompletionChunk
 type ChatCompletionChunk struct {
-	ID      string                      `json:"id"`
-	Object  ChatCompletionChunkObject   `json:"object"`
-	Created int64                       `json:"created"`
-	Model   string                      `json:"model"`
-	Choices []ChatCompletionChunkChoice `json:"choices"`
-	Usage   OptUsage                    `json:"usage"`
-	Error   OptErrorDetail              `json:"error"`
+	ID                 string                                   `json:"id"`
+	Object             ChatCompletionChunkObject                `json:"object"`
+	Created            int64                                    `json:"created"`
+	Model              string                                   `json:"model"`
+	SystemFingerprint  OptString                                `json:"system_fingerprint"`
+	ServiceTier        OptNilString                             `json:"service_tier"`
+	OpenrouterMetadata OptChatCompletionChunkOpenrouterMetadata `json:"openrouter_metadata"`
+	Choices            []ChatCompletionChunkChoice              `json:"choices"`
+	Usage              OptUsage                                 `json:"usage"`
+	Error              OptErrorDetail                           `json:"error"`
 }
 
 // GetID returns the value of ID.
@@ -371,6 +385,21 @@ func (s *ChatCompletionChunk) GetCreated() int64 {
 // GetModel returns the value of Model.
 func (s *ChatCompletionChunk) GetModel() string {
 	return s.Model
+}
+
+// GetSystemFingerprint returns the value of SystemFingerprint.
+func (s *ChatCompletionChunk) GetSystemFingerprint() OptString {
+	return s.SystemFingerprint
+}
+
+// GetServiceTier returns the value of ServiceTier.
+func (s *ChatCompletionChunk) GetServiceTier() OptNilString {
+	return s.ServiceTier
+}
+
+// GetOpenrouterMetadata returns the value of OpenrouterMetadata.
+func (s *ChatCompletionChunk) GetOpenrouterMetadata() OptChatCompletionChunkOpenrouterMetadata {
+	return s.OpenrouterMetadata
 }
 
 // GetChoices returns the value of Choices.
@@ -408,6 +437,21 @@ func (s *ChatCompletionChunk) SetModel(val string) {
 	s.Model = val
 }
 
+// SetSystemFingerprint sets the value of SystemFingerprint.
+func (s *ChatCompletionChunk) SetSystemFingerprint(val OptString) {
+	s.SystemFingerprint = val
+}
+
+// SetServiceTier sets the value of ServiceTier.
+func (s *ChatCompletionChunk) SetServiceTier(val OptNilString) {
+	s.ServiceTier = val
+}
+
+// SetOpenrouterMetadata sets the value of OpenrouterMetadata.
+func (s *ChatCompletionChunk) SetOpenrouterMetadata(val OptChatCompletionChunkOpenrouterMetadata) {
+	s.OpenrouterMetadata = val
+}
+
 // SetChoices sets the value of Choices.
 func (s *ChatCompletionChunk) SetChoices(val []ChatCompletionChunkChoice) {
 	s.Choices = val
@@ -428,6 +472,7 @@ type ChatCompletionChunkChoice struct {
 	Index        int                      `json:"index"`
 	Delta        ChatCompletionChunkDelta `json:"delta"`
 	FinishReason OptNilString             `json:"finish_reason"`
+	Logprobs     OptLogProbs              `json:"logprobs"`
 	Error        OptErrorDetail           `json:"error"`
 }
 
@@ -444,6 +489,11 @@ func (s *ChatCompletionChunkChoice) GetDelta() ChatCompletionChunkDelta {
 // GetFinishReason returns the value of FinishReason.
 func (s *ChatCompletionChunkChoice) GetFinishReason() OptNilString {
 	return s.FinishReason
+}
+
+// GetLogprobs returns the value of Logprobs.
+func (s *ChatCompletionChunkChoice) GetLogprobs() OptLogProbs {
+	return s.Logprobs
 }
 
 // GetError returns the value of Error.
@@ -464,6 +514,11 @@ func (s *ChatCompletionChunkChoice) SetDelta(val ChatCompletionChunkDelta) {
 // SetFinishReason sets the value of FinishReason.
 func (s *ChatCompletionChunkChoice) SetFinishReason(val OptNilString) {
 	s.FinishReason = val
+}
+
+// SetLogprobs sets the value of Logprobs.
+func (s *ChatCompletionChunkChoice) SetLogprobs(val OptLogProbs) {
+	s.Logprobs = val
 }
 
 // SetError sets the value of Error.
@@ -598,6 +653,17 @@ func (s *ChatCompletionChunkObject) UnmarshalText(data []byte) error {
 	}
 }
 
+type ChatCompletionChunkOpenrouterMetadata map[string]jx.Raw
+
+func (s *ChatCompletionChunkOpenrouterMetadata) init() ChatCompletionChunkOpenrouterMetadata {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
+	}
+	return m
+}
+
 // Ref: #/components/schemas/ChatCompletionChunkToolCall
 type ChatCompletionChunkToolCall struct {
 	Index    int                                 `json:"index"`
@@ -708,19 +774,36 @@ func (s *ChatCompletionChunkToolCallType) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/ChatCompletionRequest
 type ChatCompletionRequest struct {
-	Model               string             `json:"model"`
-	Messages            []Message          `json:"messages"`
-	Temperature         OptFloat64         `json:"temperature"`
-	TopP                OptFloat64         `json:"top_p"`
-	FrequencyPenalty    OptFloat64         `json:"frequency_penalty"`
-	PresencePenalty     OptFloat64         `json:"presence_penalty"`
-	N                   OptInt             `json:"n"`
-	MaxCompletionTokens OptInt             `json:"max_completion_tokens"`
-	Stop                OptStop            `json:"stop"`
-	Tools               []FunctionTool     `json:"tools"`
-	ToolChoice          OptToolChoice      `json:"tool_choice"`
-	Reasoning           OptReasoningConfig `json:"reasoning"`
-	Stream              OptBool            `json:"stream"`
+	Model               string                                 `json:"model"`
+	Messages            []Message                              `json:"messages"`
+	Temperature         OptFloat64                             `json:"temperature"`
+	TopP                OptFloat64                             `json:"top_p"`
+	TopK                OptInt                                 `json:"top_k"`
+	LogitBias           OptChatCompletionRequestLogitBias      `json:"logit_bias"`
+	Logprobs            OptBool                                `json:"logprobs"`
+	MinP                OptFloat64                             `json:"min_p"`
+	FrequencyPenalty    OptFloat64                             `json:"frequency_penalty"`
+	PresencePenalty     OptFloat64                             `json:"presence_penalty"`
+	N                   OptInt                                 `json:"n"`
+	Models              []string                               `json:"models"`
+	ParallelToolCalls   OptBool                                `json:"parallel_tool_calls"`
+	Prediction          OptPrediction                          `json:"prediction"`
+	PromptCacheKey      OptString                              `json:"prompt_cache_key"`
+	Provider            OptChatCompletionRequestProvider       `json:"provider"`
+	RepetitionPenalty   OptFloat64                             `json:"repetition_penalty"`
+	ResponseFormat      OptChatCompletionRequestResponseFormat `json:"response_format"`
+	Seed                OptInt                                 `json:"seed"`
+	ServiceTier         OptServiceTier                         `json:"service_tier"`
+	SessionID           OptString                              `json:"session_id"`
+	TopA                OptFloat64                             `json:"top_a"`
+	TopLogprobs         OptInt                                 `json:"top_logprobs"`
+	User                OptString                              `json:"user"`
+	MaxCompletionTokens OptInt                                 `json:"max_completion_tokens"`
+	Stop                OptStop                                `json:"stop"`
+	Tools               []FunctionTool                         `json:"tools"`
+	ToolChoice          OptToolChoice                          `json:"tool_choice"`
+	Reasoning           OptReasoningConfig                     `json:"reasoning"`
+	Stream              OptBool                                `json:"stream"`
 }
 
 // GetModel returns the value of Model.
@@ -743,6 +826,26 @@ func (s *ChatCompletionRequest) GetTopP() OptFloat64 {
 	return s.TopP
 }
 
+// GetTopK returns the value of TopK.
+func (s *ChatCompletionRequest) GetTopK() OptInt {
+	return s.TopK
+}
+
+// GetLogitBias returns the value of LogitBias.
+func (s *ChatCompletionRequest) GetLogitBias() OptChatCompletionRequestLogitBias {
+	return s.LogitBias
+}
+
+// GetLogprobs returns the value of Logprobs.
+func (s *ChatCompletionRequest) GetLogprobs() OptBool {
+	return s.Logprobs
+}
+
+// GetMinP returns the value of MinP.
+func (s *ChatCompletionRequest) GetMinP() OptFloat64 {
+	return s.MinP
+}
+
 // GetFrequencyPenalty returns the value of FrequencyPenalty.
 func (s *ChatCompletionRequest) GetFrequencyPenalty() OptFloat64 {
 	return s.FrequencyPenalty
@@ -756,6 +859,71 @@ func (s *ChatCompletionRequest) GetPresencePenalty() OptFloat64 {
 // GetN returns the value of N.
 func (s *ChatCompletionRequest) GetN() OptInt {
 	return s.N
+}
+
+// GetModels returns the value of Models.
+func (s *ChatCompletionRequest) GetModels() []string {
+	return s.Models
+}
+
+// GetParallelToolCalls returns the value of ParallelToolCalls.
+func (s *ChatCompletionRequest) GetParallelToolCalls() OptBool {
+	return s.ParallelToolCalls
+}
+
+// GetPrediction returns the value of Prediction.
+func (s *ChatCompletionRequest) GetPrediction() OptPrediction {
+	return s.Prediction
+}
+
+// GetPromptCacheKey returns the value of PromptCacheKey.
+func (s *ChatCompletionRequest) GetPromptCacheKey() OptString {
+	return s.PromptCacheKey
+}
+
+// GetProvider returns the value of Provider.
+func (s *ChatCompletionRequest) GetProvider() OptChatCompletionRequestProvider {
+	return s.Provider
+}
+
+// GetRepetitionPenalty returns the value of RepetitionPenalty.
+func (s *ChatCompletionRequest) GetRepetitionPenalty() OptFloat64 {
+	return s.RepetitionPenalty
+}
+
+// GetResponseFormat returns the value of ResponseFormat.
+func (s *ChatCompletionRequest) GetResponseFormat() OptChatCompletionRequestResponseFormat {
+	return s.ResponseFormat
+}
+
+// GetSeed returns the value of Seed.
+func (s *ChatCompletionRequest) GetSeed() OptInt {
+	return s.Seed
+}
+
+// GetServiceTier returns the value of ServiceTier.
+func (s *ChatCompletionRequest) GetServiceTier() OptServiceTier {
+	return s.ServiceTier
+}
+
+// GetSessionID returns the value of SessionID.
+func (s *ChatCompletionRequest) GetSessionID() OptString {
+	return s.SessionID
+}
+
+// GetTopA returns the value of TopA.
+func (s *ChatCompletionRequest) GetTopA() OptFloat64 {
+	return s.TopA
+}
+
+// GetTopLogprobs returns the value of TopLogprobs.
+func (s *ChatCompletionRequest) GetTopLogprobs() OptInt {
+	return s.TopLogprobs
+}
+
+// GetUser returns the value of User.
+func (s *ChatCompletionRequest) GetUser() OptString {
+	return s.User
 }
 
 // GetMaxCompletionTokens returns the value of MaxCompletionTokens.
@@ -808,6 +976,26 @@ func (s *ChatCompletionRequest) SetTopP(val OptFloat64) {
 	s.TopP = val
 }
 
+// SetTopK sets the value of TopK.
+func (s *ChatCompletionRequest) SetTopK(val OptInt) {
+	s.TopK = val
+}
+
+// SetLogitBias sets the value of LogitBias.
+func (s *ChatCompletionRequest) SetLogitBias(val OptChatCompletionRequestLogitBias) {
+	s.LogitBias = val
+}
+
+// SetLogprobs sets the value of Logprobs.
+func (s *ChatCompletionRequest) SetLogprobs(val OptBool) {
+	s.Logprobs = val
+}
+
+// SetMinP sets the value of MinP.
+func (s *ChatCompletionRequest) SetMinP(val OptFloat64) {
+	s.MinP = val
+}
+
 // SetFrequencyPenalty sets the value of FrequencyPenalty.
 func (s *ChatCompletionRequest) SetFrequencyPenalty(val OptFloat64) {
 	s.FrequencyPenalty = val
@@ -821,6 +1009,71 @@ func (s *ChatCompletionRequest) SetPresencePenalty(val OptFloat64) {
 // SetN sets the value of N.
 func (s *ChatCompletionRequest) SetN(val OptInt) {
 	s.N = val
+}
+
+// SetModels sets the value of Models.
+func (s *ChatCompletionRequest) SetModels(val []string) {
+	s.Models = val
+}
+
+// SetParallelToolCalls sets the value of ParallelToolCalls.
+func (s *ChatCompletionRequest) SetParallelToolCalls(val OptBool) {
+	s.ParallelToolCalls = val
+}
+
+// SetPrediction sets the value of Prediction.
+func (s *ChatCompletionRequest) SetPrediction(val OptPrediction) {
+	s.Prediction = val
+}
+
+// SetPromptCacheKey sets the value of PromptCacheKey.
+func (s *ChatCompletionRequest) SetPromptCacheKey(val OptString) {
+	s.PromptCacheKey = val
+}
+
+// SetProvider sets the value of Provider.
+func (s *ChatCompletionRequest) SetProvider(val OptChatCompletionRequestProvider) {
+	s.Provider = val
+}
+
+// SetRepetitionPenalty sets the value of RepetitionPenalty.
+func (s *ChatCompletionRequest) SetRepetitionPenalty(val OptFloat64) {
+	s.RepetitionPenalty = val
+}
+
+// SetResponseFormat sets the value of ResponseFormat.
+func (s *ChatCompletionRequest) SetResponseFormat(val OptChatCompletionRequestResponseFormat) {
+	s.ResponseFormat = val
+}
+
+// SetSeed sets the value of Seed.
+func (s *ChatCompletionRequest) SetSeed(val OptInt) {
+	s.Seed = val
+}
+
+// SetServiceTier sets the value of ServiceTier.
+func (s *ChatCompletionRequest) SetServiceTier(val OptServiceTier) {
+	s.ServiceTier = val
+}
+
+// SetSessionID sets the value of SessionID.
+func (s *ChatCompletionRequest) SetSessionID(val OptString) {
+	s.SessionID = val
+}
+
+// SetTopA sets the value of TopA.
+func (s *ChatCompletionRequest) SetTopA(val OptFloat64) {
+	s.TopA = val
+}
+
+// SetTopLogprobs sets the value of TopLogprobs.
+func (s *ChatCompletionRequest) SetTopLogprobs(val OptInt) {
+	s.TopLogprobs = val
+}
+
+// SetUser sets the value of User.
+func (s *ChatCompletionRequest) SetUser(val OptString) {
+	s.User = val
 }
 
 // SetMaxCompletionTokens sets the value of MaxCompletionTokens.
@@ -853,15 +1106,50 @@ func (s *ChatCompletionRequest) SetStream(val OptBool) {
 	s.Stream = val
 }
 
+type ChatCompletionRequestLogitBias map[string]float64
+
+func (s *ChatCompletionRequestLogitBias) init() ChatCompletionRequestLogitBias {
+	m := *s
+	if m == nil {
+		m = map[string]float64{}
+		*s = m
+	}
+	return m
+}
+
+type ChatCompletionRequestProvider map[string]jx.Raw
+
+func (s *ChatCompletionRequestProvider) init() ChatCompletionRequestProvider {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
+	}
+	return m
+}
+
+type ChatCompletionRequestResponseFormat map[string]jx.Raw
+
+func (s *ChatCompletionRequestResponseFormat) init() ChatCompletionRequestResponseFormat {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
+	}
+	return m
+}
+
 // Ref: #/components/schemas/ChatCompletionResponse
 type ChatCompletionResponse struct {
-	ID                string                       `json:"id"`
-	Object            ChatCompletionResponseObject `json:"object"`
-	Created           int64                        `json:"created"`
-	Model             string                       `json:"model"`
-	SystemFingerprint OptNilString                 `json:"system_fingerprint"`
-	Choices           []ChatChoice                 `json:"choices"`
-	Usage             OptUsage                     `json:"usage"`
+	ID                 string                                      `json:"id"`
+	Object             ChatCompletionResponseObject                `json:"object"`
+	Created            int64                                       `json:"created"`
+	Model              string                                      `json:"model"`
+	SystemFingerprint  OptNilString                                `json:"system_fingerprint"`
+	ServiceTier        OptNilString                                `json:"service_tier"`
+	OpenrouterMetadata OptChatCompletionResponseOpenrouterMetadata `json:"openrouter_metadata"`
+	Choices            []ChatChoice                                `json:"choices"`
+	Usage              OptUsage                                    `json:"usage"`
 }
 
 // GetID returns the value of ID.
@@ -887,6 +1175,16 @@ func (s *ChatCompletionResponse) GetModel() string {
 // GetSystemFingerprint returns the value of SystemFingerprint.
 func (s *ChatCompletionResponse) GetSystemFingerprint() OptNilString {
 	return s.SystemFingerprint
+}
+
+// GetServiceTier returns the value of ServiceTier.
+func (s *ChatCompletionResponse) GetServiceTier() OptNilString {
+	return s.ServiceTier
+}
+
+// GetOpenrouterMetadata returns the value of OpenrouterMetadata.
+func (s *ChatCompletionResponse) GetOpenrouterMetadata() OptChatCompletionResponseOpenrouterMetadata {
+	return s.OpenrouterMetadata
 }
 
 // GetChoices returns the value of Choices.
@@ -922,6 +1220,16 @@ func (s *ChatCompletionResponse) SetModel(val string) {
 // SetSystemFingerprint sets the value of SystemFingerprint.
 func (s *ChatCompletionResponse) SetSystemFingerprint(val OptNilString) {
 	s.SystemFingerprint = val
+}
+
+// SetServiceTier sets the value of ServiceTier.
+func (s *ChatCompletionResponse) SetServiceTier(val OptNilString) {
+	s.ServiceTier = val
+}
+
+// SetOpenrouterMetadata sets the value of OpenrouterMetadata.
+func (s *ChatCompletionResponse) SetOpenrouterMetadata(val OptChatCompletionResponseOpenrouterMetadata) {
+	s.OpenrouterMetadata = val
 }
 
 // SetChoices sets the value of Choices.
@@ -968,9 +1276,23 @@ func (s *ChatCompletionResponseObject) UnmarshalText(data []byte) error {
 	}
 }
 
+type ChatCompletionResponseOpenrouterMetadata map[string]jx.Raw
+
+func (s *ChatCompletionResponseOpenrouterMetadata) init() ChatCompletionResponseOpenrouterMetadata {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
+	}
+	return m
+}
+
 // Ref: #/components/schemas/CompletionTokensDetails
 type CompletionTokensDetails struct {
-	ReasoningTokens OptInt `json:"reasoning_tokens"`
+	ReasoningTokens          OptInt    `json:"reasoning_tokens"`
+	AudioTokens              OptNilInt `json:"audio_tokens"`
+	AcceptedPredictionTokens OptNilInt `json:"accepted_prediction_tokens"`
+	RejectedPredictionTokens OptNilInt `json:"rejected_prediction_tokens"`
 }
 
 // GetReasoningTokens returns the value of ReasoningTokens.
@@ -978,9 +1300,76 @@ func (s *CompletionTokensDetails) GetReasoningTokens() OptInt {
 	return s.ReasoningTokens
 }
 
+// GetAudioTokens returns the value of AudioTokens.
+func (s *CompletionTokensDetails) GetAudioTokens() OptNilInt {
+	return s.AudioTokens
+}
+
+// GetAcceptedPredictionTokens returns the value of AcceptedPredictionTokens.
+func (s *CompletionTokensDetails) GetAcceptedPredictionTokens() OptNilInt {
+	return s.AcceptedPredictionTokens
+}
+
+// GetRejectedPredictionTokens returns the value of RejectedPredictionTokens.
+func (s *CompletionTokensDetails) GetRejectedPredictionTokens() OptNilInt {
+	return s.RejectedPredictionTokens
+}
+
 // SetReasoningTokens sets the value of ReasoningTokens.
 func (s *CompletionTokensDetails) SetReasoningTokens(val OptInt) {
 	s.ReasoningTokens = val
+}
+
+// SetAudioTokens sets the value of AudioTokens.
+func (s *CompletionTokensDetails) SetAudioTokens(val OptNilInt) {
+	s.AudioTokens = val
+}
+
+// SetAcceptedPredictionTokens sets the value of AcceptedPredictionTokens.
+func (s *CompletionTokensDetails) SetAcceptedPredictionTokens(val OptNilInt) {
+	s.AcceptedPredictionTokens = val
+}
+
+// SetRejectedPredictionTokens sets the value of RejectedPredictionTokens.
+func (s *CompletionTokensDetails) SetRejectedPredictionTokens(val OptNilInt) {
+	s.RejectedPredictionTokens = val
+}
+
+// Ref: #/components/schemas/CostDetails
+type CostDetails struct {
+	UpstreamInferenceCost            OptNilFloat64 `json:"upstream_inference_cost"`
+	UpstreamInferencePromptCost      OptFloat64    `json:"upstream_inference_prompt_cost"`
+	UpstreamInferenceCompletionsCost OptFloat64    `json:"upstream_inference_completions_cost"`
+}
+
+// GetUpstreamInferenceCost returns the value of UpstreamInferenceCost.
+func (s *CostDetails) GetUpstreamInferenceCost() OptNilFloat64 {
+	return s.UpstreamInferenceCost
+}
+
+// GetUpstreamInferencePromptCost returns the value of UpstreamInferencePromptCost.
+func (s *CostDetails) GetUpstreamInferencePromptCost() OptFloat64 {
+	return s.UpstreamInferencePromptCost
+}
+
+// GetUpstreamInferenceCompletionsCost returns the value of UpstreamInferenceCompletionsCost.
+func (s *CostDetails) GetUpstreamInferenceCompletionsCost() OptFloat64 {
+	return s.UpstreamInferenceCompletionsCost
+}
+
+// SetUpstreamInferenceCost sets the value of UpstreamInferenceCost.
+func (s *CostDetails) SetUpstreamInferenceCost(val OptNilFloat64) {
+	s.UpstreamInferenceCost = val
+}
+
+// SetUpstreamInferencePromptCost sets the value of UpstreamInferencePromptCost.
+func (s *CostDetails) SetUpstreamInferencePromptCost(val OptFloat64) {
+	s.UpstreamInferencePromptCost = val
+}
+
+// SetUpstreamInferenceCompletionsCost sets the value of UpstreamInferenceCompletionsCost.
+func (s *CostDetails) SetUpstreamInferenceCompletionsCost(val OptFloat64) {
+	s.UpstreamInferenceCompletionsCost = val
 }
 
 // CreateChatCompletionOKTextEventStreamClient reads events from the CreateChatCompletionOKTextEventStream SSE stream.
@@ -1753,6 +2142,18 @@ func (s *ImageContentPartType) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/LogProbs
+type LogProbs map[string]jx.Raw
+
+func (s *LogProbs) init() LogProbs {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
+	}
+	return m
+}
+
 // Ref: #/components/schemas/Message
 // Message represents sum type.
 type Message struct {
@@ -2154,6 +2555,52 @@ func (o OptChatCompletionChunkDeltaRole) Or(d ChatCompletionChunkDeltaRole) Chat
 	return d
 }
 
+// NewOptChatCompletionChunkOpenrouterMetadata returns new OptChatCompletionChunkOpenrouterMetadata with value set to v.
+func NewOptChatCompletionChunkOpenrouterMetadata(v ChatCompletionChunkOpenrouterMetadata) OptChatCompletionChunkOpenrouterMetadata {
+	return OptChatCompletionChunkOpenrouterMetadata{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatCompletionChunkOpenrouterMetadata is optional ChatCompletionChunkOpenrouterMetadata.
+type OptChatCompletionChunkOpenrouterMetadata struct {
+	Value ChatCompletionChunkOpenrouterMetadata
+	Set   bool
+}
+
+// IsSet returns true if OptChatCompletionChunkOpenrouterMetadata was set.
+func (o OptChatCompletionChunkOpenrouterMetadata) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatCompletionChunkOpenrouterMetadata) Reset() {
+	var v ChatCompletionChunkOpenrouterMetadata
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatCompletionChunkOpenrouterMetadata) SetTo(v ChatCompletionChunkOpenrouterMetadata) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatCompletionChunkOpenrouterMetadata) Get() (v ChatCompletionChunkOpenrouterMetadata, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatCompletionChunkOpenrouterMetadata) Or(d ChatCompletionChunkOpenrouterMetadata) ChatCompletionChunkOpenrouterMetadata {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptChatCompletionChunkToolCallType returns new OptChatCompletionChunkToolCallType with value set to v.
 func NewOptChatCompletionChunkToolCallType(v ChatCompletionChunkToolCallType) OptChatCompletionChunkToolCallType {
 	return OptChatCompletionChunkToolCallType{
@@ -2200,6 +2647,190 @@ func (o OptChatCompletionChunkToolCallType) Or(d ChatCompletionChunkToolCallType
 	return d
 }
 
+// NewOptChatCompletionRequestLogitBias returns new OptChatCompletionRequestLogitBias with value set to v.
+func NewOptChatCompletionRequestLogitBias(v ChatCompletionRequestLogitBias) OptChatCompletionRequestLogitBias {
+	return OptChatCompletionRequestLogitBias{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatCompletionRequestLogitBias is optional ChatCompletionRequestLogitBias.
+type OptChatCompletionRequestLogitBias struct {
+	Value ChatCompletionRequestLogitBias
+	Set   bool
+}
+
+// IsSet returns true if OptChatCompletionRequestLogitBias was set.
+func (o OptChatCompletionRequestLogitBias) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatCompletionRequestLogitBias) Reset() {
+	var v ChatCompletionRequestLogitBias
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatCompletionRequestLogitBias) SetTo(v ChatCompletionRequestLogitBias) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatCompletionRequestLogitBias) Get() (v ChatCompletionRequestLogitBias, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatCompletionRequestLogitBias) Or(d ChatCompletionRequestLogitBias) ChatCompletionRequestLogitBias {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptChatCompletionRequestProvider returns new OptChatCompletionRequestProvider with value set to v.
+func NewOptChatCompletionRequestProvider(v ChatCompletionRequestProvider) OptChatCompletionRequestProvider {
+	return OptChatCompletionRequestProvider{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatCompletionRequestProvider is optional ChatCompletionRequestProvider.
+type OptChatCompletionRequestProvider struct {
+	Value ChatCompletionRequestProvider
+	Set   bool
+}
+
+// IsSet returns true if OptChatCompletionRequestProvider was set.
+func (o OptChatCompletionRequestProvider) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatCompletionRequestProvider) Reset() {
+	var v ChatCompletionRequestProvider
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatCompletionRequestProvider) SetTo(v ChatCompletionRequestProvider) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatCompletionRequestProvider) Get() (v ChatCompletionRequestProvider, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatCompletionRequestProvider) Or(d ChatCompletionRequestProvider) ChatCompletionRequestProvider {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptChatCompletionRequestResponseFormat returns new OptChatCompletionRequestResponseFormat with value set to v.
+func NewOptChatCompletionRequestResponseFormat(v ChatCompletionRequestResponseFormat) OptChatCompletionRequestResponseFormat {
+	return OptChatCompletionRequestResponseFormat{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatCompletionRequestResponseFormat is optional ChatCompletionRequestResponseFormat.
+type OptChatCompletionRequestResponseFormat struct {
+	Value ChatCompletionRequestResponseFormat
+	Set   bool
+}
+
+// IsSet returns true if OptChatCompletionRequestResponseFormat was set.
+func (o OptChatCompletionRequestResponseFormat) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatCompletionRequestResponseFormat) Reset() {
+	var v ChatCompletionRequestResponseFormat
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatCompletionRequestResponseFormat) SetTo(v ChatCompletionRequestResponseFormat) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatCompletionRequestResponseFormat) Get() (v ChatCompletionRequestResponseFormat, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatCompletionRequestResponseFormat) Or(d ChatCompletionRequestResponseFormat) ChatCompletionRequestResponseFormat {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptChatCompletionResponseOpenrouterMetadata returns new OptChatCompletionResponseOpenrouterMetadata with value set to v.
+func NewOptChatCompletionResponseOpenrouterMetadata(v ChatCompletionResponseOpenrouterMetadata) OptChatCompletionResponseOpenrouterMetadata {
+	return OptChatCompletionResponseOpenrouterMetadata{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatCompletionResponseOpenrouterMetadata is optional ChatCompletionResponseOpenrouterMetadata.
+type OptChatCompletionResponseOpenrouterMetadata struct {
+	Value ChatCompletionResponseOpenrouterMetadata
+	Set   bool
+}
+
+// IsSet returns true if OptChatCompletionResponseOpenrouterMetadata was set.
+func (o OptChatCompletionResponseOpenrouterMetadata) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatCompletionResponseOpenrouterMetadata) Reset() {
+	var v ChatCompletionResponseOpenrouterMetadata
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatCompletionResponseOpenrouterMetadata) SetTo(v ChatCompletionResponseOpenrouterMetadata) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatCompletionResponseOpenrouterMetadata) Get() (v ChatCompletionResponseOpenrouterMetadata, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatCompletionResponseOpenrouterMetadata) Or(d ChatCompletionResponseOpenrouterMetadata) ChatCompletionResponseOpenrouterMetadata {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptCompletionTokensDetails returns new OptCompletionTokensDetails with value set to v.
 func NewOptCompletionTokensDetails(v CompletionTokensDetails) OptCompletionTokensDetails {
 	return OptCompletionTokensDetails{
@@ -2240,6 +2871,52 @@ func (o OptCompletionTokensDetails) Get() (v CompletionTokensDetails, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptCompletionTokensDetails) Or(d CompletionTokensDetails) CompletionTokensDetails {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCostDetails returns new OptCostDetails with value set to v.
+func NewOptCostDetails(v CostDetails) OptCostDetails {
+	return OptCostDetails{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCostDetails is optional CostDetails.
+type OptCostDetails struct {
+	Value CostDetails
+	Set   bool
+}
+
+// IsSet returns true if OptCostDetails was set.
+func (o OptCostDetails) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCostDetails) Reset() {
+	var v CostDetails
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCostDetails) SetTo(v CostDetails) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCostDetails) Get() (v CostDetails, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCostDetails) Or(d CostDetails) CostDetails {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2522,6 +3199,188 @@ func (o OptInt64) Or(d int64) int64 {
 	return d
 }
 
+// NewOptLogProbs returns new OptLogProbs with value set to v.
+func NewOptLogProbs(v LogProbs) OptLogProbs {
+	return OptLogProbs{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptLogProbs is optional LogProbs.
+type OptLogProbs struct {
+	Value LogProbs
+	Set   bool
+}
+
+// IsSet returns true if OptLogProbs was set.
+func (o OptLogProbs) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptLogProbs) Reset() {
+	var v LogProbs
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptLogProbs) SetTo(v LogProbs) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptLogProbs) Get() (v LogProbs, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptLogProbs) Or(d LogProbs) LogProbs {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilFloat64 returns new OptNilFloat64 with value set to v.
+func NewOptNilFloat64(v float64) OptNilFloat64 {
+	return OptNilFloat64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilFloat64 is optional nullable float64.
+type OptNilFloat64 struct {
+	Value float64
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilFloat64 was set.
+func (o OptNilFloat64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilFloat64) Reset() {
+	var v float64
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilFloat64) SetTo(v float64) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilFloat64) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilFloat64) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v float64
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilFloat64) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilFloat64) Get() (v float64, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilFloat64) Or(d float64) float64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilInt returns new OptNilInt with value set to v.
+func NewOptNilInt(v int) OptNilInt {
+	return OptNilInt{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilInt is optional nullable int.
+type OptNilInt struct {
+	Value int
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilInt was set.
+func (o OptNilInt) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilInt) Reset() {
+	var v int
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilInt) SetTo(v int) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilInt) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilInt) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v int
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilInt) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilInt) Get() (v int, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilInt) Or(d int) int {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptNilString returns new OptNilString with value set to v.
 func NewOptNilString(v string) OptNilString {
 	return OptNilString{
@@ -2584,6 +3443,52 @@ func (o OptNilString) Get() (v string, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptNilString) Or(d string) string {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptPrediction returns new OptPrediction with value set to v.
+func NewOptPrediction(v Prediction) OptPrediction {
+	return OptPrediction{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptPrediction is optional Prediction.
+type OptPrediction struct {
+	Value Prediction
+	Set   bool
+}
+
+// IsSet returns true if OptPrediction was set.
+func (o OptPrediction) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptPrediction) Reset() {
+	var v Prediction
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptPrediction) SetTo(v Prediction) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptPrediction) Get() (v Prediction, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptPrediction) Or(d Prediction) Prediction {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2722,6 +3627,98 @@ func (o OptReasoningConfigEffort) Get() (v ReasoningConfigEffort, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptReasoningConfigEffort) Or(d ReasoningConfigEffort) ReasoningConfigEffort {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptServerToolUseDetails returns new OptServerToolUseDetails with value set to v.
+func NewOptServerToolUseDetails(v ServerToolUseDetails) OptServerToolUseDetails {
+	return OptServerToolUseDetails{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptServerToolUseDetails is optional ServerToolUseDetails.
+type OptServerToolUseDetails struct {
+	Value ServerToolUseDetails
+	Set   bool
+}
+
+// IsSet returns true if OptServerToolUseDetails was set.
+func (o OptServerToolUseDetails) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptServerToolUseDetails) Reset() {
+	var v ServerToolUseDetails
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptServerToolUseDetails) SetTo(v ServerToolUseDetails) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptServerToolUseDetails) Get() (v ServerToolUseDetails, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptServerToolUseDetails) Or(d ServerToolUseDetails) ServerToolUseDetails {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptServiceTier returns new OptServiceTier with value set to v.
+func NewOptServiceTier(v ServiceTier) OptServiceTier {
+	return OptServiceTier{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptServiceTier is optional ServiceTier.
+type OptServiceTier struct {
+	Value ServiceTier
+	Set   bool
+}
+
+// IsSet returns true if OptServiceTier was set.
+func (o OptServiceTier) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptServiceTier) Reset() {
+	var v ServiceTier
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptServiceTier) SetTo(v ServiceTier) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptServiceTier) Get() (v ServiceTier, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptServiceTier) Or(d ServiceTier) ServiceTier {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2912,10 +3909,72 @@ func (o OptUsage) Or(d Usage) Usage {
 	return d
 }
 
+// Ref: #/components/schemas/Prediction
+type Prediction struct {
+	Type    PredictionType `json:"type"`
+	Content string         `json:"content"`
+}
+
+// GetType returns the value of Type.
+func (s *Prediction) GetType() PredictionType {
+	return s.Type
+}
+
+// GetContent returns the value of Content.
+func (s *Prediction) GetContent() string {
+	return s.Content
+}
+
+// SetType sets the value of Type.
+func (s *Prediction) SetType(val PredictionType) {
+	s.Type = val
+}
+
+// SetContent sets the value of Content.
+func (s *Prediction) SetContent(val string) {
+	s.Content = val
+}
+
+type PredictionType string
+
+const (
+	PredictionTypeContent PredictionType = "content"
+)
+
+// AllValues returns all PredictionType values.
+func (PredictionType) AllValues() []PredictionType {
+	return []PredictionType{
+		PredictionTypeContent,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s PredictionType) MarshalText() ([]byte, error) {
+	switch s {
+	case PredictionTypeContent:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *PredictionType) UnmarshalText(data []byte) error {
+	switch PredictionType(data) {
+	case PredictionTypeContent:
+		*s = PredictionTypeContent
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/PromptTokensDetails
 type PromptTokensDetails struct {
 	CachedTokens     OptInt `json:"cached_tokens"`
 	CacheWriteTokens OptInt `json:"cache_write_tokens"`
+	AudioTokens      OptInt `json:"audio_tokens"`
+	VideoTokens      OptInt `json:"video_tokens"`
 }
 
 // GetCachedTokens returns the value of CachedTokens.
@@ -2928,6 +3987,16 @@ func (s *PromptTokensDetails) GetCacheWriteTokens() OptInt {
 	return s.CacheWriteTokens
 }
 
+// GetAudioTokens returns the value of AudioTokens.
+func (s *PromptTokensDetails) GetAudioTokens() OptInt {
+	return s.AudioTokens
+}
+
+// GetVideoTokens returns the value of VideoTokens.
+func (s *PromptTokensDetails) GetVideoTokens() OptInt {
+	return s.VideoTokens
+}
+
 // SetCachedTokens sets the value of CachedTokens.
 func (s *PromptTokensDetails) SetCachedTokens(val OptInt) {
 	s.CachedTokens = val
@@ -2936,6 +4005,16 @@ func (s *PromptTokensDetails) SetCachedTokens(val OptInt) {
 // SetCacheWriteTokens sets the value of CacheWriteTokens.
 func (s *PromptTokensDetails) SetCacheWriteTokens(val OptInt) {
 	s.CacheWriteTokens = val
+}
+
+// SetAudioTokens sets the value of AudioTokens.
+func (s *PromptTokensDetails) SetAudioTokens(val OptInt) {
+	s.AudioTokens = val
+}
+
+// SetVideoTokens sets the value of VideoTokens.
+func (s *PromptTokensDetails) SetVideoTokens(val OptInt) {
+	s.VideoTokens = val
 }
 
 // Ref: #/components/schemas/ReasoningConfig
@@ -3130,6 +4209,113 @@ func (s *ReasoningDetail) SetFormat(val OptNilString) {
 // SetIndex sets the value of Index.
 func (s *ReasoningDetail) SetIndex(val OptInt) {
 	s.Index = val
+}
+
+// Ref: #/components/schemas/ServerToolUseDetails
+type ServerToolUseDetails struct {
+	ToolCallsRequested OptNilInt `json:"tool_calls_requested"`
+	ToolCallsExecuted  OptNilInt `json:"tool_calls_executed"`
+	WebSearchRequests  OptNilInt `json:"web_search_requests"`
+}
+
+// GetToolCallsRequested returns the value of ToolCallsRequested.
+func (s *ServerToolUseDetails) GetToolCallsRequested() OptNilInt {
+	return s.ToolCallsRequested
+}
+
+// GetToolCallsExecuted returns the value of ToolCallsExecuted.
+func (s *ServerToolUseDetails) GetToolCallsExecuted() OptNilInt {
+	return s.ToolCallsExecuted
+}
+
+// GetWebSearchRequests returns the value of WebSearchRequests.
+func (s *ServerToolUseDetails) GetWebSearchRequests() OptNilInt {
+	return s.WebSearchRequests
+}
+
+// SetToolCallsRequested sets the value of ToolCallsRequested.
+func (s *ServerToolUseDetails) SetToolCallsRequested(val OptNilInt) {
+	s.ToolCallsRequested = val
+}
+
+// SetToolCallsExecuted sets the value of ToolCallsExecuted.
+func (s *ServerToolUseDetails) SetToolCallsExecuted(val OptNilInt) {
+	s.ToolCallsExecuted = val
+}
+
+// SetWebSearchRequests sets the value of WebSearchRequests.
+func (s *ServerToolUseDetails) SetWebSearchRequests(val OptNilInt) {
+	s.WebSearchRequests = val
+}
+
+// Ref: #/components/schemas/ServiceTier
+type ServiceTier string
+
+const (
+	ServiceTierAuto     ServiceTier = "auto"
+	ServiceTierDefault  ServiceTier = "default"
+	ServiceTierFast     ServiceTier = "fast"
+	ServiceTierFlex     ServiceTier = "flex"
+	ServiceTierPriority ServiceTier = "priority"
+	ServiceTierScale    ServiceTier = "scale"
+)
+
+// AllValues returns all ServiceTier values.
+func (ServiceTier) AllValues() []ServiceTier {
+	return []ServiceTier{
+		ServiceTierAuto,
+		ServiceTierDefault,
+		ServiceTierFast,
+		ServiceTierFlex,
+		ServiceTierPriority,
+		ServiceTierScale,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ServiceTier) MarshalText() ([]byte, error) {
+	switch s {
+	case ServiceTierAuto:
+		return []byte(s), nil
+	case ServiceTierDefault:
+		return []byte(s), nil
+	case ServiceTierFast:
+		return []byte(s), nil
+	case ServiceTierFlex:
+		return []byte(s), nil
+	case ServiceTierPriority:
+		return []byte(s), nil
+	case ServiceTierScale:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ServiceTier) UnmarshalText(data []byte) error {
+	switch ServiceTier(data) {
+	case ServiceTierAuto:
+		*s = ServiceTierAuto
+		return nil
+	case ServiceTierDefault:
+		*s = ServiceTierDefault
+		return nil
+	case ServiceTierFast:
+		*s = ServiceTierFast
+		return nil
+	case ServiceTierFlex:
+		*s = ServiceTierFlex
+		return nil
+	case ServiceTierPriority:
+		*s = ServiceTierPriority
+		return nil
+	case ServiceTierScale:
+		*s = ServiceTierScale
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/Stop
@@ -3606,6 +4792,10 @@ type Usage struct {
 	PromptTokens            OptInt                     `json:"prompt_tokens"`
 	CompletionTokens        OptInt                     `json:"completion_tokens"`
 	TotalTokens             OptInt                     `json:"total_tokens"`
+	Cost                    OptNilFloat64              `json:"cost"`
+	CostDetails             OptCostDetails             `json:"cost_details"`
+	IsByok                  OptBool                    `json:"is_byok"`
+	ServerToolUseDetails    OptServerToolUseDetails    `json:"server_tool_use_details"`
 	PromptTokensDetails     OptPromptTokensDetails     `json:"prompt_tokens_details"`
 	CompletionTokensDetails OptCompletionTokensDetails `json:"completion_tokens_details"`
 }
@@ -3623,6 +4813,26 @@ func (s *Usage) GetCompletionTokens() OptInt {
 // GetTotalTokens returns the value of TotalTokens.
 func (s *Usage) GetTotalTokens() OptInt {
 	return s.TotalTokens
+}
+
+// GetCost returns the value of Cost.
+func (s *Usage) GetCost() OptNilFloat64 {
+	return s.Cost
+}
+
+// GetCostDetails returns the value of CostDetails.
+func (s *Usage) GetCostDetails() OptCostDetails {
+	return s.CostDetails
+}
+
+// GetIsByok returns the value of IsByok.
+func (s *Usage) GetIsByok() OptBool {
+	return s.IsByok
+}
+
+// GetServerToolUseDetails returns the value of ServerToolUseDetails.
+func (s *Usage) GetServerToolUseDetails() OptServerToolUseDetails {
+	return s.ServerToolUseDetails
 }
 
 // GetPromptTokensDetails returns the value of PromptTokensDetails.
@@ -3648,6 +4858,26 @@ func (s *Usage) SetCompletionTokens(val OptInt) {
 // SetTotalTokens sets the value of TotalTokens.
 func (s *Usage) SetTotalTokens(val OptInt) {
 	s.TotalTokens = val
+}
+
+// SetCost sets the value of Cost.
+func (s *Usage) SetCost(val OptNilFloat64) {
+	s.Cost = val
+}
+
+// SetCostDetails sets the value of CostDetails.
+func (s *Usage) SetCostDetails(val OptCostDetails) {
+	s.CostDetails = val
+}
+
+// SetIsByok sets the value of IsByok.
+func (s *Usage) SetIsByok(val OptBool) {
+	s.IsByok = val
+}
+
+// SetServerToolUseDetails sets the value of ServerToolUseDetails.
+func (s *Usage) SetServerToolUseDetails(val OptServerToolUseDetails) {
+	s.ServerToolUseDetails = val
 }
 
 // SetPromptTokensDetails sets the value of PromptTokensDetails.

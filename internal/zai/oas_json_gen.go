@@ -1710,6 +1710,12 @@ func (s *ChatCompletionTextRequest) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.ReasoningEffort.Set {
+			e.FieldStart("reasoning_effort")
+			s.ReasoningEffort.Encode(e)
+		}
+	}
+	{
 		if s.Temperature.Set {
 			e.FieldStart("temperature")
 			s.Temperature.Encode(e)
@@ -1779,22 +1785,23 @@ func (s *ChatCompletionTextRequest) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfChatCompletionTextRequest = [15]string{
+var jsonFieldsNameOfChatCompletionTextRequest = [16]string{
 	0:  "model",
 	1:  "messages",
 	2:  "do_sample",
 	3:  "stream",
 	4:  "thinking",
-	5:  "temperature",
-	6:  "top_p",
-	7:  "max_tokens",
-	8:  "tool_stream",
-	9:  "tools",
-	10: "tool_choice",
-	11: "stop",
-	12: "response_format",
-	13: "request_id",
-	14: "user_id",
+	5:  "reasoning_effort",
+	6:  "temperature",
+	7:  "top_p",
+	8:  "max_tokens",
+	9:  "tool_stream",
+	10: "tools",
+	11: "tool_choice",
+	12: "stop",
+	13: "response_format",
+	14: "request_id",
+	15: "user_id",
 }
 
 // Decode decodes ChatCompletionTextRequest from json.
@@ -1864,6 +1871,16 @@ func (s *ChatCompletionTextRequest) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"thinking\"")
+			}
+		case "reasoning_effort":
+			if err := func() error {
+				s.ReasoningEffort.Reset()
+				if err := s.ReasoningEffort.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"reasoning_effort\"")
 			}
 		case "temperature":
 			if err := func() error {
@@ -3140,6 +3157,10 @@ func (s *ChatCompletionTextRequestModel) Decode(d *jx.Decoder) error {
 	}
 	// Try to use constant string.
 	switch ChatCompletionTextRequestModel(v) {
+	case ChatCompletionTextRequestModelGlm53:
+		*s = ChatCompletionTextRequestModelGlm53
+	case ChatCompletionTextRequestModelGlm52:
+		*s = ChatCompletionTextRequestModelGlm52
 	case ChatCompletionTextRequestModelGlm51:
 		*s = ChatCompletionTextRequestModelGlm51
 	case ChatCompletionTextRequestModelGlm5Turbo:
@@ -3182,6 +3203,56 @@ func (s ChatCompletionTextRequestModel) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ChatCompletionTextRequestModel) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ChatCompletionTextRequestReasoningEffort as json.
+func (s ChatCompletionTextRequestReasoningEffort) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ChatCompletionTextRequestReasoningEffort from json.
+func (s *ChatCompletionTextRequestReasoningEffort) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ChatCompletionTextRequestReasoningEffort to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ChatCompletionTextRequestReasoningEffort(v) {
+	case ChatCompletionTextRequestReasoningEffortMax:
+		*s = ChatCompletionTextRequestReasoningEffortMax
+	case ChatCompletionTextRequestReasoningEffortXhigh:
+		*s = ChatCompletionTextRequestReasoningEffortXhigh
+	case ChatCompletionTextRequestReasoningEffortHigh:
+		*s = ChatCompletionTextRequestReasoningEffortHigh
+	case ChatCompletionTextRequestReasoningEffortMedium:
+		*s = ChatCompletionTextRequestReasoningEffortMedium
+	case ChatCompletionTextRequestReasoningEffortLow:
+		*s = ChatCompletionTextRequestReasoningEffortLow
+	case ChatCompletionTextRequestReasoningEffortMinimal:
+		*s = ChatCompletionTextRequestReasoningEffortMinimal
+	case ChatCompletionTextRequestReasoningEffortNone:
+		*s = ChatCompletionTextRequestReasoningEffortNone
+	default:
+		*s = ChatCompletionTextRequestReasoningEffort(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ChatCompletionTextRequestReasoningEffort) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ChatCompletionTextRequestReasoningEffort) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -3518,6 +3589,12 @@ func (s *ChatCompletionVisionRequest) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.ReasoningEffort.Set {
+			e.FieldStart("reasoning_effort")
+			s.ReasoningEffort.Encode(e)
+		}
+	}
+	{
 		if s.Temperature.Set {
 			e.FieldStart("temperature")
 			s.Temperature.Encode(e)
@@ -3575,20 +3652,21 @@ func (s *ChatCompletionVisionRequest) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfChatCompletionVisionRequest = [13]string{
+var jsonFieldsNameOfChatCompletionVisionRequest = [14]string{
 	0:  "model",
 	1:  "messages",
 	2:  "do_sample",
 	3:  "stream",
 	4:  "thinking",
-	5:  "temperature",
-	6:  "top_p",
-	7:  "max_tokens",
-	8:  "tools",
-	9:  "tool_choice",
-	10: "stop",
-	11: "request_id",
-	12: "user_id",
+	5:  "reasoning_effort",
+	6:  "temperature",
+	7:  "top_p",
+	8:  "max_tokens",
+	9:  "tools",
+	10: "tool_choice",
+	11: "stop",
+	12: "request_id",
+	13: "user_id",
 }
 
 // Decode decodes ChatCompletionVisionRequest from json.
@@ -3658,6 +3736,16 @@ func (s *ChatCompletionVisionRequest) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"thinking\"")
+			}
+		case "reasoning_effort":
+			if err := func() error {
+				s.ReasoningEffort.Reset()
+				if err := s.ReasoningEffort.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"reasoning_effort\"")
 			}
 		case "temperature":
 			if err := func() error {
@@ -4460,6 +4548,8 @@ func (s *ChatCompletionVisionRequestModel) Decode(d *jx.Decoder) error {
 	}
 	// Try to use constant string.
 	switch ChatCompletionVisionRequestModel(v) {
+	case ChatCompletionVisionRequestModelGlm53Flash:
+		*s = ChatCompletionVisionRequestModelGlm53Flash
 	case ChatCompletionVisionRequestModelGlm5vTurbo:
 		*s = ChatCompletionVisionRequestModelGlm5vTurbo
 	case ChatCompletionVisionRequestModelGlm46v:
@@ -4488,6 +4578,48 @@ func (s ChatCompletionVisionRequestModel) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ChatCompletionVisionRequestModel) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ChatCompletionVisionRequestReasoningEffort as json.
+func (s ChatCompletionVisionRequestReasoningEffort) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ChatCompletionVisionRequestReasoningEffort from json.
+func (s *ChatCompletionVisionRequestReasoningEffort) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ChatCompletionVisionRequestReasoningEffort to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ChatCompletionVisionRequestReasoningEffort(v) {
+	case ChatCompletionVisionRequestReasoningEffortMax:
+		*s = ChatCompletionVisionRequestReasoningEffortMax
+	case ChatCompletionVisionRequestReasoningEffortHigh:
+		*s = ChatCompletionVisionRequestReasoningEffortHigh
+	case ChatCompletionVisionRequestReasoningEffortLow:
+		*s = ChatCompletionVisionRequestReasoningEffortLow
+	default:
+		*s = ChatCompletionVisionRequestReasoningEffort(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ChatCompletionVisionRequestReasoningEffort) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ChatCompletionVisionRequestReasoningEffort) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -4701,7 +4833,7 @@ func (s *Error) Encode(e *jx.Encoder) {
 func (s *Error) encodeFields(e *jx.Encoder) {
 	{
 		e.FieldStart("code")
-		e.Int32(s.Code)
+		s.Code.Encode(e)
 	}
 	{
 		e.FieldStart("message")
@@ -4726,9 +4858,7 @@ func (s *Error) Decode(d *jx.Decoder) error {
 		case "code":
 			requiredBitSet[0] |= 1 << 0
 			if err := func() error {
-				v, err := d.Int32()
-				s.Code = int32(v)
-				if err != nil {
+				if err := s.Code.Decode(d); err != nil {
 					return err
 				}
 				return nil
@@ -4799,6 +4929,254 @@ func (s *Error) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *Error) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ErrorCode as json.
+func (s ErrorCode) Encode(e *jx.Encoder) {
+	switch s.Type {
+	case Int32ErrorCode:
+		e.Int32(s.Int32)
+	case StringErrorCode:
+		e.Str(s.String)
+	}
+}
+
+// Decode decodes ErrorCode from json.
+func (s *ErrorCode) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ErrorCode to nil")
+	}
+	// Sum type type_discriminator.
+	switch t := d.Next(); t {
+	case jx.Number:
+		v, err := d.Int32()
+		s.Int32 = int32(v)
+		if err != nil {
+			return err
+		}
+		s.Type = Int32ErrorCode
+	case jx.String:
+		v, err := d.Str()
+		s.String = string(v)
+		if err != nil {
+			return err
+		}
+		s.Type = StringErrorCode
+	default:
+		return errors.Errorf("unexpected json type %q", t)
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ErrorCode) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ErrorCode) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ErrorEnvelope) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ErrorEnvelope) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("error")
+		s.Error.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfErrorEnvelope = [1]string{
+	0: "error",
+}
+
+// Decode decodes ErrorEnvelope from json.
+func (s *ErrorEnvelope) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ErrorEnvelope to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "error":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Error.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"error\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ErrorEnvelope")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfErrorEnvelope) {
+					name = jsonFieldsNameOfErrorEnvelope[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ErrorEnvelope) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ErrorEnvelope) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ErrorResponse as json.
+func (s ErrorResponse) Encode(e *jx.Encoder) {
+	switch s.Type {
+	case ErrorErrorResponse:
+		s.Error.Encode(e)
+	case ErrorEnvelopeErrorResponse:
+		s.ErrorEnvelope.Encode(e)
+	}
+}
+
+func (s ErrorResponse) encodeFields(e *jx.Encoder) {
+	switch s.Type {
+	case ErrorErrorResponse:
+		s.Error.encodeFields(e)
+	case ErrorEnvelopeErrorResponse:
+		s.ErrorEnvelope.encodeFields(e)
+	}
+}
+
+// Decode decodes ErrorResponse from json.
+func (s *ErrorResponse) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ErrorResponse to nil")
+	}
+	// Sum type fields.
+	if typ := d.Next(); typ != jx.Object {
+		return errors.Errorf("unexpected json type %q", typ)
+	}
+
+	var found bool
+	if err := d.Capture(func(d *jx.Decoder) error {
+		return d.ObjBytes(func(d *jx.Decoder, key []byte) error {
+			switch string(key) {
+			case "code":
+				match := ErrorErrorResponse
+				if found && s.Type != match {
+					s.Type = ""
+					return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+				}
+				found = true
+				s.Type = match
+			case "error":
+				// Type-based discrimination: check if field has expected JSON type
+				if typ := d.Next(); typ != jx.Object {
+					// Field exists but has wrong type, not a match for this variant
+					return d.Skip()
+				}
+				match := ErrorEnvelopeErrorResponse
+				if found && s.Type != match {
+					s.Type = ""
+					return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+				}
+				found = true
+				s.Type = match
+			case "message":
+				// Type-based discrimination: check if field has expected JSON type
+				if typ := d.Next(); typ != jx.String {
+					// Field exists but has wrong type, not a match for this variant
+					return d.Skip()
+				}
+				match := ErrorErrorResponse
+				if found && s.Type != match {
+					s.Type = ""
+					return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+				}
+				found = true
+				s.Type = match
+			}
+			return d.Skip()
+		})
+	}); err != nil {
+		return errors.Wrap(err, "capture")
+	}
+	if !found {
+		return errors.New("unable to detect sum type variant")
+	}
+	switch s.Type {
+	case ErrorErrorResponse:
+		if err := s.Error.Decode(d); err != nil {
+			return err
+		}
+	case ErrorEnvelopeErrorResponse:
+		if err := s.ErrorEnvelope.Decode(d); err != nil {
+			return err
+		}
+	default:
+		return errors.Errorf("inferred invalid type: %s", s.Type)
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ErrorResponse) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ErrorResponse) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -5403,6 +5781,39 @@ func (s *OptChatCompletionTextRequestMessagesItem2ToolCallsItemFunction) Unmarsh
 	return s.Decode(d)
 }
 
+// Encode encodes ChatCompletionTextRequestReasoningEffort as json.
+func (o OptChatCompletionTextRequestReasoningEffort) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes ChatCompletionTextRequestReasoningEffort from json.
+func (o *OptChatCompletionTextRequestReasoningEffort) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptChatCompletionTextRequestReasoningEffort to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptChatCompletionTextRequestReasoningEffort) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptChatCompletionTextRequestReasoningEffort) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes ChatCompletionTextRequestResponseFormat as json.
 func (o OptChatCompletionTextRequestResponseFormat) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -5465,6 +5876,39 @@ func (s OptChatCompletionTextRequestToolChoice) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptChatCompletionTextRequestToolChoice) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ChatCompletionVisionRequestReasoningEffort as json.
+func (o OptChatCompletionVisionRequestReasoningEffort) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes ChatCompletionVisionRequestReasoningEffort from json.
+func (o *OptChatCompletionVisionRequestReasoningEffort) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptChatCompletionVisionRequestReasoningEffort to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptChatCompletionVisionRequestReasoningEffort) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptChatCompletionVisionRequestReasoningEffort) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -5975,6 +6419,22 @@ func (s *PaasV4ChatCompletionsPostReq) Decode(d *jx.Decoder) error {
 	if err := d.Capture(func(d *jx.Decoder) error {
 		return d.ObjBytes(func(d *jx.Decoder, key []byte) error {
 			switch string(key) {
+			case "reasoning_effort":
+				// Multiple variants have this field - use type checking to discriminate
+				typ := d.Next()
+				switch typ {
+				case jx.String:
+					match := ChatCompletionTextRequestPaasV4ChatCompletionsPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				default:
+					// Unknown type for this field
+					return d.Skip()
+				}
 			case "response_format":
 				// Type-based discrimination: check if field has expected JSON type
 				if typ := d.Next(); typ != jx.Object {
@@ -6165,6 +6625,30 @@ func (s *PaasV4ChatCompletionsPostReq) Decode(d *jx.Decoder) error {
 					s.Type = match
 				case "glm-5.1":
 					match := ChatCompletionTextRequestPaasV4ChatCompletionsPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-5.2":
+					match := ChatCompletionTextRequestPaasV4ChatCompletionsPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-5.3":
+					match := ChatCompletionTextRequestPaasV4ChatCompletionsPostReq
+					if found && s.Type != match {
+						s.Type = ""
+						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+					}
+					found = true
+					s.Type = match
+				case "glm-5.3-flash":
+					match := ChatCompletionVisionRequestPaasV4ChatCompletionsPostReq
 					if found && s.Type != match {
 						s.Type = ""
 						return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)

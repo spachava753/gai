@@ -91,7 +91,7 @@ type TokenCounter interface {
 
 All three methods receive the same request. In particular, token counting includes the model, instructions, dialog, and tools instead of relying on configuration hidden in the generator. OpenAI counts locally with `tiktoken`; Anthropic and Gemini call their token-counting APIs.
 
-Cerebras and OpenRouter implement generation only. The other provider capabilities are listed below.
+Every provider adapter listed below implements generation and streaming. OpenAI, Anthropic, and Gemini also implement token counting.
 
 ## Messages and instructions
 
@@ -217,11 +217,15 @@ options := NewGenerationOptions(
 )
 ```
 
-The helpers write entries into the map using exported keys such as `GenerationOptionTemperature`. Provider-specific settings use their own exported keys and the same map:
+The helpers write entries into the map using exported keys such as `GenerationOptionTemperature`. Established provider-specific settings have helpers that return the same `GenerationOption` type:
 
 ```go
-options[ResponsesServiceTierParam] = "priority"
+options := NewGenerationOptions(
+    WithResponsesServiceTier("priority"),
+)
 ```
+
+Each provider helper writes an exported, namespaced key such as `ResponsesServiceTierParam`. Direct map entries remain available for experimental provider controls that do not yet have a helper.
 
 There is no nested `ExtraArgs` map. An adapter reads the settings it supports, checks their Go types, and ignores unknown keys. Ignoring unknown keys allows a request used for fallback to contain settings for more than one provider.
 
@@ -248,6 +252,7 @@ type Response struct {
     Candidates    []Message
     FinishReason  FinishReason
     UsageMetadata Metadata
+    ExtraFields   map[string]interface{}
 }
 ```
 
@@ -255,7 +260,14 @@ Each candidate is an assistant `Message`, so generated content can go back into 
 
 `FinishReason` translates provider stop reasons into the package values `Unknown`, `EndTurn`, `StopSequence`, `MaxGenerationLimit`, `ToolUse`, and `ContentPolicyViolation`.
 
-`Metadata` is `map[string]any`. Helpers read the common token counts, while the map leaves room for provider usage fields that GAI does not know about.
+Response data is placed at the narrowest scope that owns it:
+
+- `UsageMetadata` contains measurements such as token counts, cache usage, cost, and timing.
+- `Response.ExtraFields` contains invocation-level provider data such as completion IDs, model names, timestamps, fingerprints, and service tiers.
+- `Message.ExtraFields` contains data that belongs to one candidate.
+- `Block.ExtraFields` contains data tied to one content item, including metadata that must be replayed with that block on a later turn.
+
+`Metadata` and each `ExtraFields` value are maps of JSON-compatible values. Providers export constants for stable native keys. Callers commonly append a returned candidate to the next dialog without retaining its enclosing `Response`, so adapters keep all replay-critical data on the message or block rather than in `Response.ExtraFields`.
 
 Provider API failures use `ApiErr`. It keeps the provider details and adds an `APIErrorKind` that retry and fallback policies can inspect. Local validation failures use sentinel errors or small error structs.
 
@@ -265,10 +277,11 @@ A streaming provider yields `StreamChunk` values through `iter.Seq`:
 
 ```go
 type StreamChunk struct {
-    Block              Block
-    MessageExtraFields map[string]interface{}
-    CandidatesIndex    int
-    Err                error
+    Block               Block
+    MessageExtraFields  map[string]interface{}
+    ResponseExtraFields map[string]interface{}
+    CandidatesIndex     int
+    Err                 error
 }
 ```
 
@@ -292,7 +305,7 @@ Data chunks use the same `Block` type as messages. The stream protocol adds a fe
 - A separator ends a provider block. It prevents adjacent fragments from being joined and is omitted from the final response.
 - If the provider reports usage, the final data chunk contains a metadata block.
 
-`MessageExtraFields` carries metadata for the assistant message under construction. `StreamingAdapter` merges these maps and rejects conflicting values.
+`MessageExtraFields` carries metadata for the assistant message under construction. `ResponseExtraFields` carries invocation-level metadata discovered while streaming. `StreamingAdapter` merges both maps across chunks and rejects conflicting values.
 
 `CandidatesIndex` identifies the generated candidate. OpenAI Chat Completions reports this index when `candidate_count` is greater than one.
 

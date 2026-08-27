@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,12 +37,186 @@ const (
 	// OpenRouterUsageMetricReasoningDetailsAvailable indicates whether reasoning_details were present in the response.
 	// Stored in Response.UsageMetadata as a boolean value.
 	OpenRouterUsageMetricReasoningDetailsAvailable = "reasoning_details_available"
+
+	// OpenRouterUsageMetricCost is the completion cost reported by OpenRouter.
+	OpenRouterUsageMetricCost = "cost"
+
+	// OpenRouterUsageMetricIsBYOK reports whether OpenRouter used a caller-provided provider key.
+	OpenRouterUsageMetricIsBYOK = "is_byok"
+
+	// OpenRouterUsageMetricCostDetails stores OpenRouter's native cost breakdown.
+	OpenRouterUsageMetricCostDetails = "cost_details"
+
+	// OpenRouterUsageMetricServerToolUseDetails stores server-side tool usage counts.
+	OpenRouterUsageMetricServerToolUseDetails = "server_tool_use_details"
+
+	// OpenRouterUsageMetricPromptTokenDetails stores OpenRouter's full prompt token breakdown.
+	OpenRouterUsageMetricPromptTokenDetails = "prompt_token_details"
+
+	// OpenRouterUsageMetricCompletionTokenDetails stores OpenRouter's full completion token breakdown.
+	OpenRouterUsageMetricCompletionTokenDetails = "completion_token_details"
 )
+
+const (
+	// OpenRouterGenerationOptionLogitBias stores a map of token IDs to logit adjustments.
+	OpenRouterGenerationOptionLogitBias = "openrouter_logit_bias"
+	// OpenRouterGenerationOptionLogprobs controls token log-probability output.
+	OpenRouterGenerationOptionLogprobs = "openrouter_logprobs"
+	// OpenRouterGenerationOptionMinP stores the minimum probability sampling threshold.
+	OpenRouterGenerationOptionMinP = "openrouter_min_p"
+	// OpenRouterGenerationOptionModels stores the ordered fallback model list.
+	OpenRouterGenerationOptionModels = "openrouter_models"
+	// OpenRouterGenerationOptionParallelToolCalls controls parallel function calling.
+	OpenRouterGenerationOptionParallelToolCalls = "openrouter_parallel_tool_calls"
+	// OpenRouterGenerationOptionPrediction stores known predicted output text.
+	OpenRouterGenerationOptionPrediction = "openrouter_prediction"
+	// OpenRouterGenerationOptionPromptCacheKey stores a prompt cache routing key.
+	OpenRouterGenerationOptionPromptCacheKey = "openrouter_prompt_cache_key"
+	// OpenRouterGenerationOptionProvider stores OpenRouter provider routing preferences.
+	OpenRouterGenerationOptionProvider = "openrouter_provider"
+	// OpenRouterGenerationOptionRepetitionPenalty stores the repetition penalty.
+	OpenRouterGenerationOptionRepetitionPenalty = "openrouter_repetition_penalty"
+	// OpenRouterGenerationOptionResponseFormat stores an OpenRouter response_format object.
+	OpenRouterGenerationOptionResponseFormat = "openrouter_response_format"
+	// OpenRouterGenerationOptionSeed stores the sampling seed.
+	OpenRouterGenerationOptionSeed = "openrouter_seed"
+	// OpenRouterGenerationOptionServiceTier stores the requested processing tier.
+	OpenRouterGenerationOptionServiceTier = "openrouter_service_tier"
+	// OpenRouterGenerationOptionSessionID stores the session identifier.
+	OpenRouterGenerationOptionSessionID = "openrouter_session_id"
+	// OpenRouterGenerationOptionTopA stores the top-a sampling threshold.
+	OpenRouterGenerationOptionTopA = "openrouter_top_a"
+	// OpenRouterGenerationOptionTopLogprobs stores the number of alternative tokens per position.
+	OpenRouterGenerationOptionTopLogprobs = "openrouter_top_logprobs"
+	// OpenRouterGenerationOptionUser stores a provider-side end-user identifier.
+	OpenRouterGenerationOptionUser = "openrouter_user"
+)
+
+const (
+	// OpenRouterResponseExtraFieldID stores the completion identifier.
+	OpenRouterResponseExtraFieldID = "openrouter_id"
+	// OpenRouterResponseExtraFieldModel stores the model reported in the response.
+	OpenRouterResponseExtraFieldModel = "openrouter_model"
+	// OpenRouterResponseExtraFieldCreated stores the completion's Unix creation timestamp.
+	OpenRouterResponseExtraFieldCreated = "openrouter_created"
+	// OpenRouterResponseExtraFieldSystemFingerprint stores the backend configuration fingerprint.
+	OpenRouterResponseExtraFieldSystemFingerprint = "openrouter_system_fingerprint"
+	// OpenRouterResponseExtraFieldServiceTier stores the processing tier OpenRouter used.
+	OpenRouterResponseExtraFieldServiceTier = "openrouter_service_tier"
+	// OpenRouterResponseExtraFieldMetadata stores OpenRouter's native response metadata object.
+	OpenRouterResponseExtraFieldMetadata = "openrouter_metadata"
+	// OpenRouterMessageExtraFieldLogprobs stores candidate token log probabilities.
+	OpenRouterMessageExtraFieldLogprobs = "openrouter_logprobs"
+)
+
+// OpenRouterServiceTier selects the processing tier requested from OpenRouter.
+type OpenRouterServiceTier string
+
+const (
+	// OpenRouterServiceTierAuto lets OpenRouter choose the processing tier.
+	OpenRouterServiceTierAuto OpenRouterServiceTier = "auto"
+	// OpenRouterServiceTierDefault requests standard processing.
+	OpenRouterServiceTierDefault OpenRouterServiceTier = "default"
+	// OpenRouterServiceTierFast requests fast processing.
+	OpenRouterServiceTierFast OpenRouterServiceTier = "fast"
+	// OpenRouterServiceTierFlex requests flex processing.
+	OpenRouterServiceTierFlex OpenRouterServiceTier = "flex"
+	// OpenRouterServiceTierPriority requests priority processing.
+	OpenRouterServiceTierPriority OpenRouterServiceTier = "priority"
+	// OpenRouterServiceTierScale requests scale processing.
+	OpenRouterServiceTierScale OpenRouterServiceTier = "scale"
+)
+
+// WithOpenRouterLogitBias sets token logit adjustments for one OpenRouter request.
+func WithOpenRouterLogitBias(value map[string]float64) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionLogitBias] = maps.Clone(value) }
+}
+
+// WithOpenRouterLogprobs controls whether OpenRouter returns token log probabilities.
+func WithOpenRouterLogprobs(enabled bool) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionLogprobs] = enabled }
+}
+
+// WithOpenRouterMinP sets OpenRouter's minimum probability sampling threshold.
+func WithOpenRouterMinP(value float64) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionMinP] = value }
+}
+
+// WithOpenRouterFallbackModels sets the ordered model fallback list.
+func WithOpenRouterFallbackModels(values ...string) GenerationOption {
+	return func(options GenerationOptions) {
+		options[OpenRouterGenerationOptionModels] = append([]string(nil), values...)
+	}
+}
+
+// WithOpenRouterParallelToolCalls controls parallel function calling.
+func WithOpenRouterParallelToolCalls(enabled bool) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionParallelToolCalls] = enabled }
+}
+
+// WithOpenRouterPrediction supplies known text that OpenRouter can match as predicted output.
+func WithOpenRouterPrediction(content string) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionPrediction] = content }
+}
+
+// WithOpenRouterPromptCacheKey sets the OpenRouter prompt cache routing key.
+func WithOpenRouterPromptCacheKey(value string) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionPromptCacheKey] = value }
+}
+
+// WithOpenRouterProviderPreferences sets OpenRouter's provider routing object.
+func WithOpenRouterProviderPreferences(value map[string]any) GenerationOption {
+	return func(options GenerationOptions) {
+		options[OpenRouterGenerationOptionProvider] = maps.Clone(value)
+	}
+}
+
+// WithOpenRouterRepetitionPenalty sets OpenRouter's repetition penalty.
+func WithOpenRouterRepetitionPenalty(value float64) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionRepetitionPenalty] = value }
+}
+
+// WithOpenRouterResponseFormat sets an OpenRouter response_format object.
+func WithOpenRouterResponseFormat(value map[string]any) GenerationOption {
+	return func(options GenerationOptions) {
+		options[OpenRouterGenerationOptionResponseFormat] = maps.Clone(value)
+	}
+}
+
+// WithOpenRouterSeed sets the best-effort deterministic sampling seed.
+func WithOpenRouterSeed(value int) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionSeed] = value }
+}
+
+// WithOpenRouterServiceTier sets the requested OpenRouter processing tier.
+func WithOpenRouterServiceTier(value OpenRouterServiceTier) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionServiceTier] = string(value) }
+}
+
+// WithOpenRouterSessionID sets the OpenRouter session identifier.
+func WithOpenRouterSessionID(value string) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionSessionID] = value }
+}
+
+// WithOpenRouterTopA sets OpenRouter's top-a sampling threshold.
+func WithOpenRouterTopA(value float64) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionTopA] = value }
+}
+
+// WithOpenRouterTopLogprobs sets the number of alternative tokens returned per position.
+func WithOpenRouterTopLogprobs(value int) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionTopLogprobs] = value }
+}
+
+// WithOpenRouterUser sets the provider-side end-user identifier.
+func WithOpenRouterUser(value string) GenerationOption {
+	return func(options GenerationOptions) { options[OpenRouterGenerationOptionUser] = value }
+}
 
 // OpenRouterDefaultBaseURL is the OpenRouter API server declared by the generated OpenAPI client.
 const OpenRouterDefaultBaseURL = string(openrouter.DefaultServer)
 
-// OpenRouterGenerator implements Generator using the generated OpenRouter client.
+// OpenRouterGenerator implements Generator and StreamingGenerator using the generated OpenRouter client.
 // It normalizes replayable reasoning details, function tools, multimodal input,
 // provider errors, and usage data from OpenRouter Chat Completions.
 type OpenRouterGenerator struct {
@@ -70,10 +245,12 @@ func classifyOpenRouterError(statusCode int, errorType string) APIErrorKind {
 		return APIErrorKindRequestTooLarge
 	case "content_policy_violation", "refusal":
 		return APIErrorKindContentPolicy
-	case "payment_required", "invalid_request", "precondition_failed", "unprocessable",
+	case "payment_required", "invalid_request", "invalid_prompt", "precondition_failed", "unprocessable",
 		"context_length_exceeded", "max_tokens_exceeded", "token_limit_exceeded", "string_too_long",
 		"invalid_image", "image_too_small", "unsupported_image_format", "image_download_failed":
 		return APIErrorKindInvalidRequest
+	case "image_too_large":
+		return APIErrorKindRequestTooLarge
 	default:
 		return classifyHTTPStatus(statusCode)
 	}
@@ -123,9 +300,26 @@ func mapOpenRouterTransportError(err error) error {
 type openRouterGenerationOptions struct {
 	Temperature         *float64
 	TopP                *float64
+	TopK                *uint
+	LogitBias           map[string]float64
+	Logprobs            *bool
+	MinP                *float64
 	FrequencyPenalty    *float64
 	PresencePenalty     *float64
 	CandidateCount      *uint
+	Models              []string
+	ParallelToolCalls   *bool
+	Prediction          *string
+	PromptCacheKey      string
+	Provider            map[string]any
+	RepetitionPenalty   *float64
+	ResponseFormat      map[string]any
+	Seed                *int
+	ServiceTier         string
+	SessionID           string
+	TopA                *float64
+	TopLogprobs         *int
+	User                string
 	MaxGenerationTokens *int
 	ToolChoice          string
 	StopSequences       []string
@@ -149,6 +343,30 @@ func parseOpenRouterGenerationOptions(values GenerationOptions) (*openRouterGene
 	if ok {
 		options.TopP = &topP
 	}
+	topK, ok, err := generationOption[uint](values, GenerationOptionTopK)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.TopK = &topK
+	}
+	if options.LogitBias, _, err = generationOption[map[string]float64](values, OpenRouterGenerationOptionLogitBias); err != nil {
+		return nil, err
+	}
+	logprobs, ok, err := generationOption[bool](values, OpenRouterGenerationOptionLogprobs)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.Logprobs = &logprobs
+	}
+	minP, ok, err := generationOption[float64](values, OpenRouterGenerationOptionMinP)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.MinP = &minP
+	}
 	frequencyPenalty, ok, err := generationOption[float64](values, GenerationOptionFrequencyPenalty)
 	if err != nil {
 		return nil, err
@@ -169,6 +387,69 @@ func parseOpenRouterGenerationOptions(values GenerationOptions) (*openRouterGene
 	}
 	if ok {
 		options.CandidateCount = &candidateCount
+	}
+	if options.Models, _, err = generationOption[[]string](values, OpenRouterGenerationOptionModels); err != nil {
+		return nil, err
+	}
+	parallelToolCalls, ok, err := generationOption[bool](values, OpenRouterGenerationOptionParallelToolCalls)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.ParallelToolCalls = &parallelToolCalls
+	}
+	prediction, ok, err := generationOption[string](values, OpenRouterGenerationOptionPrediction)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.Prediction = &prediction
+	}
+	if options.PromptCacheKey, _, err = generationOption[string](values, OpenRouterGenerationOptionPromptCacheKey); err != nil {
+		return nil, err
+	}
+	if options.Provider, _, err = generationOption[map[string]any](values, OpenRouterGenerationOptionProvider); err != nil {
+		return nil, err
+	}
+	repetitionPenalty, ok, err := generationOption[float64](values, OpenRouterGenerationOptionRepetitionPenalty)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.RepetitionPenalty = &repetitionPenalty
+	}
+	if options.ResponseFormat, _, err = generationOption[map[string]any](values, OpenRouterGenerationOptionResponseFormat); err != nil {
+		return nil, err
+	}
+	seed, ok, err := generationOption[int](values, OpenRouterGenerationOptionSeed)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.Seed = &seed
+	}
+	if options.ServiceTier, _, err = generationOption[string](values, OpenRouterGenerationOptionServiceTier); err != nil {
+		return nil, err
+	}
+	if options.SessionID, _, err = generationOption[string](values, OpenRouterGenerationOptionSessionID); err != nil {
+		return nil, err
+	}
+	topA, ok, err := generationOption[float64](values, OpenRouterGenerationOptionTopA)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.TopA = &topA
+	}
+	topLogprobs, ok, err := generationOption[int](values, OpenRouterGenerationOptionTopLogprobs)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		options.TopLogprobs = &topLogprobs
+	}
+	if options.User, _, err = generationOption[string](values, OpenRouterGenerationOptionUser); err != nil {
+		return nil, err
 	}
 	maxTokens, ok, err := generationOption[int](values, GenerationOptionMaxGenerationTokens)
 	if err != nil {
@@ -506,6 +787,20 @@ func (g *OpenRouterGenerator) buildRequest(request GenerationRequest) (*openrout
 	if options.TopP != nil {
 		providerRequest.TopP = openrouter.NewOptFloat64(*options.TopP)
 	}
+	if options.TopK != nil {
+		providerRequest.TopK = openrouter.NewOptInt(int(*options.TopK))
+	}
+	if options.LogitBias != nil {
+		providerRequest.LogitBias = openrouter.NewOptChatCompletionRequestLogitBias(
+			openrouter.ChatCompletionRequestLogitBias(options.LogitBias),
+		)
+	}
+	if options.Logprobs != nil {
+		providerRequest.Logprobs = openrouter.NewOptBool(*options.Logprobs)
+	}
+	if options.MinP != nil {
+		providerRequest.MinP = openrouter.NewOptFloat64(*options.MinP)
+	}
 	if options.FrequencyPenalty != nil {
 		providerRequest.FrequencyPenalty = openrouter.NewOptFloat64(*options.FrequencyPenalty)
 	}
@@ -514,6 +809,80 @@ func (g *OpenRouterGenerator) buildRequest(request GenerationRequest) (*openrout
 	}
 	if options.CandidateCount != nil {
 		providerRequest.N = openrouter.NewOptInt(int(*options.CandidateCount))
+	}
+	if len(options.Models) > 0 {
+		providerRequest.Models = options.Models
+	}
+	if options.ParallelToolCalls != nil {
+		providerRequest.ParallelToolCalls = openrouter.NewOptBool(*options.ParallelToolCalls)
+	}
+	if options.Prediction != nil {
+		providerRequest.Prediction = openrouter.NewOptPrediction(openrouter.Prediction{
+			Type:    openrouter.PredictionTypeContent,
+			Content: *options.Prediction,
+		})
+	}
+	if options.PromptCacheKey != "" {
+		providerRequest.PromptCacheKey = openrouter.NewOptString(options.PromptCacheKey)
+	}
+	if options.Provider != nil {
+		encoded, marshalErr := json.Marshal(options.Provider)
+		if marshalErr != nil {
+			return nil, &InvalidParameterErr{Parameter: OpenRouterGenerationOptionProvider, Reason: marshalErr.Error()}
+		}
+		var provider openrouter.ChatCompletionRequestProvider
+		if decodeErr := json.Unmarshal(encoded, &provider); decodeErr != nil {
+			return nil, &InvalidParameterErr{Parameter: OpenRouterGenerationOptionProvider, Reason: decodeErr.Error()}
+		}
+		providerRequest.Provider = openrouter.NewOptChatCompletionRequestProvider(provider)
+	}
+	if options.RepetitionPenalty != nil {
+		providerRequest.RepetitionPenalty = openrouter.NewOptFloat64(*options.RepetitionPenalty)
+	}
+	if options.ResponseFormat != nil {
+		if typ, ok := options.ResponseFormat["type"].(string); !ok || typ == "" {
+			return nil, &InvalidParameterErr{Parameter: OpenRouterGenerationOptionResponseFormat, Reason: "type must be a non-empty string"}
+		}
+		encoded, marshalErr := json.Marshal(options.ResponseFormat)
+		if marshalErr != nil {
+			return nil, &InvalidParameterErr{Parameter: OpenRouterGenerationOptionResponseFormat, Reason: marshalErr.Error()}
+		}
+		var responseFormat openrouter.ChatCompletionRequestResponseFormat
+		if decodeErr := json.Unmarshal(encoded, &responseFormat); decodeErr != nil {
+			return nil, &InvalidParameterErr{Parameter: OpenRouterGenerationOptionResponseFormat, Reason: decodeErr.Error()}
+		}
+		providerRequest.ResponseFormat = openrouter.NewOptChatCompletionRequestResponseFormat(responseFormat)
+	}
+	if options.Seed != nil {
+		providerRequest.Seed = openrouter.NewOptInt(*options.Seed)
+	}
+	if options.ServiceTier != "" {
+		tier := openrouter.ServiceTier(options.ServiceTier)
+		if validateErr := tier.Validate(); validateErr != nil {
+			return nil, &InvalidParameterErr{Parameter: OpenRouterGenerationOptionServiceTier, Reason: validateErr.Error()}
+		}
+		providerRequest.ServiceTier = openrouter.NewOptServiceTier(tier)
+	}
+	if options.SessionID != "" {
+		if len(options.SessionID) > 256 {
+			return nil, &InvalidParameterErr{Parameter: OpenRouterGenerationOptionSessionID, Reason: "must be at most 256 bytes"}
+		}
+		providerRequest.SessionID = openrouter.NewOptString(options.SessionID)
+	}
+	if options.TopA != nil {
+		providerRequest.TopA = openrouter.NewOptFloat64(*options.TopA)
+	}
+	if options.TopLogprobs != nil {
+		if *options.TopLogprobs < 0 || *options.TopLogprobs > 20 {
+			return nil, &InvalidParameterErr{Parameter: OpenRouterGenerationOptionTopLogprobs, Reason: "must be between 0 and 20"}
+		}
+		if options.Logprobs == nil || !*options.Logprobs {
+			return nil, &InvalidParameterErr{Parameter: OpenRouterGenerationOptionTopLogprobs, Reason: "requires logprobs to be enabled"}
+		}
+		providerRequest.TopLogprobs = openrouter.NewOptInt(*options.TopLogprobs)
+	}
+	if options.User != "" {
+		providerRequest.User = openrouter.NewOptString(options.User)
 	}
 	if options.MaxGenerationTokens != nil {
 		providerRequest.MaxCompletionTokens = openrouter.NewOptInt(*options.MaxGenerationTokens)
@@ -574,6 +943,48 @@ func applyOpenRouterToolChoice(request *openrouter.ChatCompletionRequest, choice
 	return InvalidToolChoiceErr(fmt.Sprintf("tool %q is not in the request", choice))
 }
 
+func openRouterJSONMap(value any) (map[string]any, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("openrouter: encode provider metadata: %w", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return nil, fmt.Errorf("openrouter: decode provider metadata: %w", err)
+	}
+	return result, nil
+}
+
+func mergeOpenRouterJSONMap(destination, source map[string]any) {
+	for key, value := range source {
+		if sourceItems, ok := value.([]any); ok {
+			if destinationItems, exists := destination[key].([]any); exists {
+				destination[key] = append(destinationItems, sourceItems...)
+				continue
+			}
+		}
+		destination[key] = value
+	}
+}
+
+func openRouterResponseExtraFields(id, model string, created int64, systemFingerprint, serviceTier string, metadata map[string]any) map[string]interface{} {
+	extraFields := map[string]interface{}{
+		OpenRouterResponseExtraFieldID:      id,
+		OpenRouterResponseExtraFieldModel:   model,
+		OpenRouterResponseExtraFieldCreated: created,
+	}
+	if systemFingerprint != "" {
+		extraFields[OpenRouterResponseExtraFieldSystemFingerprint] = systemFingerprint
+	}
+	if serviceTier != "" {
+		extraFields[OpenRouterResponseExtraFieldServiceTier] = serviceTier
+	}
+	if len(metadata) > 0 {
+		extraFields[OpenRouterResponseExtraFieldMetadata] = metadata
+	}
+	return extraFields
+}
+
 // Generate implements Generator
 func (g *OpenRouterGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
@@ -607,24 +1018,36 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, request GenerationRe
 	if !ok {
 		return Response{}, fmt.Errorf("openrouter: unexpected response type %q", providerResponse.Type)
 	}
-	for _, choice := range completion.Choices {
-		if detail, ok := choice.Error.Get(); ok {
-			return Response{}, mapOpenRouterErrorDetail(detail, detail.Code, string(rawBody))
+
+	var nativeMetadata map[string]any
+	if metadata, ok := completion.OpenrouterMetadata.Get(); ok {
+		nativeMetadata, err = openRouterJSONMap(metadata)
+		if err != nil {
+			return Response{}, err
 		}
 	}
-
-	result := Response{UsageMetadata: make(Metadata)}
+	result := Response{
+		UsageMetadata: make(Metadata),
+		ExtraFields: openRouterResponseExtraFields(
+			completion.ID,
+			completion.Model,
+			completion.Created,
+			completion.SystemFingerprint.Or(""),
+			completion.ServiceTier.Or(""),
+			nativeMetadata,
+		),
+	}
 	if usage, ok := completion.Usage.Get(); ok {
 		addOpenRouterUsageMetadata(result.UsageMetadata, usage)
-	}
-	if len(completion.Choices) > 0 && len(completion.Choices[0].Message.ReasoningDetails) > 0 {
-		result.UsageMetadata[OpenRouterUsageMetricReasoningDetailsAvailable] = true
 	}
 
 	var hasToolCalls bool
 
 	for _, choice := range completion.Choices {
 		blocks := make([]Block, 0, 2)
+		if len(choice.Message.ReasoningDetails) > 0 {
+			result.UsageMetadata[OpenRouterUsageMetricReasoningDetailsAvailable] = true
+		}
 		for _, detail := range choice.Message.ReasoningDetails {
 			block, ok := openRouterReasoningBlock(detail)
 			if ok {
@@ -642,7 +1065,18 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, request GenerationRe
 			}
 			blocks = append(blocks, block)
 		}
-		result.Candidates = append(result.Candidates, Message{Role: Assistant, Blocks: blocks})
+		message := Message{Role: Assistant, Blocks: blocks}
+		if logprobs, ok := choice.Logprobs.Get(); ok {
+			value, valueErr := openRouterJSONMap(logprobs)
+			if valueErr != nil {
+				return result, valueErr
+			}
+			message.ExtraFields = map[string]interface{}{OpenRouterMessageExtraFieldLogprobs: value}
+		}
+		result.Candidates = append(result.Candidates, message)
+		if detail, ok := choice.Error.Get(); ok {
+			return result, mapOpenRouterErrorDetail(detail, detail.Code, string(rawBody))
+		}
 	}
 
 	if len(completion.Choices) > 0 {
@@ -703,6 +1137,8 @@ func (g *OpenRouterGenerator) Stream(ctx context.Context, generationRequest Gene
 		var hasFinalUsage bool
 		hasReasoningDetails := false
 		lastReasoningKey := make(map[int]string)
+		responseExtraFields := make(map[string]interface{})
+		streamLogprobs := make(map[string]any)
 		for {
 			event, err := stream.Next(ctx)
 			if err != nil {
@@ -722,6 +1158,31 @@ func (g *OpenRouterGenerator) Stream(ctx context.Context, generationRequest Gene
 				yield(StreamChunk{Err: mapOpenRouterErrorDetail(detail, detail.Code, string(rawChunk))})
 				return
 			}
+			var nativeMetadata map[string]any
+			if metadata, ok := chunk.OpenrouterMetadata.Get(); ok {
+				nativeMetadata, err = openRouterJSONMap(metadata)
+				if err != nil {
+					yield(StreamChunk{Err: err})
+					return
+				}
+			}
+			chunkExtraFields := openRouterResponseExtraFields(
+				chunk.ID,
+				chunk.Model,
+				chunk.Created,
+				chunk.SystemFingerprint.Or(""),
+				chunk.ServiceTier.Or(""),
+				nativeMetadata,
+			)
+			maps.Copy(responseExtraFields, chunkExtraFields)
+			yieldBlock := func(block Block, candidateIndex int, messageExtraFields map[string]interface{}) bool {
+				return yield(StreamChunk{
+					Block:               block,
+					MessageExtraFields:  messageExtraFields,
+					ResponseExtraFields: chunkExtraFields,
+					CandidatesIndex:     candidateIndex,
+				})
+			}
 			if usage, ok := chunk.Usage.Get(); ok {
 				finalUsage = usage
 				hasFinalUsage = true
@@ -730,6 +1191,14 @@ func (g *OpenRouterGenerator) Stream(ctx context.Context, generationRequest Gene
 				if detail, ok := choice.Error.Get(); ok {
 					yield(StreamChunk{Err: mapOpenRouterErrorDetail(detail, detail.Code, string(rawChunk))})
 					return
+				}
+				if logprobs, ok := choice.Logprobs.Get(); ok && choice.Index == 0 {
+					value, valueErr := openRouterJSONMap(logprobs)
+					if valueErr != nil {
+						yield(StreamChunk{Err: valueErr})
+						return
+					}
+					mergeOpenRouterJSONMap(streamLogprobs, value)
 				}
 				if finishReason, ok := choice.FinishReason.Get(); ok {
 					if _, finishErr := openRouterFinishReason(finishReason); finishErr != nil {
@@ -745,47 +1214,41 @@ func (g *OpenRouterGenerator) Stream(ctx context.Context, generationRequest Gene
 					hasReasoningDetails = true
 					key := openRouterReasoningDetailKey(detail)
 					if previous, exists := lastReasoningKey[choice.Index]; exists && previous != key {
-						if !yield(StreamChunk{Block: SeparatorBlock(), CandidatesIndex: choice.Index}) {
+						if !yieldBlock(SeparatorBlock(), choice.Index, nil) {
 							return
 						}
 					}
 					lastReasoningKey[choice.Index] = key
 					if block, ok := openRouterReasoningBlock(detail); ok {
-						if !yield(StreamChunk{Block: block, CandidatesIndex: choice.Index}) {
+						if !yieldBlock(block, choice.Index, nil) {
 							return
 						}
 					}
 				}
 				if content, ok := choice.Delta.Content.Get(); ok && content != "" {
-					if !yield(StreamChunk{Block: TextBlock(content), CandidatesIndex: choice.Index}) {
+					if !yieldBlock(TextBlock(content), choice.Index, nil) {
 						return
 					}
 				}
 				for _, call := range choice.Delta.ToolCalls {
 					if name := call.Function.Name.Or(""); name != "" {
-						if !yield(StreamChunk{
-							Block: Block{
-								ID:           call.ID.Or(""),
-								BlockType:    ToolCall,
-								ModalityType: Text,
-								MimeType:     "text/plain",
-								Content:      Str(name),
-							},
-							CandidatesIndex: choice.Index,
-						}) {
+						if !yieldBlock(Block{
+							ID:           call.ID.Or(""),
+							BlockType:    ToolCall,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(name),
+						}, choice.Index, nil) {
 							return
 						}
 					}
 					if arguments := call.Function.Arguments.Or(""); arguments != "" {
-						if !yield(StreamChunk{
-							Block: Block{
-								BlockType:    ToolCall,
-								ModalityType: Text,
-								MimeType:     "text/plain",
-								Content:      Str(arguments),
-							},
-							CandidatesIndex: choice.Index,
-						}) {
+						if !yieldBlock(Block{
+							BlockType:    ToolCall,
+							ModalityType: Text,
+							MimeType:     "text/plain",
+							Content:      Str(arguments),
+						}, choice.Index, nil) {
 							return
 						}
 					}
@@ -800,8 +1263,21 @@ func (g *OpenRouterGenerator) Stream(ctx context.Context, generationRequest Gene
 		if hasReasoningDetails {
 			metadata[OpenRouterUsageMetricReasoningDetailsAvailable] = true
 		}
+		var messageExtraFields map[string]interface{}
+		if len(streamLogprobs) > 0 {
+			messageExtraFields = map[string]interface{}{OpenRouterMessageExtraFieldLogprobs: streamLogprobs}
+		}
+		terminalBlock := SeparatorBlock()
 		if len(metadata) > 0 {
-			yield(StreamChunk{Block: MetadataBlock(metadata), CandidatesIndex: 0})
+			terminalBlock = MetadataBlock(metadata)
+		}
+		if len(metadata) > 0 || len(messageExtraFields) > 0 || len(responseExtraFields) > 0 {
+			yield(StreamChunk{
+				Block:               terminalBlock,
+				MessageExtraFields:  messageExtraFields,
+				ResponseExtraFields: responseExtraFields,
+				CandidatesIndex:     0,
+			})
 		}
 	}
 }
@@ -885,7 +1361,26 @@ func addOpenRouterUsageMetadata(metadata Metadata, usage openrouter.Usage) {
 	if completionTokens := usage.CompletionTokens.Or(0); completionTokens > 0 {
 		metadata[UsageMetricGenerationTokens] = completionTokens
 	}
+	if cost, ok := usage.Cost.Get(); ok {
+		metadata[OpenRouterUsageMetricCost] = cost
+	}
+	if isBYOK, ok := usage.IsByok.Get(); ok {
+		metadata[OpenRouterUsageMetricIsBYOK] = isBYOK
+	}
+	if details, ok := usage.CostDetails.Get(); ok {
+		if value, err := openRouterJSONMap(details); err == nil {
+			metadata[OpenRouterUsageMetricCostDetails] = value
+		}
+	}
+	if details, ok := usage.ServerToolUseDetails.Get(); ok {
+		if value, err := openRouterJSONMap(details); err == nil {
+			metadata[OpenRouterUsageMetricServerToolUseDetails] = value
+		}
+	}
 	if details, ok := usage.PromptTokensDetails.Get(); ok {
+		if value, err := openRouterJSONMap(details); err == nil {
+			metadata[OpenRouterUsageMetricPromptTokenDetails] = value
+		}
 		if cachedTokens := details.CachedTokens.Or(0); cachedTokens > 0 {
 			metadata[UsageMetricCacheReadTokens] = cachedTokens
 		}
@@ -894,6 +1389,9 @@ func addOpenRouterUsageMetadata(metadata Metadata, usage openrouter.Usage) {
 		}
 	}
 	if details, ok := usage.CompletionTokensDetails.Get(); ok {
+		if value, err := openRouterJSONMap(details); err == nil {
+			metadata[OpenRouterUsageMetricCompletionTokenDetails] = value
+		}
 		if reasoningTokens := details.ReasoningTokens.Or(0); reasoningTokens > 0 {
 			metadata[UsageMetricReasoningTokens] = reasoningTokens
 		}

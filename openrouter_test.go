@@ -54,8 +54,11 @@ func TestOpenRouterGeneratorUsesGeneratedJSONClient(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"completion_1","object":"chat.completion","created":1,"model":"test/model",
+			"system_fingerprint":"fp_test","service_tier":"priority",
+			"openrouter_metadata":{"provider":"ExampleAI","region":"us-east"},
 			"choices":[{
 				"index":0,"finish_reason":"tool_calls",
+				"logprobs":{"content":[{"token":"answer","logprob":-0.1}]},
 				"message":{
 					"role":"assistant","content":"answer",
 					"reasoning_details":[{
@@ -70,8 +73,11 @@ func TestOpenRouterGeneratorUsesGeneratedJSONClient(t *testing.T) {
 			}],
 			"usage":{
 				"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,
-				"prompt_tokens_details":{"cached_tokens":4,"cache_write_tokens":3},
-				"completion_tokens_details":{"reasoning_tokens":2}
+				"cost":0.0012,"is_byok":true,
+				"cost_details":{"upstream_inference_cost":0.001,"upstream_inference_prompt_cost":0.0004,"upstream_inference_completions_cost":0.0006},
+				"server_tool_use_details":{"tool_calls_requested":2,"tool_calls_executed":1,"web_search_requests":1},
+				"prompt_tokens_details":{"cached_tokens":4,"cache_write_tokens":3,"audio_tokens":2,"video_tokens":1},
+				"completion_tokens_details":{"reasoning_tokens":2,"audio_tokens":1,"accepted_prediction_tokens":2,"rejected_prediction_tokens":1}
 			}
 		}`))
 	}))
@@ -95,6 +101,23 @@ func TestOpenRouterGeneratorUsesGeneratedJSONClient(t *testing.T) {
 		Options: NewGenerationOptions(
 			WithTemperature(0.2),
 			WithTopP(0.8),
+			WithTopK(40),
+			WithOpenRouterLogitBias(map[string]float64{"42": -1.5}),
+			WithOpenRouterLogprobs(true),
+			WithOpenRouterTopLogprobs(3),
+			WithOpenRouterMinP(0.05),
+			WithOpenRouterFallbackModels("fallback/one", "fallback/two"),
+			WithOpenRouterParallelToolCalls(false),
+			WithOpenRouterPrediction("known output"),
+			WithOpenRouterPromptCacheKey("conversation-1"),
+			WithOpenRouterProviderPreferences(map[string]any{"order": []string{"ExampleAI"}, "allow_fallbacks": false}),
+			WithOpenRouterRepetitionPenalty(1.1),
+			WithOpenRouterResponseFormat(map[string]any{"type": "json_object"}),
+			WithOpenRouterSeed(7),
+			WithOpenRouterServiceTier(OpenRouterServiceTierPriority),
+			WithOpenRouterSessionID("session-1"),
+			WithOpenRouterTopA(0.2),
+			WithOpenRouterUser("user-1"),
 			WithFrequencyPenalty(0.1),
 			WithPresencePenalty(0.3),
 			WithCandidateCount(2),
@@ -125,20 +148,82 @@ func TestOpenRouterGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	if call.Name != "get_weather" || call.Parameters["city"] != "Paris" {
 		t.Fatalf("tool call = %+v", call)
 	}
+	if response.ExtraFields[OpenRouterResponseExtraFieldID] != "completion_1" ||
+		response.ExtraFields[OpenRouterResponseExtraFieldModel] != "test/model" ||
+		response.ExtraFields[OpenRouterResponseExtraFieldCreated] != int64(1) ||
+		response.ExtraFields[OpenRouterResponseExtraFieldSystemFingerprint] != "fp_test" ||
+		response.ExtraFields[OpenRouterResponseExtraFieldServiceTier] != "priority" {
+		t.Fatalf("response extra fields = %v", response.ExtraFields)
+	}
+	nativeMetadata, ok := response.ExtraFields[OpenRouterResponseExtraFieldMetadata].(map[string]any)
+	if !ok || nativeMetadata["provider"] != "ExampleAI" || nativeMetadata["region"] != "us-east" {
+		t.Fatalf("OpenRouter metadata = %v", response.ExtraFields[OpenRouterResponseExtraFieldMetadata])
+	}
+	logprobs, ok := response.Candidates[0].ExtraFields[OpenRouterMessageExtraFieldLogprobs].(map[string]any)
+	if !ok {
+		t.Fatalf("candidate logprobs = %v", response.Candidates[0].ExtraFields)
+	}
+	logprobItems, ok := logprobs["content"].([]any)
+	if !ok || len(logprobItems) != 1 {
+		t.Fatalf("candidate logprobs = %v", logprobs)
+	}
 	if response.UsageMetadata[UsageMetricInputTokens] != 10 ||
 		response.UsageMetadata[UsageMetricGenerationTokens] != 5 ||
 		response.UsageMetadata[UsageMetricCacheReadTokens] != 4 ||
 		response.UsageMetadata[UsageMetricCacheWriteTokens] != 3 ||
 		response.UsageMetadata[UsageMetricReasoningTokens] != 2 ||
+		response.UsageMetadata[OpenRouterUsageMetricCost] != 0.0012 ||
+		response.UsageMetadata[OpenRouterUsageMetricIsBYOK] != true ||
 		response.UsageMetadata[OpenRouterUsageMetricReasoningDetailsAvailable] != true {
 		t.Fatalf("usage metadata = %v", response.UsageMetadata)
+	}
+	costDetails, ok := response.UsageMetadata[OpenRouterUsageMetricCostDetails].(map[string]any)
+	if !ok || costDetails["upstream_inference_cost"] != 0.001 {
+		t.Fatalf("cost details = %v", response.UsageMetadata[OpenRouterUsageMetricCostDetails])
+	}
+	serverToolDetails, ok := response.UsageMetadata[OpenRouterUsageMetricServerToolUseDetails].(map[string]any)
+	if !ok || serverToolDetails["tool_calls_requested"] != float64(2) || serverToolDetails["web_search_requests"] != float64(1) {
+		t.Fatalf("server tool details = %v", response.UsageMetadata[OpenRouterUsageMetricServerToolUseDetails])
+	}
+	promptDetails, ok := response.UsageMetadata[OpenRouterUsageMetricPromptTokenDetails].(map[string]any)
+	if !ok || promptDetails["audio_tokens"] != float64(2) || promptDetails["video_tokens"] != float64(1) {
+		t.Fatalf("prompt token details = %v", response.UsageMetadata[OpenRouterUsageMetricPromptTokenDetails])
+	}
+	completionDetails, ok := response.UsageMetadata[OpenRouterUsageMetricCompletionTokenDetails].(map[string]any)
+	if !ok || completionDetails["accepted_prediction_tokens"] != float64(2) || completionDetails["rejected_prediction_tokens"] != float64(1) {
+		t.Fatalf("completion token details = %v", response.UsageMetadata[OpenRouterUsageMetricCompletionTokenDetails])
 	}
 
 	request := <-requests
 	if request["stream"] != false || request["temperature"] != 0.2 || request["top_p"] != 0.8 ||
+		request["top_k"] != float64(40) || request["logprobs"] != true || request["top_logprobs"] != float64(3) ||
+		request["min_p"] != 0.05 || request["parallel_tool_calls"] != false ||
+		request["prompt_cache_key"] != "conversation-1" || request["repetition_penalty"] != 1.1 ||
+		request["seed"] != float64(7) || request["service_tier"] != "priority" ||
+		request["session_id"] != "session-1" || request["top_a"] != 0.2 || request["user"] != "user-1" ||
 		request["frequency_penalty"] != 0.1 || request["presence_penalty"] != 0.3 ||
 		request["n"] != float64(2) || request["max_completion_tokens"] != float64(64) {
 		t.Fatalf("request options = %v", request)
+	}
+	logitBias, ok := request["logit_bias"].(map[string]any)
+	if !ok || logitBias["42"] != -1.5 {
+		t.Fatalf("logit bias = %v", request["logit_bias"])
+	}
+	models, ok := request["models"].([]any)
+	if !ok || len(models) != 2 || models[0] != "fallback/one" || models[1] != "fallback/two" {
+		t.Fatalf("fallback models = %v", request["models"])
+	}
+	prediction, ok := request["prediction"].(map[string]any)
+	if !ok || prediction["content"] != "known output" {
+		t.Fatalf("prediction = %v", request["prediction"])
+	}
+	provider, ok := request["provider"].(map[string]any)
+	if !ok || provider["allow_fallbacks"] != false {
+		t.Fatalf("provider preferences = %v", request["provider"])
+	}
+	responseFormat, ok := request["response_format"].(map[string]any)
+	if !ok || responseFormat["type"] != "json_object" {
+		t.Fatalf("response format = %v", request["response_format"])
 	}
 	reasoning, ok := request["reasoning"].(map[string]any)
 	if !ok || reasoning["max_tokens"] != float64(2048) {
@@ -147,6 +232,47 @@ func TestOpenRouterGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	toolChoice, ok := request["tool_choice"].(map[string]any)
 	if !ok || toolChoice["type"] != "function" {
 		t.Fatalf("tool choice = %v", request["tool_choice"])
+	}
+}
+
+func TestOpenRouterBuildRequestRejectsInvalidProviderOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		options GenerationOptions
+		want    string
+	}{
+		{
+			name:    "top logprobs without logprobs",
+			options: NewGenerationOptions(WithOpenRouterTopLogprobs(3)),
+			want:    OpenRouterGenerationOptionTopLogprobs,
+		},
+		{
+			name:    "invalid service tier",
+			options: NewGenerationOptions(WithOpenRouterServiceTier("slow")),
+			want:    OpenRouterGenerationOptionServiceTier,
+		},
+		{
+			name:    "session ID too long",
+			options: NewGenerationOptions(WithOpenRouterSessionID(strings.Repeat("x", 257))),
+			want:    OpenRouterGenerationOptionSessionID,
+		},
+		{
+			name:    "response format without type",
+			options: NewGenerationOptions(WithOpenRouterResponseFormat(map[string]any{"schema": map[string]any{}})),
+			want:    OpenRouterGenerationOptionResponseFormat,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := (&OpenRouterGenerator{}).buildRequest(GenerationRequest{
+				Model:   "test/model",
+				Dialog:  Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
+				Options: tt.options,
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("buildRequest() error = %v, want parameter %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -160,13 +286,13 @@ func TestOpenRouterGeneratorUsesGeneratedSSEClient(t *testing.T) {
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(
-			"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test/model\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"step \",\"id\":\"reasoning_1\",\"format\":\"openai-responses-v1\",\"index\":0}]},\"finish_reason\":null}]}\n\n" +
-				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test/model\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"one\",\"id\":\"reasoning_1\",\"format\":\"openai-responses-v1\",\"index\":0}]},\"finish_reason\":null}]}\n\n" +
+			"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test/model\",\"system_fingerprint\":\"fp_stream\",\"service_tier\":\"flex\",\"openrouter_metadata\":{\"provider\":\"ExampleAI\"},\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"step \",\"id\":\"reasoning_1\",\"format\":\"openai-responses-v1\",\"index\":0}]},\"finish_reason\":null,\"logprobs\":{\"content\":[{\"token\":\"a\",\"logprob\":-0.1}]}}]}\n\n" +
+				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test/model\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"one\",\"id\":\"reasoning_1\",\"format\":\"openai-responses-v1\",\"index\":0}]},\"finish_reason\":null,\"logprobs\":{\"content\":[{\"token\":\"b\",\"logprob\":-0.2}]}}]}\n\n" +
 				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test/model\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.summary\",\"summary\":\"summary\",\"id\":\"reasoning_2\",\"index\":1}]},\"finish_reason\":null}]}\n\n" +
 				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test/model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":null}]}\n\n" +
 				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test/model\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"calculate\",\"arguments\":\"{\\\"x\\\":\"}}]},\"finish_reason\":null}]}\n\n" +
 				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test/model\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n" +
-				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test/model\",\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":5,\"total_tokens\":12,\"prompt_tokens_details\":{\"cached_tokens\":3,\"cache_write_tokens\":2},\"completion_tokens_details\":{\"reasoning_tokens\":4}}}\n\n" +
+				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test/model\",\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":5,\"total_tokens\":12,\"cost\":0,\"cost_details\":{\"upstream_inference_cost\":null,\"upstream_inference_prompt_cost\":0.1,\"upstream_inference_completions_cost\":0.2},\"is_byok\":false,\"server_tool_use_details\":{\"tool_calls_requested\":1,\"tool_calls_executed\":1,\"web_search_requests\":0},\"prompt_tokens_details\":{\"cached_tokens\":3,\"cache_write_tokens\":2},\"completion_tokens_details\":{\"reasoning_tokens\":4}}}\n\n" +
 				"data: [DONE]\n\n",
 		))
 	}))
@@ -174,6 +300,8 @@ func TestOpenRouterGeneratorUsesGeneratedSSEClient(t *testing.T) {
 
 	var blocks []Block
 	var usage map[string]any
+	responseExtraFields := make(map[string]interface{})
+	messageExtraFields := make(map[string]interface{})
 	for chunk := range newOpenRouterTestGenerator(t, server).Stream(t.Context(), GenerationRequest{
 		Model:  "test/model",
 		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("calculate")}}},
@@ -184,6 +312,12 @@ func TestOpenRouterGeneratorUsesGeneratedSSEClient(t *testing.T) {
 		if chunk.CandidatesIndex != 0 {
 			t.Fatalf("candidate index = %d, want 0", chunk.CandidatesIndex)
 		}
+		for key, value := range chunk.ResponseExtraFields {
+			responseExtraFields[key] = value
+		}
+		for key, value := range chunk.MessageExtraFields {
+			messageExtraFields[key] = value
+		}
 		if chunk.Block.BlockType == MetadataBlockType {
 			if err := json.Unmarshal([]byte(chunk.Block.Content.String()), &usage); err != nil {
 				t.Fatalf("decode usage metadata: %v", err)
@@ -191,6 +325,23 @@ func TestOpenRouterGeneratorUsesGeneratedSSEClient(t *testing.T) {
 			continue
 		}
 		blocks = append(blocks, chunk.Block)
+	}
+	if responseExtraFields[OpenRouterResponseExtraFieldID] != "chunk_1" ||
+		responseExtraFields[OpenRouterResponseExtraFieldSystemFingerprint] != "fp_stream" ||
+		responseExtraFields[OpenRouterResponseExtraFieldServiceTier] != "flex" {
+		t.Fatalf("stream response extra fields = %v", responseExtraFields)
+	}
+	streamMetadata, ok := responseExtraFields[OpenRouterResponseExtraFieldMetadata].(map[string]any)
+	if !ok || streamMetadata["provider"] != "ExampleAI" {
+		t.Fatalf("stream OpenRouter metadata = %v", responseExtraFields[OpenRouterResponseExtraFieldMetadata])
+	}
+	streamLogprobs, ok := messageExtraFields[OpenRouterMessageExtraFieldLogprobs].(map[string]any)
+	if !ok {
+		t.Fatalf("stream message extra fields = %v", messageExtraFields)
+	}
+	streamLogprobItems, ok := streamLogprobs["content"].([]any)
+	if !ok || len(streamLogprobItems) != 2 {
+		t.Fatalf("stream logprobs = %v", streamLogprobs)
 	}
 
 	compressed, err := compressStreamingBlocks(blocks)
@@ -220,8 +371,17 @@ func TestOpenRouterGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	}
 	if usage[UsageMetricInputTokens] != float64(7) || usage[UsageMetricGenerationTokens] != float64(5) ||
 		usage[UsageMetricCacheReadTokens] != float64(3) || usage[UsageMetricCacheWriteTokens] != float64(2) ||
-		usage[UsageMetricReasoningTokens] != float64(4) || usage[OpenRouterUsageMetricReasoningDetailsAvailable] != true {
+		usage[UsageMetricReasoningTokens] != float64(4) || usage[OpenRouterUsageMetricCost] != float64(0) ||
+		usage[OpenRouterUsageMetricIsBYOK] != false || usage[OpenRouterUsageMetricReasoningDetailsAvailable] != true {
 		t.Fatalf("usage metadata = %v", usage)
+	}
+	streamCostDetails, ok := usage[OpenRouterUsageMetricCostDetails].(map[string]any)
+	if !ok || streamCostDetails["upstream_inference_prompt_cost"] != 0.1 {
+		t.Fatalf("stream cost details = %v", usage[OpenRouterUsageMetricCostDetails])
+	}
+	streamServerTools, ok := usage[OpenRouterUsageMetricServerToolUseDetails].(map[string]any)
+	if !ok || streamServerTools["tool_calls_requested"] != float64(1) {
+		t.Fatalf("stream server tool details = %v", usage[OpenRouterUsageMetricServerToolUseDetails])
 	}
 }
 

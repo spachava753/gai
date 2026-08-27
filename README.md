@@ -176,16 +176,22 @@ func main() {
 }
 ```
 
+## Provider-specific controls and response details
+
+Provider option functions such as [WithCerebrasServiceTier], [WithOpenRouterProviderPreferences], and [WithResponsesPromptCacheKey] return GenerationOption values and compose with the common helpers in [NewGenerationOptions]. The underlying keys remain exported for inspection and experimental direct assignment.
+
+Providers put measurements in Response.UsageMetadata. Invocation details such as completion IDs, model names, timestamps, fingerprints, and service tiers go in Response.ExtraFields. Candidate-level details go in Message.ExtraFields, while replay-critical content metadata stays with the corresponding Block.ExtraFields. [StreamingAdapter] preserves response and message extra fields from stream chunks.
+
 ## Prompt Caching with ResponsesGenerator
 
-The OpenAI Responses generator supports explicit prompt cache routing through GenerationOptions. Set [ResponsesPromptCacheKeyParam] to a stable key for requests that share the same long static prompt prefix. Keep repeated instructions, schemas, and tool definitions at the beginning of the prompt, and put request-specific content near the end.
+The OpenAI Responses generator supports explicit prompt cache routing through GenerationOptions. Use [WithResponsesPromptCacheKey] with a stable key for requests that share the same long static prompt prefix. Keep repeated instructions, schemas, and tool definitions at the beginning of the prompt, and put request-specific content near the end.
 
 ```go
 client := openai.NewClient()
 gen := gai.NewResponsesGenerator(&client.Responses)
-options := gai.GenerationOptions{
-	gai.ResponsesPromptCacheKeyParam: "support-incident-summary:v1",
-}
+options := gai.NewGenerationOptions(
+	gai.WithResponsesPromptCacheKey("support-incident-summary:v1"),
+)
 resp, err := gen.Generate(ctx, gai.GenerationRequest{
 	Model:        openai.ChatModelGPT5Mini,
 	Instructions: gai.SystemMessage(gai.TextBlock("You are a helpful assistant that summarizes support incidents.")),
@@ -203,15 +209,16 @@ if cached, ok := gai.CacheReadTokens(resp.UsageMetadata); ok {
 
 ## Responses API Service Tiers
 
-Set [ResponsesServiceTierParam] in GenerationOptions to choose how OpenAI processes a Responses API request. Supported values are "auto", "default", "flex", "scale", and "priority". If omitted, OpenAI uses its default "auto" behavior. The option applies to both Generate and Stream calls.
+Use [WithResponsesServiceTier] to choose how OpenAI processes a Responses API request. Supported values are "auto", "default", "flex", "scale", "priority", "fast", and "ultrafast". If omitted, OpenAI uses its default "auto" behavior. The option applies to both Generate and Stream calls.
 
 ```go
 request := gai.GenerationRequest{
-	Model:   openai.ChatModelGPT5Mini,
-	Dialog:  dialog,
-	Options: gai.GenerationOptions{},
+	Model:  openai.ChatModelGPT5Mini,
+	Dialog: dialog,
+	Options: gai.NewGenerationOptions(
+		gai.WithResponsesServiceTier("priority"),
+	),
 }
-request.Options[gai.ResponsesServiceTierParam] = "priority"
 resp, err := gen.Generate(ctx, request)
 if err != nil {
 	fmt.Printf("Error: %v\n", err)
@@ -459,7 +466,7 @@ client, err := genai.NewClient(ctx, &genai.ClientConfig{
 generator := gai.NewGeminiGenerator(client)
 ```
 
-Cerebras: The Cerebras implementation supports streaming text generation, function tools, and replayable reasoning content. A nil HTTP client and empty base URL use the defaults. The API key is required.
+Cerebras: The Cerebras implementation supports streaming text generation, PNG/JPEG image input, function tools, and replayable reasoning content. A nil HTTP client and empty base URL use the defaults. The API key is required.
 
 ```go
 generator, err := gai.NewCerebrasGenerator(nil, "", "your-api-key")

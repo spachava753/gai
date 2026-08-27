@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -55,6 +56,19 @@ const (
 	// ZaiExtraFieldURL can be set on Image or Video content blocks to pass a remote URL.
 	// For PDFs, set this to a PDF URL on a PDFBlock; Z.AI file inputs require URLs.
 	ZaiExtraFieldURL = "zai_url"
+)
+
+const (
+	// ZaiResponseExtraFieldID stores the completion identifier returned by Z.AI.
+	ZaiResponseExtraFieldID = "zai_id"
+	// ZaiResponseExtraFieldRequestID stores Z.AI's request identifier.
+	ZaiResponseExtraFieldRequestID = "zai_request_id"
+	// ZaiResponseExtraFieldCreated stores the completion's Unix creation timestamp.
+	ZaiResponseExtraFieldCreated = "zai_created"
+	// ZaiResponseExtraFieldModel stores the model reported by Z.AI.
+	ZaiResponseExtraFieldModel = "zai_model"
+	// ZaiResponseExtraFieldWebSearchResults stores top-level Z.AI web-search results.
+	ZaiResponseExtraFieldWebSearchResults = "zai_web_search_results"
 )
 
 // NewZaiGenerator creates a stateless Z.AI generator.
@@ -146,6 +160,7 @@ type zaiGenerationOptions struct {
 	ToolChoice          string
 	StopSequences       []string
 	OutputModalities    []Modality
+	ThinkingBudget      string
 	ThinkingEnabled     bool
 	ClearThinking       bool
 }
@@ -181,6 +196,9 @@ func parseZaiGenerationOptions(values GenerationOptions) (*zaiGenerationOptions,
 		return nil, err
 	}
 	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
+		return nil, err
+	}
+	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
 		return nil, err
 	}
 	if options.ThinkingEnabled, _, err = generationOption[bool](values, ZaiGenerationOptionThinkingEnabled); err != nil {
@@ -501,6 +519,9 @@ func (g *ZaiGenerator) buildRequest(generationRequest GenerationRequest, stream 
 	if err != nil {
 		return zai.PaasV4ChatCompletionsPostReq{}, zai.PaasV4ChatCompletionsPostParams{}, err
 	}
+	if err := validateZaiToolChoice(options.ToolChoice); err != nil {
+		return zai.PaasV4ChatCompletionsPostReq{}, zai.PaasV4ChatCompletionsPostParams{}, err
+	}
 	instructions, err := joinedTextInstructions(generationRequest.Instructions)
 	if err != nil {
 		return zai.PaasV4ChatCompletionsPostReq{}, zai.PaasV4ChatCompletionsPostParams{}, err
@@ -524,6 +545,17 @@ func (g *ZaiGenerator) buildRequest(generationRequest GenerationRequest, stream 
 	return zai.NewChatCompletionTextRequestPaasV4ChatCompletionsPostReq(request), params, nil
 }
 
+func validateZaiToolChoice(choice string) error {
+	switch choice {
+	case "", "none", ToolChoiceAuto:
+		return nil
+	case ToolChoiceToolsRequired:
+		return InvalidToolChoiceErr("Z.AI does not support required tool choice")
+	default:
+		return InvalidToolChoiceErr("Z.AI does not support named tool choice")
+	}
+}
+
 func validateZaiOutputModalities(options *zaiGenerationOptions) error {
 	for _, m := range options.OutputModalities {
 		if m != Text {
@@ -544,6 +576,13 @@ func (g *ZaiGenerator) buildTextRequest(model string, dialog Dialog, instruction
 		Messages: messages,
 		Stream:   zai.NewOptBool(stream),
 		Thinking: zaiThinking(options),
+	}
+	if options.ThinkingBudget != "" {
+		effort := zai.ChatCompletionTextRequestReasoningEffort(options.ThinkingBudget)
+		if err := effort.Validate(); err != nil {
+			return zai.ChatCompletionTextRequest{}, &InvalidParameterErr{Parameter: GenerationOptionThinkingBudget, Reason: err.Error()}
+		}
+		request.ReasoningEffort = zai.NewOptChatCompletionTextRequestReasoningEffort(effort)
 	}
 	includeTools := applyZaiTextOptions(&request, options)
 	if includeTools && len(tools) > 0 {
@@ -568,6 +607,13 @@ func (g *ZaiGenerator) buildVisionRequest(model string, dialog Dialog, instructi
 		Messages: messages,
 		Stream:   zai.NewOptBool(stream),
 		Thinking: zaiThinking(options),
+	}
+	if options.ThinkingBudget != "" {
+		effort := zai.ChatCompletionVisionRequestReasoningEffort(options.ThinkingBudget)
+		if err := effort.Validate(); err != nil {
+			return zai.ChatCompletionVisionRequest{}, &InvalidParameterErr{Parameter: GenerationOptionThinkingBudget, Reason: err.Error()}
+		}
+		request.ReasoningEffort = zai.NewOptChatCompletionVisionRequestReasoningEffort(effort)
 	}
 	includeTools := applyZaiVisionOptions(&request, options)
 	if includeTools && len(tools) > 0 {
@@ -607,10 +653,7 @@ func applyZaiTextOptions(request *zai.ChatCompletionTextRequest, options *zaiGen
 		switch options.ToolChoice {
 		case "none":
 			includeTools = false
-		case ToolChoiceAuto, ToolChoiceToolsRequired:
-			request.ToolChoice = zai.NewOptChatCompletionTextRequestToolChoice(zai.ChatCompletionTextRequestToolChoiceAuto)
-		default:
-			// The generated Z.AI schema currently only permits "auto" for tool_choice.
+		case ToolChoiceAuto:
 			request.ToolChoice = zai.NewOptChatCompletionTextRequestToolChoice(zai.ChatCompletionTextRequestToolChoiceAuto)
 		}
 	}
@@ -635,13 +678,58 @@ func applyZaiVisionOptions(request *zai.ChatCompletionVisionRequest, options *za
 		switch options.ToolChoice {
 		case "none":
 			includeTools = false
-		case ToolChoiceAuto, ToolChoiceToolsRequired:
-			request.ToolChoice = zai.NewOptChatCompletionVisionRequestToolChoice(zai.ChatCompletionVisionRequestToolChoiceAuto)
-		default:
+		case ToolChoiceAuto:
 			request.ToolChoice = zai.NewOptChatCompletionVisionRequestToolChoice(zai.ChatCompletionVisionRequestToolChoiceAuto)
 		}
 	}
 	return includeTools
+}
+
+func zaiResponseExtraFields(id, requestID, model zai.OptString, created zai.OptInt) map[string]interface{} {
+	extraFields := make(map[string]interface{})
+	if value, ok := id.Get(); ok {
+		extraFields[ZaiResponseExtraFieldID] = value
+	}
+	if value, ok := requestID.Get(); ok {
+		extraFields[ZaiResponseExtraFieldRequestID] = value
+	}
+	if value, ok := created.Get(); ok {
+		extraFields[ZaiResponseExtraFieldCreated] = value
+	}
+	if value, ok := model.Get(); ok {
+		extraFields[ZaiResponseExtraFieldModel] = value
+	}
+	return extraFields
+}
+
+func zaiWebSearchResults(results []zai.WebSearchObjectResponse) []map[string]interface{} {
+	converted := make([]map[string]interface{}, 0, len(results))
+	for _, result := range results {
+		value := make(map[string]interface{})
+		if field, ok := result.Title.Get(); ok {
+			value["title"] = field
+		}
+		if field, ok := result.Content.Get(); ok {
+			value["content"] = field
+		}
+		if field, ok := result.Link.Get(); ok {
+			value["link"] = field
+		}
+		if field, ok := result.Media.Get(); ok {
+			value["media"] = field
+		}
+		if field, ok := result.Icon.Get(); ok {
+			value["icon"] = field
+		}
+		if field, ok := result.Refer.Get(); ok {
+			value["refer"] = field
+		}
+		if field, ok := result.PublishDate.Get(); ok {
+			value["publish_date"] = field
+		}
+		converted = append(converted, value)
+	}
+	return converted
 }
 
 // Generate implements Generator
@@ -670,7 +758,13 @@ func (g *ZaiGenerator) Generate(ctx context.Context, generationRequest Generatio
 		return Response{}, fmt.Errorf("zai: expected JSON completion response, got %T", rawResponse)
 	}
 
-	result := Response{UsageMetadata: make(Metadata)}
+	result := Response{
+		UsageMetadata: make(Metadata),
+		ExtraFields:   zaiResponseExtraFields(resp.ID, resp.RequestID, resp.Model, resp.Created),
+	}
+	if len(resp.WebSearch) > 0 {
+		result.ExtraFields[ZaiResponseExtraFieldWebSearchResults] = zaiWebSearchResults(resp.WebSearch)
+	}
 	if usage, ok := resp.Usage.Get(); ok {
 		addZaiUsageMetadata(result.UsageMetadata, zaiUsage{
 			PromptTokens:     optFloat64(usage.PromptTokens),
@@ -709,23 +803,9 @@ func (g *ZaiGenerator) Generate(ctx context.Context, generationRequest Generatio
 	}
 
 	if len(resp.Choices) > 0 {
-		reason := resp.Choices[0].FinishReason.Or("")
-		switch reason {
-		case "stop":
-			result.FinishReason = EndTurn
-		case "length", "model_context_window_exceeded":
-			result.FinishReason = MaxGenerationLimit
-			return result, ErrMaxGenerationLimit
-		case "tool_calls":
-			result.FinishReason = ToolUse
-		case "content_filter":
-			result.FinishReason = ContentPolicyViolation
-			return result, ContentPolicyErr("content filtered")
-		case "sensitive":
-			result.FinishReason = ContentPolicyViolation
-			return result, ContentPolicyErr("content flagged as sensitive")
-		default:
-			result.FinishReason = Unknown
+		result.FinishReason, err = zaiFinishReason(resp.Choices[0].FinishReason.Or(""))
+		if err != nil {
+			return result, err
 		}
 	}
 	if hasToolCalls && result.FinishReason == EndTurn {
@@ -766,6 +846,7 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 
 		var finalUsage zai.ChatCompletionStreamUsage
 		var hasFinalUsage bool
+		responseExtraFields := make(map[string]interface{})
 		for {
 			event, err := stream.Next(ctx)
 			if err != nil {
@@ -784,15 +865,14 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 				finalUsage = usage
 				hasFinalUsage = true
 			}
+			chunkExtraFields := zaiResponseExtraFields(chunk.ID, chunk.RequestID, chunk.Model, chunk.Created)
+			maps.Copy(responseExtraFields, chunkExtraFields)
 			for _, choice := range chunk.Choices {
-				finishReason := choice.FinishReason.Or("")
-				switch finishReason {
-				case "length", "model_context_window_exceeded":
-					yield(StreamChunk{Err: ErrMaxGenerationLimit})
-					return
-				case "content_filter", "sensitive":
-					yield(StreamChunk{Err: ContentPolicyErr("content filtered")})
-					return
+				if finishReason := choice.FinishReason.Or(""); finishReason != "" {
+					if _, finishErr := zaiFinishReason(finishReason); finishErr != nil {
+						yield(StreamChunk{Err: finishErr})
+						return
+					}
 				}
 
 				if refusal := choice.Delta.Refusal.Or(""); refusal != "" {
@@ -801,7 +881,11 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 				}
 
 				if reasoning := choice.Delta.ReasoningContent.Or(""); reasoning != "" {
-					if !yield(StreamChunk{Block: zaiThinkingBlock(reasoning), CandidatesIndex: choice.Index}) {
+					if !yield(StreamChunk{
+						Block:               zaiThinkingBlock(reasoning),
+						ResponseExtraFields: chunkExtraFields,
+						CandidatesIndex:     choice.Index,
+					}) {
 						return
 					}
 				}
@@ -813,7 +897,8 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 							MimeType:     "text/plain",
 							Content:      Str(content),
 						},
-						CandidatesIndex: choice.Index,
+						ResponseExtraFields: chunkExtraFields,
+						CandidatesIndex:     choice.Index,
 					}) {
 						return
 					}
@@ -828,7 +913,8 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 								MimeType:     "text/plain",
 								Content:      Str(name),
 							},
-							CandidatesIndex: choice.Index,
+							ResponseExtraFields: chunkExtraFields,
+							CandidatesIndex:     choice.Index,
 						}) {
 							return
 						}
@@ -836,13 +922,13 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 					if arguments := tc.Function.Arguments.Or(""); arguments != "" {
 						if !yield(StreamChunk{
 							Block: Block{
-								ID:           tc.ID.Or(""),
 								BlockType:    ToolCall,
 								ModalityType: Text,
 								MimeType:     "text/plain",
 								Content:      Str(arguments),
 							},
-							CandidatesIndex: choice.Index,
+							ResponseExtraFields: chunkExtraFields,
+							CandidatesIndex:     choice.Index,
 						}) {
 							return
 						}
@@ -851,21 +937,52 @@ func (g *ZaiGenerator) Stream(ctx context.Context, generationRequest GenerationR
 			}
 		}
 
+		metadata := make(Metadata)
 		if hasFinalUsage {
 			var cachedTokens float64
 			if details, ok := finalUsage.PromptTokensDetails.Get(); ok {
 				cachedTokens = optFloat64(details.CachedTokens)
 			}
-			metadata := make(Metadata)
 			addZaiUsageMetadata(metadata, zaiUsage{
 				PromptTokens:     optFloat64(finalUsage.PromptTokens),
 				CompletionTokens: optFloat64(finalUsage.CompletionTokens),
 				CachedTokens:     cachedTokens,
 			})
-			if len(metadata) > 0 {
-				yield(StreamChunk{Block: MetadataBlock(metadata), CandidatesIndex: 0})
-			}
 		}
+		terminalBlock := SeparatorBlock()
+		if len(metadata) > 0 {
+			terminalBlock = MetadataBlock(metadata)
+		}
+		if len(metadata) > 0 || len(responseExtraFields) > 0 {
+			yield(StreamChunk{
+				Block:               terminalBlock,
+				ResponseExtraFields: responseExtraFields,
+				CandidatesIndex:     0,
+			})
+		}
+	}
+}
+
+func zaiFinishReason(reason string) (FinishReason, error) {
+	switch reason {
+	case "stop":
+		return EndTurn, nil
+	case "tool_calls":
+		return ToolUse, nil
+	case "length", "model_context_window_exceeded":
+		return MaxGenerationLimit, ErrMaxGenerationLimit
+	case "content_filter":
+		return ContentPolicyViolation, ContentPolicyErr("content filtered")
+	case "sensitive":
+		return ContentPolicyViolation, ContentPolicyErr("content flagged as sensitive")
+	case "network_error":
+		return Unknown, &ApiErr{
+			Provider: ProviderZAI,
+			Kind:     APIErrorKindServiceUnavailable,
+			Message:  "generation stopped because Z.AI reported a network error",
+		}
+	default:
+		return Unknown, nil
 	}
 }
 
@@ -958,16 +1075,22 @@ func decodeZaiToolCallArguments(raw json.RawMessage, params *map[string]any) err
 }
 
 func mapZAIError(err error) error {
-	var statusErr *zai.ErrorStatusCode
+	var statusErr *zai.ErrorResponseStatusCode
 	if !errors.As(err, &statusErr) {
 		return err
 	}
 	rawBody, _ := json.Marshal(statusErr.Response)
+	message := ""
+	if detail, ok := statusErr.Response.GetError(); ok {
+		message = detail.Message
+	} else if envelope, ok := statusErr.Response.GetErrorEnvelope(); ok {
+		message = envelope.Error.Message
+	}
 	return &ApiErr{
 		Provider:   ProviderZAI,
 		Kind:       classifyHTTPStatus(statusErr.StatusCode),
 		StatusCode: statusErr.StatusCode,
-		Message:    statusErr.Response.Message,
+		Message:    message,
 		RawBody:    string(rawBody),
 		Cause:      err,
 	}

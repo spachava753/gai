@@ -5,7 +5,7 @@ package zai
 // setDefaults set default value of fields.
 func (s *ChatCompletionTextRequest) setDefaults() {
 	{
-		val := ChatCompletionTextRequestModel("glm-5.1")
+		val := ChatCompletionTextRequestModel("glm-5.3")
 		s.Model = val
 	}
 	{
@@ -73,7 +73,7 @@ func (s *ChatCompletionTextRequestResponseFormat) setDefaults() {
 // setDefaults set default value of fields.
 func (s *ChatCompletionVisionRequest) setDefaults() {
 	{
-		val := ChatCompletionVisionRequestModel("glm-5v-turbo")
+		val := ChatCompletionVisionRequestModel("glm-5.3-flash")
 		s.Model = val
 	}
 	{

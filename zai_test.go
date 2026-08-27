@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -67,16 +68,23 @@ func TestZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
 			return
 		}
 		var request struct {
-			Stream bool `json:"stream"`
+			Model           string `json:"model"`
+			Stream          bool   `json:"stream"`
+			ToolStream      bool   `json:"tool_stream"`
+			ReasoningEffort string `json:"reasoning_effort"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || !request.Stream {
 			http.Error(w, "expected streaming request", http.StatusBadRequest)
 			return
 		}
+		if request.Model != "glm-5.3" || !request.ToolStream || request.ReasoningEffort != "high" {
+			http.Error(w, "missing current Z.AI request fields", http.StatusBadRequest)
+			return
+		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(
-			"data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n" +
+			"data: {\"id\":\"completion_1\",\"request_id\":\"request_1\",\"created\":42,\"model\":\"glm-5.3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n" +
 				"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"}}]}\n\n" +
 				"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"calculate\",\"arguments\":\"{\\\"x\\\":1}\"}}]}}]}\n\n" +
 				"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":1}}}\n\n" +
@@ -89,13 +97,22 @@ func TestZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
 
 	var thinking, content string
 	var toolCall string
+	var toolBlocks []Block
 	var usage map[string]int
+	responseExtraFields := make(map[string]interface{})
 	for chunk := range generator.Stream(t.Context(), GenerationRequest{
-		Model:  "glm-5",
+		Model:  "glm-5.3",
 		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("calculate")}}},
+		Tools:  []Tool{{Name: "calculate"}},
+		Options: NewGenerationOptions(
+			WithThinkingBudget("high"),
+		),
 	}) {
 		if chunk.Err != nil {
 			t.Fatalf("stream returned error: %v", chunk.Err)
+		}
+		for key, value := range chunk.ResponseExtraFields {
+			responseExtraFields[key] = value
 		}
 		switch chunk.Block.BlockType {
 		case Thinking:
@@ -104,6 +121,7 @@ func TestZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
 			content += chunk.Block.Content.String()
 		case ToolCall:
 			toolCall += chunk.Block.Content.String()
+			toolBlocks = append(toolBlocks, chunk.Block)
 		case MetadataBlockType:
 			if err := json.Unmarshal([]byte(chunk.Block.Content.String()), &usage); err != nil {
 				t.Fatalf("decode usage metadata: %v", err)
@@ -117,8 +135,28 @@ func TestZaiGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	if toolCall != `calculate{"x":1}` {
 		t.Fatalf("tool call chunks = %q", toolCall)
 	}
+	compressed, err := compressStreamingBlocks(toolBlocks)
+	if err != nil {
+		t.Fatalf("assemble streamed tool call: %v", err)
+	}
+	if len(compressed) != 1 || compressed[0].ID != "call_1" {
+		t.Fatalf("assembled tool blocks = %+v", compressed)
+	}
+	var call ToolCallInput
+	if err := json.Unmarshal([]byte(compressed[0].Content.String()), &call); err != nil {
+		t.Fatalf("decode streamed tool call: %v", err)
+	}
+	if call.Name != "calculate" || call.Parameters["x"] != float64(1) {
+		t.Fatalf("streamed tool call = %+v", call)
+	}
 	if usage[UsageMetricInputTokens] != 3 || usage[UsageMetricGenerationTokens] != 2 || usage[UsageMetricCacheReadTokens] != 1 {
 		t.Fatalf("usage metadata = %v", usage)
+	}
+	if responseExtraFields[ZaiResponseExtraFieldID] != "completion_1" ||
+		responseExtraFields[ZaiResponseExtraFieldRequestID] != "request_1" ||
+		responseExtraFields[ZaiResponseExtraFieldCreated] != 42 ||
+		responseExtraFields[ZaiResponseExtraFieldModel] != "glm-5.3" {
+		t.Fatalf("response extra fields = %v", responseExtraFields)
 	}
 }
 
@@ -132,7 +170,7 @@ func TestZaiGeneratorUsesGeneratedJSONClient(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"completion_1","choices":[{"index":0,"message":{"role":"assistant","content":"answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`))
+		_, _ = w.Write([]byte(`{"id":"completion_1","request_id":"request_1","created":42,"model":"glm-5","choices":[{"index":0,"message":{"role":"assistant","content":"answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5},"web_search":[{"title":"Result","content":"Summary","link":"https://example.com","media":"Example","refer":"1","publish_date":"2026-08-27"}]}`))
 	}))
 	defer server.Close()
 
@@ -152,6 +190,78 @@ func TestZaiGeneratorUsesGeneratedJSONClient(t *testing.T) {
 	}
 	if response.UsageMetadata[UsageMetricInputTokens] != 3 || response.UsageMetadata[UsageMetricGenerationTokens] != 2 {
 		t.Fatalf("usage metadata = %v", response.UsageMetadata)
+	}
+	if response.ExtraFields[ZaiResponseExtraFieldID] != "completion_1" ||
+		response.ExtraFields[ZaiResponseExtraFieldRequestID] != "request_1" ||
+		response.ExtraFields[ZaiResponseExtraFieldCreated] != 42 ||
+		response.ExtraFields[ZaiResponseExtraFieldModel] != "glm-5" {
+		t.Fatalf("response extra fields = %v", response.ExtraFields)
+	}
+	searchResults, ok := response.ExtraFields[ZaiResponseExtraFieldWebSearchResults].([]map[string]interface{})
+	if !ok || len(searchResults) != 1 || searchResults[0]["title"] != "Result" ||
+		searchResults[0]["link"] != "https://example.com" || searchResults[0]["publish_date"] != "2026-08-27" {
+		t.Fatalf("web search results = %#v", response.ExtraFields[ZaiResponseExtraFieldWebSearchResults])
+	}
+}
+
+func TestZaiGeneratorMapsGeneratedErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "direct numeric code", body: `{"code":1113,"message":"quota exceeded"}`},
+		{name: "envelope string code", body: `{"error":{"code":"1214","message":"invalid parameter"}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			_, err := newZaiTestGenerator(t, server).Generate(t.Context(), GenerationRequest{
+				Model:  "glm-5.3",
+				Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
+			})
+			var apiErr *ApiErr
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("error = %T %v, want ApiErr", err, err)
+			}
+			if apiErr.Provider != ProviderZAI || apiErr.Kind != APIErrorKindRateLimit ||
+				apiErr.StatusCode != http.StatusTooManyRequests || apiErr.Message == "" {
+				t.Fatalf("API error = %+v", apiErr)
+			}
+		})
+	}
+}
+
+func TestZaiFinishReasonNetworkError(t *testing.T) {
+	finishReason, err := zaiFinishReason("network_error")
+	var apiErr *ApiErr
+	if finishReason != Unknown || !errors.As(err, &apiErr) {
+		t.Fatalf("zaiFinishReason() = %v, %T %v; want Unknown, ApiErr", finishReason, err, err)
+	}
+	if apiErr.Provider != ProviderZAI || apiErr.Kind != APIErrorKindServiceUnavailable || !apiErr.Retryable() {
+		t.Fatalf("API error = %+v", apiErr)
+	}
+}
+
+func TestZaiRejectsUnsupportedToolChoice(t *testing.T) {
+	for _, choice := range []string{ToolChoiceToolsRequired, "calculate"} {
+		t.Run(choice, func(t *testing.T) {
+			_, _, err := (&ZaiGenerator{}).buildRequest(GenerationRequest{
+				Model:   "glm-5.3",
+				Dialog:  Dialog{{Role: User, Blocks: []Block{TextBlock("calculate")}}},
+				Tools:   []Tool{{Name: "calculate"}},
+				Options: NewGenerationOptions(WithToolChoice(choice)),
+			}, false)
+			var invalidChoice InvalidToolChoiceErr
+			if !errors.As(err, &invalidChoice) {
+				t.Fatalf("error = %T %v, want InvalidToolChoiceErr", err, err)
+			}
+		})
 	}
 }
 
@@ -405,7 +515,7 @@ Only output the price, like:
 			Instructions: SystemMessage(TextBlock(instructions)),
 			Dialog:       dialog,
 			Tools:        []Tool{tickerTool},
-			Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
+			Options:      NewGenerationOptions(WithToolChoice(ToolChoiceAuto)),
 		}
 		// Force the tool call
 		resp, err := gen.Generate(context.Background(), request)
@@ -498,7 +608,7 @@ When the user asks for weather and stock information together, call both tools i
 			Instructions: SystemMessage(TextBlock(instructions)),
 			Dialog:       dialog,
 			Tools:        []Tool{weatherTool, stockTool},
-			Options:      NewGenerationOptions(WithToolChoice(ToolChoiceToolsRequired)),
+			Options:      NewGenerationOptions(WithToolChoice(ToolChoiceAuto)),
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -614,7 +724,7 @@ When the user asks for weather and stock information together, call both tools i
 			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
 			Dialog:       dialog,
 			Tools:        []Tool{calcTool},
-			Options:      NewGenerationOptions(WithToolChoice(ToolChoiceToolsRequired)),
+			Options:      NewGenerationOptions(WithToolChoice(ToolChoiceAuto)),
 		}) {
 			if chunk.Err != nil {
 				t.Fatalf("stream returned error: %v", chunk.Err)

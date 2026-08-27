@@ -124,8 +124,29 @@ const ResponsesPromptCacheKeyParam = "responses_prompt_cache_key"
 
 // ResponsesServiceTierParam is a GenerationOptions key for the OpenAI
 // Responses API service_tier request field. Its value must be one of "auto", "default",
-// "flex", "scale", or "priority".
+// "flex", "scale", "priority", "fast", or "ultrafast".
 const ResponsesServiceTierParam = "responses_service_tier"
+
+// WithResponsesThoughtSummaryDetail sets the OpenAI Responses reasoning summary detail level.
+func WithResponsesThoughtSummaryDetail(value string) GenerationOption {
+	return func(options GenerationOptions) {
+		options[ResponsesThoughtSummaryDetailParam] = value
+	}
+}
+
+// WithResponsesPromptCacheKey sets the OpenAI Responses prompt cache routing key.
+func WithResponsesPromptCacheKey(value string) GenerationOption {
+	return func(options GenerationOptions) {
+		options[ResponsesPromptCacheKeyParam] = value
+	}
+}
+
+// WithResponsesServiceTier sets the OpenAI Responses processing tier.
+func WithResponsesServiceTier(value string) GenerationOption {
+	return func(options GenerationOptions) {
+		options[ResponsesServiceTierParam] = value
+	}
+}
 
 // ResponsesExtraFieldReasoningID is the key used in Block.ExtraFields for Thinking blocks
 // to store the reasoning item's unique ID from the Responses API. This is needed to reconstruct
@@ -350,10 +371,12 @@ func parseResponsesGenerationOptions(values GenerationOptions) (*responsesGenera
 			responses.ResponseNewParamsServiceTierDefault,
 			responses.ResponseNewParamsServiceTierFlex,
 			responses.ResponseNewParamsServiceTierScale,
-			responses.ResponseNewParamsServiceTierPriority:
+			responses.ResponseNewParamsServiceTierPriority,
+			responses.ResponseNewParamsServiceTierFast,
+			responses.ResponseNewParamsServiceTierUltrafast:
 			options.ServiceTier = &tier
 		default:
-			return nil, &InvalidParameterErr{Parameter: ResponsesServiceTierParam, Reason: fmt.Sprintf("%q must be one of auto, default, flex, scale, or priority", tier)}
+			return nil, &InvalidParameterErr{Parameter: ResponsesServiceTierParam, Reason: fmt.Sprintf("%q must be one of auto, default, flex, scale, priority, fast, or ultrafast", tier)}
 		}
 	}
 	if value, exists := values[ResponsesThoughtSummaryDetailParam]; exists {
@@ -366,7 +389,12 @@ func parseResponsesGenerationOptions(values GenerationOptions) (*responsesGenera
 		default:
 			return nil, &InvalidParameterErr{Parameter: ResponsesThoughtSummaryDetailParam, Reason: fmt.Sprintf("must be a string, got %T", value)}
 		}
-		options.ThoughtSummary = &summary
+		switch string(summary) {
+		case "auto", "concise", "detailed":
+			options.ThoughtSummary = &summary
+		default:
+			return nil, &InvalidParameterErr{Parameter: ResponsesThoughtSummaryDetailParam, Reason: fmt.Sprintf("%q must be one of auto, concise, or detailed", summary)}
+		}
 	}
 	return options, nil
 }

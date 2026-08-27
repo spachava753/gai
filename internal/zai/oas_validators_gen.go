@@ -371,6 +371,24 @@ func (s *ChatCompletionTextRequest) Validate() error {
 		})
 	}
 	if err := func() error {
+		if value, ok := s.ReasoningEffort.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "reasoning_effort",
+			Error: err,
+		})
+	}
+	if err := func() error {
 		if value, ok := s.Temperature.Get(); ok {
 			if err := func() error {
 				if err := (validate.Float{
@@ -818,6 +836,10 @@ func (s ChatCompletionTextRequestMessagesItem3Role) Validate() error {
 
 func (s ChatCompletionTextRequestModel) Validate() error {
 	switch s {
+	case "glm-5.3":
+		return nil
+	case "glm-5.2":
+		return nil
 	case "glm-5.1":
 		return nil
 	case "glm-5-turbo":
@@ -843,6 +865,27 @@ func (s ChatCompletionTextRequestModel) Validate() error {
 	case "glm-4.5-flash":
 		return nil
 	case "glm-4-32b-0414-128k":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s ChatCompletionTextRequestReasoningEffort) Validate() error {
+	switch s {
+	case "max":
+		return nil
+	case "xhigh":
+		return nil
+	case "high":
+		return nil
+	case "medium":
+		return nil
+	case "low":
+		return nil
+	case "minimal":
+		return nil
+	case "none":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
@@ -982,6 +1025,24 @@ func (s *ChatCompletionVisionRequest) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "thinking",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.ReasoningEffort.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "reasoning_effort",
 			Error: err,
 		})
 	}
@@ -1359,6 +1420,8 @@ func (s ChatCompletionVisionRequestMessagesItem2Role) Validate() error {
 
 func (s ChatCompletionVisionRequestModel) Validate() error {
 	switch s {
+	case "glm-5.3-flash":
+		return nil
 	case "glm-5v-turbo":
 		return nil
 	case "glm-4.6v":
@@ -1370,6 +1433,19 @@ func (s ChatCompletionVisionRequestModel) Validate() error {
 	case "glm-4.6v-flashx":
 		return nil
 	case "glm-4.5v":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s ChatCompletionVisionRequestReasoningEffort) Validate() error {
+	switch s {
+	case "max":
+		return nil
+	case "high":
+		return nil
+	case "low":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

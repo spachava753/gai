@@ -22,18 +22,19 @@ import (
 //   - For MetadataBlockType blocks: usage metrics (always the last non-boundary chunk)
 //
 // MessageExtraFields carries message-level metadata discovered during streaming.
-// The StreamingAdapter merges these across chunks and stores them on the final
-// Response candidate Message.ExtraFields.
+// ResponseExtraFields carries invocation-level provider metadata. The StreamingAdapter
+// merges both maps across chunks and rejects conflicting values.
 //
 // CandidatesIndex indicates which candidate this chunk belongs to when N>1 is used.
 // Currently only CandidatesIndex=0 is supported by the StreamingAdapter.
 // Err reports a terminal stream failure. When Err is non-nil, the other fields
 // are ignored and the producer must stop the sequence after yielding this chunk.
 type StreamChunk struct {
-	Block              Block                  `json:"block" yaml:"block"`
-	MessageExtraFields map[string]interface{} `json:"message_extra_fields,omitempty" yaml:"message_extra_fields,omitempty"`
-	CandidatesIndex    int                    `json:"candidates_index" yaml:"candidates_index"`
-	Err                error                  `json:"-" yaml:"-"`
+	Block               Block                  `json:"block" yaml:"block"`
+	MessageExtraFields  map[string]interface{} `json:"message_extra_fields,omitempty" yaml:"message_extra_fields,omitempty"`
+	ResponseExtraFields map[string]interface{} `json:"response_extra_fields,omitempty" yaml:"response_extra_fields,omitempty"`
+	CandidatesIndex     int                    `json:"candidates_index" yaml:"candidates_index"`
+	Err                 error                  `json:"-" yaml:"-"`
 }
 
 // StreamingGenerator is an interface for generators that support streaming responses.
@@ -383,6 +384,7 @@ func (s *StreamingAdapter) Generate(ctx context.Context, request GenerationReque
 	// Stream and accumulate blocks
 	var blocks []Block
 	var messageExtraFields map[string]interface{}
+	var responseExtraFields map[string]interface{}
 	for chunk := range s.S.Stream(ctx, request) {
 		if chunk.Err != nil {
 			return Response{}, chunk.Err
@@ -399,6 +401,17 @@ func (s *StreamingAdapter) Generate(ctx context.Context, request GenerationReque
 					return Response{}, fmt.Errorf("conflicting message extra field %q in streaming output", k)
 				}
 				messageExtraFields[k] = v
+			}
+		}
+		if len(chunk.ResponseExtraFields) > 0 {
+			if responseExtraFields == nil {
+				responseExtraFields = make(map[string]interface{})
+			}
+			for k, v := range chunk.ResponseExtraFields {
+				if existing, ok := responseExtraFields[k]; ok && !reflect.DeepEqual(existing, v) {
+					return Response{}, fmt.Errorf("conflicting response extra field %q in streaming output", k)
+				}
+				responseExtraFields[k] = v
 			}
 		}
 		blocks = append(blocks, chunk.Block)
@@ -450,6 +463,7 @@ func (s *StreamingAdapter) Generate(ctx context.Context, request GenerationReque
 		}},
 		FinishReason:  finishReason,
 		UsageMetadata: usageMetadata,
+		ExtraFields:   responseExtraFields,
 	}, nil
 }
 

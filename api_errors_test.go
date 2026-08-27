@@ -404,12 +404,13 @@ func TestResponsesErrorEventClassification(t *testing.T) {
 }
 
 func TestZAIErrorMapping(t *testing.T) {
-	cause := &zai.ErrorStatusCode{
+	detail := zai.Error{
+		Code:    zai.NewInt32ErrorCode(1113),
+		Message: "Quota exceeded",
+	}
+	cause := &zai.ErrorResponseStatusCode{
 		StatusCode: http.StatusTooManyRequests,
-		Response: zai.Error{
-			Code:    1113,
-			Message: "Quota exceeded",
-		},
+		Response:   zai.NewErrorErrorResponse(detail),
 	}
 
 	mapped := mapZAIError(cause)
@@ -420,8 +421,8 @@ func TestZAIErrorMapping(t *testing.T) {
 	if apiErr.Kind != APIErrorKindRateLimit {
 		t.Fatalf("Kind = %q, want %q", apiErr.Kind, APIErrorKindRateLimit)
 	}
-	if apiErr.Message != cause.Response.Message {
-		t.Fatalf("Message = %q, want %q", apiErr.Message, cause.Response.Message)
+	if apiErr.Message != detail.Message {
+		t.Fatalf("Message = %q, want %q", apiErr.Message, detail.Message)
 	}
 	if !errors.Is(mapped, cause) {
 		t.Fatalf("errors.Is(%v, %v) = false", mapped, cause)

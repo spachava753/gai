@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -20,6 +21,17 @@ const (
 
 	// DeepSeekGenerationOptionThinkingEnabled controls thinking mode for one request.
 	DeepSeekGenerationOptionThinkingEnabled = "deepseek_thinking_enabled"
+)
+
+const (
+	// DeepSeekResponseExtraFieldID stores the completion identifier returned by DeepSeek.
+	DeepSeekResponseExtraFieldID = "deepseek_id"
+	// DeepSeekResponseExtraFieldModel stores the model reported by DeepSeek.
+	DeepSeekResponseExtraFieldModel = "deepseek_model"
+	// DeepSeekResponseExtraFieldCreated stores the completion's Unix creation timestamp.
+	DeepSeekResponseExtraFieldCreated = "deepseek_created"
+	// DeepSeekResponseExtraFieldSystemFingerprint stores the backend configuration fingerprint.
+	DeepSeekResponseExtraFieldSystemFingerprint = "deepseek_system_fingerprint"
 )
 
 // WithDeepSeekThinking controls thinking mode for one DeepSeek generation request.
@@ -395,6 +407,18 @@ func applyDeepSeekToolChoice(request *deepseek.ChatCompletionRequest, choice str
 	return InvalidToolChoiceErr(fmt.Sprintf("tool %q is not in the request", choice))
 }
 
+func deepSeekResponseExtraFields(id, model string, created int, systemFingerprint string) map[string]interface{} {
+	extraFields := map[string]interface{}{
+		DeepSeekResponseExtraFieldID:      id,
+		DeepSeekResponseExtraFieldModel:   model,
+		DeepSeekResponseExtraFieldCreated: created,
+	}
+	if systemFingerprint != "" {
+		extraFields[DeepSeekResponseExtraFieldSystemFingerprint] = systemFingerprint
+	}
+	return extraFields
+}
+
 // Generate implements Generator.
 func (g *DeepSeekGenerator) Generate(ctx context.Context, generationRequest GenerationRequest) (Response, error) {
 	if g.client == nil {
@@ -419,7 +443,15 @@ func (g *DeepSeekGenerator) Generate(ctx context.Context, generationRequest Gene
 		return Response{}, fmt.Errorf("deepseek: expected JSON completion response, got %T", rawResponse)
 	}
 
-	result := Response{UsageMetadata: make(Metadata)}
+	result := Response{
+		UsageMetadata: make(Metadata),
+		ExtraFields: deepSeekResponseExtraFields(
+			response.ID,
+			response.Model,
+			response.Created,
+			response.SystemFingerprint.Or(""),
+		),
+	}
 	if usage, ok := response.Usage.Get(); ok {
 		addDeepSeekUsageMetadata(result.UsageMetadata, usage)
 	}
@@ -486,6 +518,7 @@ func (g *DeepSeekGenerator) Stream(ctx context.Context, generationRequest Genera
 
 		var finalUsage deepseek.Usage
 		var hasFinalUsage bool
+		responseExtraFields := make(map[string]interface{})
 		for {
 			event, err := stream.Next(ctx)
 			if err != nil {
@@ -504,6 +537,13 @@ func (g *DeepSeekGenerator) Stream(ctx context.Context, generationRequest Genera
 				finalUsage = usage
 				hasFinalUsage = true
 			}
+			chunkExtraFields := deepSeekResponseExtraFields(
+				chunk.ID,
+				chunk.Model,
+				chunk.Created,
+				chunk.SystemFingerprint.Or(""),
+			)
+			maps.Copy(responseExtraFields, chunkExtraFields)
 			for _, choice := range chunk.Choices {
 				if finishReason, ok := choice.FinishReason.Get(); ok {
 					_, finishErr := deepSeekFinishReason(string(finishReason))
@@ -513,12 +553,20 @@ func (g *DeepSeekGenerator) Stream(ctx context.Context, generationRequest Genera
 					}
 				}
 				if reasoning, ok := choice.Delta.ReasoningContent.Get(); ok && reasoning != "" {
-					if !yield(StreamChunk{Block: deepSeekThinkingBlock(reasoning), CandidatesIndex: choice.Index}) {
+					if !yield(StreamChunk{
+						Block:               deepSeekThinkingBlock(reasoning),
+						ResponseExtraFields: chunkExtraFields,
+						CandidatesIndex:     choice.Index,
+					}) {
 						return
 					}
 				}
 				if content, ok := choice.Delta.Content.Get(); ok && content != "" {
-					if !yield(StreamChunk{Block: TextBlock(content), CandidatesIndex: choice.Index}) {
+					if !yield(StreamChunk{
+						Block:               TextBlock(content),
+						ResponseExtraFields: chunkExtraFields,
+						CandidatesIndex:     choice.Index,
+					}) {
 						return
 					}
 				}
@@ -532,7 +580,8 @@ func (g *DeepSeekGenerator) Stream(ctx context.Context, generationRequest Genera
 								MimeType:     "text/plain",
 								Content:      Str(name),
 							},
-							CandidatesIndex: choice.Index,
+							ResponseExtraFields: chunkExtraFields,
+							CandidatesIndex:     choice.Index,
 						}) {
 							return
 						}
@@ -545,7 +594,8 @@ func (g *DeepSeekGenerator) Stream(ctx context.Context, generationRequest Genera
 								MimeType:     "text/plain",
 								Content:      Str(arguments),
 							},
-							CandidatesIndex: choice.Index,
+							ResponseExtraFields: chunkExtraFields,
+							CandidatesIndex:     choice.Index,
 						}) {
 							return
 						}
@@ -553,12 +603,20 @@ func (g *DeepSeekGenerator) Stream(ctx context.Context, generationRequest Genera
 				}
 			}
 		}
+		metadata := make(Metadata)
 		if hasFinalUsage {
-			metadata := make(Metadata)
 			addDeepSeekUsageMetadata(metadata, finalUsage)
-			if len(metadata) > 0 {
-				yield(StreamChunk{Block: MetadataBlock(metadata), CandidatesIndex: 0})
-			}
+		}
+		terminalBlock := SeparatorBlock()
+		if len(metadata) > 0 {
+			terminalBlock = MetadataBlock(metadata)
+		}
+		if len(metadata) > 0 || len(responseExtraFields) > 0 {
+			yield(StreamChunk{
+				Block:               terminalBlock,
+				ResponseExtraFields: responseExtraFields,
+				CandidatesIndex:     0,
+			})
 		}
 	}
 }

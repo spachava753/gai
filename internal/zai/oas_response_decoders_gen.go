@@ -64,7 +64,7 @@ func decodePaasV4ChatCompletionsPostResponse(resp *http.Response) (res PaasV4Cha
 		}
 	}
 	// Convenient error response.
-	defRes, err := func() (res *ErrorStatusCode, err error) {
+	defRes, err := func() (res *ErrorResponseStatusCode, err error) {
 		ct, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 		if err != nil {
 			return res, errors.Wrap(err, "parse media type")
@@ -77,7 +77,7 @@ func decodePaasV4ChatCompletionsPostResponse(resp *http.Response) (res PaasV4Cha
 			}
 			d := jx.DecodeBytes(buf)
 
-			var response Error
+			var response ErrorResponse
 			if err := func() error {
 				if err := response.Decode(d); err != nil {
 					return err
@@ -94,7 +94,7 @@ func decodePaasV4ChatCompletionsPostResponse(resp *http.Response) (res PaasV4Cha
 				}
 				return res, err
 			}
-			return &ErrorStatusCode{
+			return &ErrorResponseStatusCode{
 				StatusCode: resp.StatusCode,
 				Response:   response,
 			}, nil

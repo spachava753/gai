@@ -67,9 +67,42 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        frequency_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+        presence_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+        logit_bias:
+          type: object
+          additionalProperties:
+            type: number
+        logprobs:
+          type: boolean
         max_completion_tokens:
           type: integer
           minimum: 1
+        parallel_tool_calls:
+          type: boolean
+        prediction:
+          $ref: "#/components/schemas/Prediction"
+        prompt_cache_key:
+          type: string
+          maxLength: 1024
+        response_format:
+          $ref: "#/components/schemas/ResponseFormat"
+        seed:
+          type: integer
+        service_tier:
+          $ref: "#/components/schemas/ServiceTier"
+        top_logprobs:
+          type: integer
+          minimum: 0
+          maximum: 20
+        user:
+          type: string
         stop:
           $ref: "#/components/schemas/Stop"
         tools:
@@ -97,6 +130,90 @@ components:
         - medium
         - high
         - none
+    ServiceTier:
+      type: string
+      enum:
+        - priority
+        - default
+        - auto
+        - flex
+    Prediction:
+      type: object
+      required:
+        - type
+        - content
+      properties:
+        type:
+          type: string
+          enum:
+            - content
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                $ref: "#/components/schemas/PredictionTextPart"
+    PredictionTextPart:
+      type: object
+      required:
+        - type
+        - text
+      properties:
+        type:
+          type: string
+          enum:
+            - text
+        text:
+          type: string
+    ResponseFormat:
+      oneOf:
+        - $ref: "#/components/schemas/ResponseFormatText"
+        - $ref: "#/components/schemas/ResponseFormatJSONSchema"
+        - $ref: "#/components/schemas/ResponseFormatJSONObject"
+    ResponseFormatText:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - text
+    ResponseFormatJSONSchema:
+      type: object
+      required:
+        - type
+        - json_schema
+      properties:
+        type:
+          type: string
+          enum:
+            - json_schema
+        json_schema:
+          $ref: "#/components/schemas/JSONSchemaFormat"
+    JSONSchemaFormat:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        schema:
+          type: object
+          additionalProperties: {}
+        strict:
+          type: boolean
+    ResponseFormatJSONObject:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - json_object
     ToolChoice:
       oneOf:
         - $ref: "#/components/schemas/ToolChoiceMode"
@@ -186,6 +303,47 @@ components:
           enum:
             - user
         content:
+          $ref: "#/components/schemas/UserMessageContent"
+    UserMessageContent:
+      oneOf:
+        - type: string
+        - type: array
+          items:
+            $ref: "#/components/schemas/UserContentPart"
+    UserContentPart:
+      oneOf:
+        - $ref: "#/components/schemas/TextContentPart"
+        - $ref: "#/components/schemas/ImageContentPart"
+    TextContentPart:
+      type: object
+      required:
+        - type
+        - text
+      properties:
+        type:
+          type: string
+          enum:
+            - text
+        text:
+          type: string
+    ImageContentPart:
+      type: object
+      required:
+        - type
+        - image_url
+      properties:
+        type:
+          type: string
+          enum:
+            - image_url
+        image_url:
+          $ref: "#/components/schemas/ImageURL"
+    ImageURL:
+      type: object
+      required:
+        - url
+      properties:
+        url:
           type: string
     AssistantMessage:
       type: object
@@ -268,12 +426,24 @@ components:
           type: string
         system_fingerprint:
           type: string
+        service_tier:
+          type: string
+          nullable: true
+        service_tier_used:
+          type: string
+          nullable: true
+          enum:
+            - priority
+            - default
+            - flex
         choices:
           type: array
           items:
             $ref: "#/components/schemas/ChatChoice"
         usage:
           $ref: "#/components/schemas/Usage"
+        time_info:
+          $ref: "#/components/schemas/TimeInfo"
     ChatChoice:
       type: object
       required:
@@ -290,6 +460,8 @@ components:
             - length
             - content_filter
             - tool_calls
+        logprobs:
+          $ref: "#/components/schemas/LogProbs"
         message:
           $ref: "#/components/schemas/ResponseMessage"
     ResponseMessage:
@@ -337,12 +509,24 @@ components:
           type: string
         system_fingerprint:
           type: string
+        service_tier:
+          type: string
+          nullable: true
+        service_tier_used:
+          type: string
+          nullable: true
+          enum:
+            - priority
+            - default
+            - flex
         choices:
           type: array
           items:
             $ref: "#/components/schemas/ChatCompletionChunkChoice"
         usage:
           $ref: "#/components/schemas/Usage"
+        time_info:
+          $ref: "#/components/schemas/TimeInfo"
     ChatCompletionChunkChoice:
       type: object
       required:
@@ -361,6 +545,8 @@ components:
             - length
             - content_filter
             - tool_calls
+        logprobs:
+          $ref: "#/components/schemas/LogProbs"
     ChatCompletionChunkDelta:
       type: object
       properties:
@@ -401,6 +587,9 @@ components:
           type: string
         arguments:
           type: string
+    LogProbs:
+      type: object
+      additionalProperties: {}
     Usage:
       type: object
       properties:
@@ -410,10 +599,25 @@ components:
           type: integer
         total_tokens:
           type: integer
+        image_tokens:
+          type: integer
         prompt_tokens_details:
           $ref: "#/components/schemas/PromptTokensDetails"
         completion_tokens_details:
           $ref: "#/components/schemas/CompletionTokensDetails"
+    TimeInfo:
+      type: object
+      properties:
+        queue_time:
+          type: number
+        prompt_time:
+          type: number
+        completion_time:
+          type: number
+        total_time:
+          type: number
+        created:
+          type: number
     PromptTokensDetails:
       type: object
       properties:

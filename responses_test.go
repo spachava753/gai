@@ -3,18 +3,24 @@ package gai
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
-	"os"
-	"strings"
-	"testing"
 )
 
 func TestResponsesGeneratorBuildParamsServiceTier(t *testing.T) {
 	withServiceTier := func(value any) GenerationOptions {
 		return GenerationOptions{ResponsesServiceTierParam: value}
+	}
+	withServiceTierHelper := func(value string) GenerationOptions {
+		return NewGenerationOptions(WithResponsesServiceTier(value))
 	}
 
 	tests := []struct {
@@ -24,17 +30,19 @@ func TestResponsesGeneratorBuildParamsServiceTier(t *testing.T) {
 		wantErr string
 	}{
 		{name: "unset"},
-		{name: "auto", options: withServiceTier("auto"), want: responses.ResponseNewParamsServiceTierAuto},
-		{name: "default", options: withServiceTier("default"), want: responses.ResponseNewParamsServiceTierDefault},
-		{name: "flex", options: withServiceTier("flex"), want: responses.ResponseNewParamsServiceTierFlex},
-		{name: "scale", options: withServiceTier("scale"), want: responses.ResponseNewParamsServiceTierScale},
-		{name: "priority", options: withServiceTier("priority"), want: responses.ResponseNewParamsServiceTierPriority},
+		{name: "auto", options: withServiceTierHelper("auto"), want: responses.ResponseNewParamsServiceTierAuto},
+		{name: "default", options: withServiceTierHelper("default"), want: responses.ResponseNewParamsServiceTierDefault},
+		{name: "flex", options: withServiceTierHelper("flex"), want: responses.ResponseNewParamsServiceTierFlex},
+		{name: "scale", options: withServiceTierHelper("scale"), want: responses.ResponseNewParamsServiceTierScale},
+		{name: "priority", options: withServiceTierHelper("priority"), want: responses.ResponseNewParamsServiceTierPriority},
+		{name: "fast", options: withServiceTierHelper("fast"), want: responses.ResponseNewParamsServiceTierFast},
+		{name: "ultrafast", options: withServiceTierHelper("ultrafast"), want: responses.ResponseNewParamsServiceTierUltrafast},
 		{
 			name:    "SDK value",
 			options: withServiceTier(responses.ResponseNewParamsServiceTierPriority),
 			want:    responses.ResponseNewParamsServiceTierPriority,
 		},
-		{name: "invalid value", options: withServiceTier("fast"), wantErr: "must be one of"},
+		{name: "invalid value", options: withServiceTier("turbo"), wantErr: "must be one of"},
 		{name: "invalid type", options: withServiceTier(1), wantErr: "must be a string"},
 	}
 
@@ -58,6 +66,48 @@ func TestResponsesGeneratorBuildParamsServiceTier(t *testing.T) {
 				t.Fatalf("ServiceTier = %q, want %q", params.ServiceTier, tt.want)
 			}
 		})
+	}
+}
+
+func TestResponsesProviderOptionHelpers(t *testing.T) {
+	generator := NewResponsesGenerator(nil)
+	params, err := generator.buildParams(nil, GenerationRequest{
+		Model: "gpt-5",
+		Options: NewGenerationOptions(
+			WithThinkingBudget("low"),
+			WithResponsesThoughtSummaryDetail("detailed"),
+			WithResponsesPromptCacheKey("cache-key"),
+			WithResponsesServiceTier("fast"),
+		),
+	})
+	if err != nil {
+		t.Fatalf("buildParams() error = %v", err)
+	}
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatalf("decode params: %v", err)
+	}
+	reasoning, ok := wire["reasoning"].(map[string]any)
+	if !ok || reasoning["effort"] != "low" || reasoning["summary"] != "detailed" {
+		t.Fatalf("reasoning = %#v", wire["reasoning"])
+	}
+	if wire["prompt_cache_key"] != "cache-key" || wire["service_tier"] != "fast" {
+		t.Fatalf("provider options = %#v", wire)
+	}
+
+	_, err = generator.buildParams(nil, GenerationRequest{
+		Model: "gpt-5",
+		Options: GenerationOptions{
+			ResponsesThoughtSummaryDetailParam: "verbose",
+		},
+	})
+	var invalid *InvalidParameterErr
+	if !errors.As(err, &invalid) || invalid.Parameter != ResponsesThoughtSummaryDetailParam {
+		t.Fatalf("invalid summary error = %T %v", err, err)
 	}
 }
 
@@ -179,9 +229,9 @@ func TestResponsesGenerator_Generate_thinking(t *testing.T) {
 	options := NewGenerationOptions(
 		WithThinkingBudget("medium"),
 		WithTemperature(1.0),
+		WithResponsesThoughtSummaryDetail("detailed"),
+		WithResponsesPromptCacheKey("responses-thinking-example:v1"),
 	)
-	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
-	options[ResponsesPromptCacheKeyParam] = "responses-thinking-example:v1"
 	request := GenerationRequest{
 		Model:        openai.ChatModelGPT5,
 		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
@@ -447,8 +497,10 @@ func TestResponsesGenerator_Stream_thinking(t *testing.T) {
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	gen := NewResponsesGenerator(&client.Responses)
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the capital of France? Reply with just the city name.")}}}
-	options := NewGenerationOptions(WithThinkingBudget("low"))
-	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
+	options := NewGenerationOptions(
+		WithThinkingBudget("low"),
+		WithResponsesThoughtSummaryDetail("detailed"),
+	)
 	request := GenerationRequest{
 		Model:        openai.ChatModelGPT5Nano,
 		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),

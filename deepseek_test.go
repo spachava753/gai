@@ -51,6 +51,7 @@ func TestDeepSeekGeneratorUsesGeneratedJSONClient(t *testing.T) {
 			"object":"chat.completion",
 			"created":1,
 			"model":"deepseek-v4-pro",
+			"system_fingerprint":"fp_1",
 			"choices":[{
 				"index":0,
 				"message":{
@@ -126,6 +127,12 @@ func TestDeepSeekGeneratorUsesGeneratedJSONClient(t *testing.T) {
 		response.UsageMetadata[UsageMetricReasoningTokens] != 2 {
 		t.Fatalf("usage metadata = %v", response.UsageMetadata)
 	}
+	if response.ExtraFields[DeepSeekResponseExtraFieldID] != "completion_1" ||
+		response.ExtraFields[DeepSeekResponseExtraFieldModel] != "deepseek-v4-pro" ||
+		response.ExtraFields[DeepSeekResponseExtraFieldCreated] != 1 ||
+		response.ExtraFields[DeepSeekResponseExtraFieldSystemFingerprint] != "fp_1" {
+		t.Fatalf("response extra fields = %v", response.ExtraFields)
+	}
 
 	request := <-requests
 	if request["stream"] != false || request["temperature"] != 0.2 || request["reasoning_effort"] != "max" {
@@ -160,7 +167,7 @@ func TestDeepSeekGeneratorUsesGeneratedSSEClient(t *testing.T) {
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(
-			"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"deepseek-v4-pro\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"thinking\"},\"finish_reason\":null}],\"usage\":null}\n\n" +
+			"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"deepseek-v4-pro\",\"system_fingerprint\":\"fp_1\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"thinking\"},\"finish_reason\":null}],\"usage\":null}\n\n" +
 				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"deepseek-v4-pro\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":null}],\"usage\":null}\n\n" +
 				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"deepseek-v4-pro\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"calculate\",\"arguments\":\"{\\\"x\\\":1}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":null}\n\n" +
 				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"deepseek-v4-pro\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5,\"prompt_cache_hit_tokens\":1,\"prompt_cache_miss_tokens\":2}}\n\n" +
@@ -172,12 +179,16 @@ func TestDeepSeekGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	var thinking, content, toolCall string
 	var toolBlocks []Block
 	var usage map[string]int
+	responseExtraFields := make(map[string]interface{})
 	for chunk := range newDeepSeekTestGenerator(t, server).Stream(t.Context(), GenerationRequest{
 		Model:  "deepseek-v4-pro",
 		Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("calculate")}}},
 	}) {
 		if chunk.Err != nil {
 			t.Fatalf("stream returned error: %v", chunk.Err)
+		}
+		for key, value := range chunk.ResponseExtraFields {
+			responseExtraFields[key] = value
 		}
 		switch chunk.Block.BlockType {
 		case Thinking:
@@ -212,6 +223,12 @@ func TestDeepSeekGeneratorUsesGeneratedSSEClient(t *testing.T) {
 	}
 	if usage[UsageMetricInputTokens] != 3 || usage[UsageMetricGenerationTokens] != 2 || usage[UsageMetricCacheReadTokens] != 1 {
 		t.Fatalf("usage metadata = %v", usage)
+	}
+	if responseExtraFields[DeepSeekResponseExtraFieldID] != "chunk_1" ||
+		responseExtraFields[DeepSeekResponseExtraFieldModel] != "deepseek-v4-pro" ||
+		responseExtraFields[DeepSeekResponseExtraFieldCreated] != 1 ||
+		responseExtraFields[DeepSeekResponseExtraFieldSystemFingerprint] != "fp_1" {
+		t.Fatalf("response extra fields = %v", responseExtraFields)
 	}
 }
 

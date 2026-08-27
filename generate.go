@@ -229,12 +229,14 @@ type Response struct {
 	// FinishReason represents the reason why a Generator stopped generating
 	FinishReason FinishReason `json:"finish_reason" yaml:"finish_reason"`
 
-	// UsageMetadata represents some arbitrary metrics and values that a Generator can return.
-	// The metric UsageMetricInputTokens and UsageMetricGenerationTokens is most commonly returned by an
-	// implementation of a Generator, representing the total input tokens and output tokens consumed, however
-	// it is not guaranteed to have those metrics be present. In addition, a Generator may return additional metrics
-	// specific to the implementation.
+	// UsageMetadata contains common and provider-specific measurements such as
+	// token counts, cost, cache usage, and timing information.
 	UsageMetadata Metadata `json:"usage_metadata,omitempty" yaml:"usage_metadata,omitempty"`
+
+	// ExtraFields contains provider-specific information about the invocation.
+	// Replay-critical candidate and content metadata belongs on Message.ExtraFields
+	// or Block.ExtraFields instead.
+	ExtraFields map[string]interface{} `json:"extra_fields,omitempty" yaml:"extra_fields,omitempty"`
 }
 
 // A Generator accepts a self-contained GenerationRequest and returns a Response or an error.
