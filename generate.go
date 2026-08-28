@@ -315,8 +315,8 @@ type Generator interface {
 // model, instructions, dialog, and tools, but provider behavior can differ for
 // multimodal content.
 //
-// [OpenAiGenerator] counts locally with tiktoken. [AnthropicGenerator] and
-// [GeminiGenerator] call provider token-counting endpoints.
+// [OpenAiGenerator] counts locally with tiktoken. [AnthropicGenerator],
+// [GeminiGenerator], and [ZaiGenerator] call provider token-counting endpoints.
 type TokenCounter interface {
 	// Count returns the provider's input-token count for request. The context can
 	// cancel implementations that perform a remote call.
