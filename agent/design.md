@@ -1,12 +1,12 @@
 # Agent package design
 
-Status: Draft for discussion
+Status: Implemented
 
 ## Summary
 
-The `agent` package will provide a reusable loop for running tool-using Agents on top of `gai`. It will send a complete `gai.GenerationRequest`, receive one assistant response, run requested tools, append tool results, and continue until the model or a hook stops.
+The `agent` package provides a reusable loop for running tool-using Agents on top of `gai`. It sends a complete `gai.GenerationRequest`, receives one assistant response, runs requested tools, appends tool results, and continues until the model or a hook stops.
 
-The package will use `gai` values directly. It will not define competing message, block, response, finish-reason, option, usage, tool-schema, or stream-chunk types.
+The package uses `gai` values directly. It does not define competing message, block, response, finish-reason, option, usage, tool-schema, or stream-chunk types.
 
 The main rule is:
 
@@ -31,7 +31,7 @@ An Agent is fixed configuration and behavior, not a session. A run receives an a
 
 ## Non-goals
 
-The initial package will not provide:
+The package does not provide:
 
 - session identity, persistence, databases, or a global session manager;
 - ACP, HTTP, CLI, GUI, JSON-RPC, or other frontend protocols;
@@ -72,13 +72,13 @@ flowchart LR
 
 `agent` imports the root `github.com/spachava753/gai` package and the Go standard library. It does not import provider SDKs, generated provider clients, persistence packages, frontend protocols, or application configuration.
 
-A future repository layout may include:
+The current packages and likely additions are:
 
 ```text
 agent/              Public agent loop
-agent/agenttest/    Scripted generators, observers, hooks, and tool fixtures
+agent/agenttest/    Scripted generators and recording observers
 agent/harness/      Possible future sessions, storage, and crash recovery
-adapter/mcp/        MCP definitions and calls adapted to agent.Tool
+adapter/mcp/        Possible future MCP adaptation for agent.Tool
 ```
 
 Package boundaries are sufficient. A separate module is unnecessary unless independent versioning or dependency weight creates a concrete need.
@@ -113,13 +113,13 @@ The actual declarations live in package `gai`; the package name is included here
 
 The request already contains the model, system `Message`, dialog, tools for that call, and map-backed options. The agent must not mutate a generator to install instructions or tools.
 
-`gai.ToolCallInput` is currently encoded in a `gai.ToolCall` block and stores decoded parameters as `map[string]any`. Until GAI exposes a raw-argument tool-call value, agent events and handlers will carry both the original block and decoded input.
+`gai.ToolCallInput` is currently encoded in a `gai.ToolCall` block and stores decoded parameters as `map[string]any`. Until GAI exposes a raw-argument tool-call value, agent events and handlers carry both the original block and decoded input.
 
 ## Who owns what
 
 ### Agent
 
-An `Agent` is an immutable definition containing:
+An `Agent` is a reusable definition containing:
 
 - a `gai.Generator`;
 - a model identifier;
@@ -127,7 +127,7 @@ An `Agent` is an immutable definition containing:
 - executable tools;
 - optional context and hook behavior.
 
-Construction validates and copies these values. It never registers tools on the generator. The tool set remains fixed for the lifetime of the Agent. One Agent may run for several callers at the same time when its generator, hooks, and tool handlers are safe for concurrent use.
+Construction validates these values and then borrows them for the Agent's lifetime. The caller must not change referenced configuration while the Agent or any run can use it. The constructor never registers tools on the generator. The tool set remains fixed for the lifetime of the Agent. One Agent may run for several callers at the same time when callers leave its configuration unchanged and its generator, hooks, and tool handlers support concurrent use.
 
 ### Run
 
@@ -162,9 +162,9 @@ flowchart LR
     Event -->|Saved by observer| History
 ```
 
-## Proposed API
+## Core API
 
-The first implementation should use an API close to this shape:
+The implementation uses these core types:
 
 ```go
 package agent
@@ -185,7 +185,6 @@ type Config struct {
     AfterGeneration  AfterGenerationHook
     BeforeTool       BeforeToolHook
     AfterTool        AfterToolHook
-    ContextWindow    uint
 }
 
 func New(config Config) (*Agent, error)
@@ -210,27 +209,25 @@ func (a *Agent) Run(
 ) (RunResult, error)
 ```
 
-Names may change. The behavior below is what matters.
-
 ### Configuration rules
 
-`Config.Generator` and `Config.Model` are required. A non-empty `Config.Instructions` must be a valid `gai.System` message. The constructor validates the fixed tool definitions, duplicate names, handlers, and hook settings that the Agent stores.
+`Config.Generator` and `Config.Model` are required. The zero `Config.Instructions` message means absent; any populated value must be a valid `gai.System` message. The constructor validates the fixed tool definitions, duplicate names, handlers, and hook settings that the Agent stores.
 
 `Config.PrepareDialog`, `Config.BeforeGeneration`, `Config.AfterGeneration`, `Config.BeforeTool`, and `Config.AfterTool` are optional. A nil value does nothing. Each field stores one hook. To run several functions at the same point, an application supplies one hook that calls them in its chosen order and combines their results. Separate runs may call hooks at the same time, so their implementations must support concurrent use.
 
 The model is agent configuration because an agent defines behavior. `BeforeGeneration` may select another model for one call without changing the configured model used for the next request. An application that needs a lasting model change can construct another agent or choose an agent outside this loop.
 
-`Config.Tools` is the Agent's complete executable tool set. The constructor copies and validates it. Runs and hooks cannot add, remove, replace, or reorder tools. An application that needs a different tool set constructs another Agent.
+`Config.Tools` is the Agent's complete executable tool set. The constructor validates it and builds the lookup data used by the loop. Tool definitions, schemas, and handlers remain borrowed from the caller. Runs and hooks cannot add, remove, replace, or reorder tools. An application that needs a different tool set constructs another Agent.
 
-A nil `PrepareDialog` hook means no lasting dialog replacement. `ContextWindow` tells that hook the model's known context-window size and may be zero when that size is unknown.
+A nil `PrepareDialog` hook means no lasting dialog replacement.
 
 ### Run request rules
 
-`RunRequest.Dialog` is the prior active dialog. `Input` is one new, non-empty `gai.User` message. A single message may contain several text or multimodal blocks. The loop validates and copies both values, then appends `Input` before the first generation. It does not modify the caller's dialog or message.
+`RunRequest.Dialog` is the prior active dialog. `Input` is one new, non-empty `gai.User` message. A single message may contain several text or multimodal blocks. The loop validates these borrowed values, then appends `Input` before the first generation. The caller must not change the dialog, input message, or anything they reference until `Run` returns.
 
 `Options` is read-only for the duration of `Run`. The loop reuses the same map in every base generation request and never modifies it. The caller must not modify the map until `Run` returns. A change made by `BeforeGeneration` for one call must use a separate map and is discarded before the next generation.
 
-The first implementation supports exactly one candidate and rejects `gai.GenerationOptionCandidateCount` values other than one.
+The Agent supports exactly one candidate and rejects `gai.GenerationOptionCandidateCount` values other than one.
 
 The `context.Context` passed to `Run` is also passed to every hook, the observer, the generator, and tool handlers. Applications can use typed context values for trace IDs, tenant identity, authorization data, or other values needed during the run. The Agent defines no run ID or metadata map.
 
@@ -323,21 +320,14 @@ type PrepareDialogHook interface {
 }
 
 type PrepareDialogRequest struct {
-    Generation    uint
-    Model         string
-    Instructions  gai.Message
-    Dialog        gai.Dialog
-    Tools         []gai.Tool
-    Options       gai.GenerationOptions
-    ContextWindow uint
-    Counter       gai.TokenCounter
-    Status        RunStatus
+    Generation uint
+    Request    gai.GenerationRequest
+    Status     RunStatus
 }
 
 type PrepareDialogDecision struct {
-    Dialog   gai.Dialog
-    Replaced bool
-    Usage    gai.Metadata
+    Dialog gai.Dialog
+    Usage  gai.Metadata
 }
 
 type BeforeGenerationHook interface {
@@ -420,7 +410,7 @@ type AfterToolDecision struct {
 
 `RunStatus` describes work already added to the active dialog. The current response is not included while `AfterGeneration` runs, and the current tool execution is not included while `AfterTool` runs. These counters let hooks make their own limit decisions. `Run` does not return them, and the package enforces no limits on its own.
 
-The package should also provide function adapters for these interfaces, following `ObserverFunc` and the existing GAI callback patterns.
+The package provides function adapters for these interfaces, following `ObserverFunc` and the existing GAI callback patterns.
 
 ### Hook catalog
 
@@ -444,19 +434,19 @@ The hook may change the model, instructions, dialog, or options for that call. T
 
 This supports retrieved documents, temporary filtering, current-time data, and fields needed for one call. The hook must keep any temporary dialog internally consistent and within the provider's size limit. `PrepareDialog` runs first. If `BeforeGeneration` adds more content afterward, `PrepareDialog` does not count that content again.
 
-The hook must treat its input as read-only. It may return the same request unchanged. If it changes options, messages, blocks, or extra fields, it must allocate new maps and slices so the normal run values remain unchanged.
+Hook request fields are borrowed, read-only values. A hook may return an unchanged value or build a changed one. It must not mutate or retain input references. References in a returned decision belong to the loop after the hook returns and must not be changed again.
 
 ### Generation result changes
 
-`AfterGeneration` receives the exact request and complete response before the response enters the active dialog or reaches `GenerationCompletedEvent`. It may change response-level extra fields and any candidate message or block fields. It must preserve `FinishReason` and `UsageMetadata`; those report what the provider did and feed the run result. The loop validates and copies the returned response, then adds its assistant message and usage. The observer sees the returned response rather than the provider's unmodified value.
+`AfterGeneration` receives the exact request and complete response before the response enters the active dialog or reaches `GenerationCompletedEvent`. It may change response-level extra fields and any candidate message or block fields. It must preserve `FinishReason` and `UsageMetadata`; those report what the provider did and feed the run result. The loop validates and adopts the returned response directly, then adds its assistant message and usage. References in the returned response belong to the loop after the hook returns. The observer sees that response rather than the provider's unmodified value.
 
 ### Tool hook rules
 
-`BeforeTool` runs only for a known tool whose original arguments passed validation. A nil `BeforeToolDecision.Parameters` keeps the original map; a non-nil map replaces it, including a non-nil empty map. The loop copies and validates replacement arguments against the fixed definition before doing anything else. The hook cannot change the call ID or tool name. `Reject` and non-nil `Parameters` cannot be returned together.
+`BeforeTool` runs only for a known tool whose original arguments passed validation. A nil `BeforeToolDecision.Parameters` keeps the original map; a non-nil map replaces it, including a non-nil empty map. The loop validates and adopts replacement arguments directly. Those references belong to the loop after the hook returns. The hook cannot change the call ID or tool name. `Reject` and non-nil `Parameters` cannot be returned together.
 
 `Reject` prevents the handler from running. The loop creates a failed tool result for the model using `Reason`, or a stable package default when `Reason` is empty. A rejection does not increment `RunStatus.ToolExecutions`.
 
-`AfterTool` runs only when the handler returned a `gai.Message` and nil error. It sees the arguments actually used and the handler's result. The loop validates `AfterToolDecision.Result`, forces result block IDs to the original call ID, and then adds it to the dialog. It does not run for unknown tools, malformed calls, before-hook rejections, error results created by the loop, or handler errors.
+`AfterTool` runs only when the handler returned a `gai.Message` and nil error. It sees borrowed read-only arguments and the handler's result. The loop validates and adopts `AfterToolDecision.Result`, assigns the original call ID to every result block, and then adds it to the dialog. References in the returned result belong to the loop after the hook returns. It does not run for unknown tools, malformed calls, before-hook rejections, error results created by the loop, or handler errors.
 
 A non-empty `StopAfterBatch` from either tool hook asks the loop to stop normally after every tool call in the assistant message has a corresponding result. `StopReasonModel` is invalid here because the model did not end the loop. The first non-empty reason in tool-call order wins. Waiting until the batch is complete keeps the returned dialog valid if it is sent to a model later.
 
@@ -498,9 +488,9 @@ const (
 )
 ```
 
-The payload interface accepts only event types defined by this package. Applications can handle those events but cannot add new package event kinds. An observer cannot return replacement data or change a decision. The loop gives observers copies of slices and top-level maps that could otherwise change run state. Values nested inside `ExtraFields` remain read-only because GAI cannot copy arbitrary Go values. `Event.Kind` may delegate to `Payload.Kind` for convenient switches.
+The payload interface accepts only event types defined by this package. Applications can handle those events but cannot add new package event kinds. An observer cannot return replacement data or change a decision. Event values borrow the loop's data and are valid only until `Observe` returns. Observers must not mutate or retain those references. An observer that needs to save an event must serialize it or make its own copy during `Observe`. `Event.Kind` may delegate to `Payload.Kind` for convenient switches.
 
-`Sequence` begins at one and has no gaps within a run. Events from separate runs have no shared order. `Observe` receives the same `context.Context` passed to `Run`, so a shared observer can read values such as a request or trace ID from it.
+`Sequence` starts at zero and has no gaps within a run. Events from separate runs have no shared order. `Observe` receives the same `context.Context` passed to `Run`, so a shared observer can read values such as a request or trace ID from it.
 
 The loop calls one run's observer synchronously and never calls it concurrently. A slow observer delays generation streaming, tools, and later model calls. A nil observer discards events.
 
@@ -577,7 +567,7 @@ Every arrow from the agent to the observer is synchronous. If a started event fa
 
 ### Event payloads
 
-The first implementation should define payloads close to:
+The package defines these payloads:
 
 ```go
 type RunStartedEvent struct {
@@ -642,7 +632,7 @@ type RunFailedEvent struct {
 }
 ```
 
-`Generation` and `ToolIndex` are one-based.
+`Generation` and `ToolIndex` are zero-based indexes.
 
 `ToolStartedEvent` is sent for every requested tool call that reaches tool handling, including calls for which the loop creates an error result. `WillExecute` is true only when the handler will run immediately after successful event delivery. `Reason` explains an unknown tool, malformed call, hook rejection, or another path that skips the handler; it is empty when the handler will run. `ToolCompletedEvent.Executed` reports whether the handler ran.
 
@@ -672,8 +662,8 @@ const (
 
 | Event | Exactly when it is sent | State visible at delivery |
 |---|---|---|
-| `RunStartedEvent` | After request and tool validation, input copying, and preparation of the initial `RunResult`; before `PrepareDialog` or any other hook | Starting dialog, input message, configured model and instructions, fixed tools, and run options |
-| `DialogReplacedEvent` | Only when `PrepareDialog` returns `Replaced: true`, after the replacement is validated and adopted; before `BeforeGeneration` | Old dialog, new active dialog, and hook usage |
+| `RunStartedEvent` | After request and tool validation and preparation of the initial `RunResult`; before `PrepareDialog` or any other hook | Starting dialog, input message, configured model and instructions, fixed tools, and run options |
+| `DialogReplacedEvent` | Only when `PrepareDialog` returns a non-nil dialog, after the replacement is validated and adopted; before `BeforeGeneration` | Old dialog, new active dialog, and hook usage |
 | `GenerationStartedEvent` | After the base request is built, `BeforeGeneration` chooses to continue, and its returned request is validated; immediately before calling the generator | The exact request that will be sent once |
 | `GenerationChunkEvent` | Once for every chunk read from a streaming generator, before the complete response is assembled | The raw chunk, including a chunk carrying an error; no assistant message has entered the active dialog |
 | `GenerationCompletedEvent` | After `AfterGeneration` returns and the response and single assistant candidate are validated; after their message and usage enter the run state, but before terminal handling or tool handling | The final response, including hook changes |
@@ -724,9 +714,9 @@ gai.GenerationRequest{
 }
 ```
 
-The base request reuses the read-only options map and fixed tool definitions. `BeforeGeneration` may return it unchanged, return a request with different input or options for this call, or ask the loop to stop normally. The loop validates the returned request, sends `GenerationStartedEvent` with that exact value, and passes it to the generator once. A dialog returned by this hook does not replace `activeDialog`. Only `PrepareDialog` can do that.
+The base request borrows Agent configuration, the active dialog, and the run's read-only options map. `BeforeGeneration` may return it unchanged, return a request with different input or options for this call, or ask the loop to stop normally. The loop validates the returned request, sends `GenerationStartedEvent`, and passes the request to the generator once. Hooks and generators must not mutate or retain borrowed request data. A streaming generator may retain it until stream iteration ends. A dialog returned by this hook does not replace `activeDialog`. Only `PrepareDialog` can do that.
 
-If the generator implements `gai.StreamingGenerator`, the agent should prefer streaming. It can wrap the stream to forward every `gai.StreamChunk` to the observer, then use `gai.StreamingAdapter` to produce the completed response. This avoids duplicating block compression, tool-call assembly, metadata extraction, and extra-field merging.
+If the generator implements `gai.StreamingGenerator`, the Agent prefers streaming. It wraps the stream to forward every `gai.StreamChunk` to the observer, then uses `gai.StreamingAdapter` to produce the completed response. This avoids duplicating block compression, tool-call assembly, metadata extraction, and extra-field merging.
 
 A stream chunk with `Err` fails generation. Chunks may already have reached observers, but no chunk enters the active dialog. Only a completed response can enter the dialog.
 
@@ -738,7 +728,7 @@ Non-streaming generators produce no chunk events. The loop requires exactly one 
 
 A normal run follows these steps:
 
-1. Validate the request, validate the Agent's fixed tools, copy the starting dialog and input, and initialize the values that `Run` will return.
+1. Validate the request and the Agent's fixed tools, append the input to the starting dialog, and initialize the values that `Run` will return.
 2. Send `RunStartedEvent`.
 3. Call `PrepareDialog` with the active dialog.
 4. If the hook replaces the dialog, validate and adopt it, then send `DialogReplacedEvent`.
@@ -826,12 +816,11 @@ Any observer error stops the run before the next provider call or tool handler. 
 The loop rejects provider responses that it cannot add to the dialog safely, including:
 
 - candidate counts other than one;
-- a non-assistant candidate;
+- a non-assistant or empty candidate;
 - invalid candidate blocks;
 - `gai.ToolUse` without tool-call blocks;
 - tool-call blocks with a conflicting terminal finish reason;
 - missing or duplicate tool-call IDs;
-- malformed tool-call payloads that cannot be associated with a result;
 - duplicate IDs across generations in one run.
 
 Unknown tools and arguments that can be decoded but fail validation become tool errors shown to the model. The loop does not treat them as invalid provider responses.
@@ -840,11 +829,11 @@ Unknown tools and arguments that can be decoded but fail validation become tool 
 
 `PrepareDialogHook` is the first hook in each generation round and the only hook that can replace the active dialog used for later generations and returned in `RunResult.Dialog`. Its request and decision types are defined with the other hooks above.
 
-The loop calls `PrepareDialog` before it builds each base request. `Generation` is the one-based number of the possible next call. `Counter` is non-nil when the configured generator implements `gai.TokenCounter`; its `Count` method receives the configured model and instructions, active dialog, fixed tools, and read-only run options before `BeforeGeneration` changes the request for that call.
+The loop calls `PrepareDialog` before it builds each base request. `Generation` is the zero-based index of the possible next call. `Request` contains the configured model and instructions, active dialog, fixed tools, and read-only run options before `BeforeGeneration` changes that call.
 
-A nil hook does nothing. A token-budget hook may count the current dialog, call a summarizer, and return a shorter replacement. When `Replaced` is false, the loop keeps the current dialog and ignores the other decision fields.
+A nil hook does nothing. A hook may inspect the base request, call application-owned counters or summarizers captured by the hook, and return a shorter dialog. A nil `Dialog` keeps the current dialog and requires empty `Usage`.
 
-When `Replaced` is true, the loop validates and adopts `Dialog`, adds `Usage` to the run total, and sends one `DialogReplacedEvent`. Every later base request and `RunResult.Dialog` use the replacement. A hook error or invalid replacement stops the run. The event still carries the old dialog so an application can keep complete history.
+A non-nil `Dialog` requests replacement. The loop rejects an empty replacement, validates and adopts a nonempty one, adds `Usage` to the run total, and sends one `DialogReplacedEvent`. Every later base request and `RunResult.Dialog` use the replacement. A hook error or invalid decision stops the run. The event still carries the old dialog so an application can keep complete history.
 
 This differs from `BeforeGeneration`. A dialog returned by `BeforeGeneration` changes one provider call and is then discarded. A dialog returned by `PrepareDialog` becomes active run state.
 
@@ -886,16 +875,17 @@ If sending `RunFailedEvent` produces another error, the returned error must pres
 
 The package must not recover panics from generators or handlers unless a later design defines how to report the panic and preserve its stack. Silently recovering could hide damaged application state.
 
-## Concurrency and copied values
+## Concurrency and borrowed values
 
-- A constructed `Agent` is immutable and safe for concurrent `Run` calls.
-- One run changes its state and calls hooks and observers one step at a time.
-- The constructor copies configured tools and instructions. Each run copies the starting dialog and input before appending to them.
-- `RunRequest.Options` is reused as read-only data. The caller must not modify it until `Run` returns.
-- Hook inputs are read-only. A hook that returns changed dialogs, options, messages, blocks, responses, or extra fields must put them in new maps and slices.
-- Nested values inside `ExtraFields` and custom `Block.Content` remain read-only unless a hook replaces them, because GAI cannot copy arbitrary Go values.
-- Separate runs may call the configured hooks, handlers, and generator at the same time. Their implementations must protect any shared mutable data.
-- Applications can pass run-specific values through typed `context.Context` keys. They must protect any mutable values shared this way.
+- An `Agent` does not change its fields after construction. Concurrent runs are safe only when callers leave borrowed configuration unchanged and the generator, hooks, and handlers support concurrent use.
+- The constructor builds the lookup slices, maps, and resolved schemas needed by the loop. It does not clone messages, schemas, maps, blocks, or other referenced configuration data. Callers must leave that data unchanged for the Agent's lifetime.
+- `Run` borrows its starting dialog, input message, and options until it returns. The active dialog may share referenced data with those values.
+- Hook, generator, and token-counter inputs are borrowed for the call. They must not mutate or retain those references. A streaming generator may retain its request until stream iteration ends.
+- References returned by `PrepareDialog`, `BeforeGeneration`, `AfterGeneration`, `BeforeTool`, `AfterTool`, and successful tool handlers belong to the loop after the call returns. The provider, hook, or handler must not change them afterward.
+- Observer event data is borrowed and valid only during `Observe`. An observer must serialize or copy anything it needs to retain.
+- `RunResult` gives the completed dialog and usage to the caller. The Agent keeps no run state after `Run` returns, but the result may share referenced data with request, provider, hook, or handler values.
+- Separate runs may call the configured hooks, handlers, and generator at the same time. Their implementations must protect shared mutable data.
+- Applications can pass run-specific values through typed `context.Context` keys. They must protect mutable values shared this way.
 - Whoever creates generators, clients, MCP connections, databases, and tools must close them.
 - The loop passes cancellation to hooks, generation, observers, and handlers.
 - The package starts no background goroutines that outlive the call.
@@ -943,14 +933,13 @@ The caller decides limits, handoffs, shared data, call depth, and scheduling. Ru
 
 ## Testing strategy
 
-The first implementation should add `agent/agenttest` with:
+Package `agent/agenttest` provides:
 
-- a scripted `gai.Generator` that records and validates requests;
-- an optional scripted streaming generator;
-- a recording observer;
-- dialog-preparation and other hook stubs;
-- tool handler stubs;
-- concise constructors for common messages, responses, and calls.
+- a scripted `gai.Generator` that records and checks requests;
+- a scripted streaming generator;
+- a recording observer that can fail at a chosen sequence number.
+
+The function adapters in package `agent` provide concise hook and tool-handler stubs.
 
 Agent-loop tests should cover:
 
@@ -980,32 +969,28 @@ Agent-loop tests should cover:
 - total usage without retaining responses;
 - read-only options map reuse across generations;
 - concurrent runs on one Agent;
-- the starting dialog, input message, and options remaining unchanged.
+- borrowed starting dialog, input, and options left untouched by hooks, observers, generators, and handlers.
 
-Observer tests should assert every event trigger, exact payloads, gapless sequence numbers, one-based indexes, event order, state updates before completed events, no events for validation failures before the run, and the dialog and usage returned after delivery failure.
+Observer tests should assert every event trigger, exact payloads, gapless zero-based sequence numbers and indexes, event order, state updates before completed events, no events for validation failures before the run, and the dialog and usage returned after delivery failure.
 
 No agent-loop test should require a network, database, MCP server, provider credential, or frontend protocol.
 
-## Initial implementation sequence
+## Implementation
 
-1. Define configuration, result, executable-tool, hook, observer, and event types.
-2. Add `agenttest.ScriptedGenerator`, recording observers, hook stubs, and common fixtures.
-3. Implement validation, copying, context passing, and the non-streaming terminal path.
-4. Implement `PrepareDialog`, lasting dialog replacement, and before/after generation hooks.
-5. Implement tool decoding, one-at-a-time execution, before/after tool hooks, tool errors shown to the model, hook stops, and repeated generation.
-6. Implement every ordered event and the error behavior that returns collected dialog and usage.
-7. Add streaming by forwarding chunks through `gai.StreamingAdapter`.
-8. Add standard usage totals without retaining responses in the result.
-9. Exhaustively test cancellation, hook and observer failures, options reuse, and concurrent runs.
-10. Add examples for a simple chat Agent, a request hook, and a typed tool Agent.
-11. Prototype MCP and storage adapters outside the agent package to test that these responsibilities stay separate.
+- `agent.go` defines borrowed Agent configuration and run inputs and results.
+- `hooks.go`, `events.go`, and `tool.go` define the public customization and observation API.
+- `run.go` implements generation, streaming, hook ordering, tool execution, stopping, and failure results.
+- `validation.go` enforces the request, response, tool, and hook rules.
+- `agenttest/` provides scripted generators and recording observers.
+- `agent_test.go` and `example_test.go` verify the run flow without network calls.
 
 ## Settled decisions
 
 - The package uses GAI values directly and defines no parallel generation model.
 - Generation state is passed through `gai.GenerationRequest`; generators are not mutated.
-- An Agent is immutable and reusable. A run changes its own state one step at a time.
+- An Agent does not change its fields after construction and is reusable while callers honor its borrowed-value rules. A run changes its own state one step at a time.
 - The model and instructions are Agent configuration; `BeforeGeneration` may change them for one call.
+- The Agent prefers `gai.StreamingGenerator` when the configured generator implements it.
 - The Agent's tool set is fixed at construction and cannot be changed by a run or hook.
 - `RunRequest.Input` is one non-empty `gai.User` message.
 - `RunRequest.Options` is read-only and reused across base generation requests.
@@ -1015,6 +1000,7 @@ No agent-loop test should require a network, database, MCP server, provider cred
 - The initial hook set is exactly `PrepareDialog`, `BeforeGeneration`, `AfterGeneration`, `BeforeTool`, and `AfterTool`; applications cannot register hooks at other points in the run.
 - Hooks may stop normally; the package imposes no limits unless a hook does so.
 - Observers are read-only, synchronous, and ordered; observer errors stop the run.
+- Event sequences, generation indexes, and tool-call indexes are zero-based and gapless within a run.
 - The same `context.Context` reaches hooks, observers, generators, and handlers; the Agent defines no run ID or metadata map.
 - Tools run one at a time in response order in the first version.
 - Replacement tool arguments are validated again before handler execution.
@@ -1025,7 +1011,6 @@ No agent-loop test should require a network, database, MCP server, provider cred
 
 ## Open questions
 
-- Should the first release always prefer streaming when available, or should generation mode be explicit configuration?
 - Should GAI expose an observer-aware stream collector so the Agent does not need a forwarding wrapper around `gai.StreamingAdapter`?
 - Should GAI add a raw `ToolCall` type with `json.RawMessage` arguments to avoid `map[string]any` number conversion?
 - Which standard usage metrics can be added safely, and should GAI provide that addition first?

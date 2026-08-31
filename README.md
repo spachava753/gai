@@ -71,7 +71,7 @@ type Generator interface {
 A request contains all semantic state for one invocation:
 
 - `Model` selects the provider model.
-- `Instructions` contains a `System` message outside the conversation.
+- `Instructions` is either the zero message for no instructions or a `System` message outside the conversation.
 - `Dialog` contains user, assistant, and tool-result messages.
 - `Tools` contains the complete caller-defined function set for this invocation.
 - `Options` contains common and provider-specific generation controls.
@@ -160,6 +160,30 @@ request.Options = gai.NewGenerationOptions(
 When a response finishes with `ToolUse`, inspect its `ToolCall` blocks, execute approved calls, append `ToolResultMessage` values to the dialog, and generate again.
 
 `ToolCallback` and `ToolCallBackFunc` are optional application-side dispatch helpers. Generators never execute tools automatically.
+
+## Agents
+
+Package [`agent`](https://pkg.go.dev/github.com/spachava753/gai/agent) runs a complete model and tool loop over any `gai.Generator`. An Agent has fixed instructions and executable tools, while each run supplies a prior dialog, one new user message, and generation options.
+
+```go
+runner, err := agent.New(agent.Config{
+	Generator: provider,
+	Model:     "provider-model",
+	Tools:     executableTools,
+})
+if err != nil {
+	return err
+}
+
+result, err := runner.Run(ctx, agent.RunRequest{
+	Dialog: previousDialog,
+	Input:  gai.Message{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Continue")}},
+}, observer)
+```
+
+The loop prefers streaming when the generator supports it, validates model responses, executes tool calls one at a time, and returns the active dialog plus standard usage. `PrepareDialog`, generation, and tool hooks can make explicit changes or request a normal stop. Configuration and call inputs are borrowed read-only values. Hook and handler outputs belong to the loop after return. Observers receive ordered borrowed events, valid only during `Observe`, and can stop the run by returning an error.
+
+Use [`agent/agenttest`](https://pkg.go.dev/github.com/spachava753/gai/agent/agenttest) for scripted generators and recording observers. See [`agent/design.md`](agent/design.md) for exact ordering, error, ownership, and persistence behavior.
 
 ## Composition
 

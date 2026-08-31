@@ -7,12 +7,16 @@ import (
 )
 
 // Role identifies how a [Message] participates in a [GenerationRequest]. The
-// zero value is [User].
+// zero value is [RoleUnknown] and is invalid for a populated message.
 type Role uint
 
 const (
+	// RoleUnknown means no role was specified. It is valid only on the empty
+	// value used when optional [GenerationRequest.Instructions] are absent.
+	RoleUnknown Role = iota
+
 	// User identifies caller-authored conversational input in [GenerationRequest.Dialog].
-	User Role = iota
+	User
 
 	// Assistant identifies model output. Assistant messages can be returned in
 	// [Response.Candidates] or replayed in a later [Dialog].
@@ -31,6 +35,8 @@ const (
 // numeric value in the returned string.
 func (r Role) String() string {
 	switch r {
+	case RoleUnknown:
+		return "unknown"
 	case User:
 		return "user"
 	case Assistant:
@@ -168,8 +174,8 @@ type Block struct {
 // [GenerationRequest.Dialog] use [User], [Assistant], or [ToolResult]. A
 // [System] message belongs in [GenerationRequest.Instructions].
 type Message struct {
-	// Role determines how providers interpret Blocks. The zero value is [User],
-	// but callers should set it explicitly.
+	// Role determines how providers interpret Blocks. The zero value is
+	// [RoleUnknown] and must be set for every populated message.
 	Role Role `json:"role" yaml:"role"`
 
 	// Blocks preserves the provider-visible content order.

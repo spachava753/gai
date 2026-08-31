@@ -174,8 +174,9 @@ func WithThinkingBudget(value string) GenerationOption {
 type GenerationRequest struct {
 	// Model is the provider model identifier for this invocation.
 	Model string `json:"model" yaml:"model"`
-	// Instructions contains optional [System]-role content outside [Dialog]. Use
-	// [SystemMessage] to construct non-empty instructions.
+	// Instructions contains optional [System]-role content outside [Dialog]. The
+	// zero Message means absent; any populated value must use [System]. Use
+	// [SystemMessage] to construct explicit instructions, including an empty one.
 	Instructions Message `json:"instructions,omitempty" yaml:"instructions,omitempty"`
 	// Dialog is the complete conversation. An empty dialog returns [ErrEmptyDialog].
 	Dialog Dialog `json:"dialog" yaml:"dialog"`
@@ -206,14 +207,29 @@ func generationOption[T any](options GenerationOptions, key string) (T, bool, er
 // textInstructions validates text-only system instructions and returns each
 // instruction block as a separate string.
 func textInstructions(instructions Message) ([]string, error) {
-	if len(instructions.Blocks) == 0 {
-		return nil, nil
+	if instructions.Role == RoleUnknown {
+		if len(instructions.Blocks) == 0 && len(instructions.ExtraFields) == 0 && !instructions.ToolResultError {
+			return nil, nil
+		}
+		return nil, &InvalidParameterErr{
+			Parameter: "instructions",
+			Reason:    "a populated instruction message must specify the system role",
+		}
 	}
 	if instructions.Role != System {
 		return nil, &InvalidParameterErr{
 			Parameter: "instructions",
-			Reason:    "non-empty instructions must use the system role",
+			Reason:    "instructions must use the system role",
 		}
+	}
+	if instructions.ToolResultError {
+		return nil, &InvalidParameterErr{
+			Parameter: "instructions",
+			Reason:    "instructions cannot be marked as a tool-result error",
+		}
+	}
+	if len(instructions.Blocks) == 0 {
+		return nil, nil
 	}
 
 	parts := make([]string, 0, len(instructions.Blocks))
@@ -299,7 +315,9 @@ type Response struct {
 
 // Generator performs non-streaming model generation. Implementations consume
 // only the supplied [GenerationRequest]; callers may reuse one generator with
-// independent request state.
+// independent request state. Request slices, maps, schemas, and nested values
+// are borrowed read-only data and must not be mutated or retained after
+// Generate returns.
 //
 // Generate honors context cancellation and can return validation errors before
 // contacting a provider. Provider failures are returned as [ApiErr]. A terminal
@@ -313,7 +331,8 @@ type Generator interface {
 // TokenCounter is an optional generator capability for estimating or querying
 // the input tokens consumed by a [GenerationRequest]. Counting includes the
 // model, instructions, dialog, and tools, but provider behavior can differ for
-// multimodal content.
+// multimodal content. Count borrows request under the same read-only rule as
+// [Generator.Generate].
 //
 // [OpenAiGenerator] counts locally with tiktoken. [AnthropicGenerator],
 // [GeminiGenerator], and [ZaiGenerator] call provider token-counting endpoints.

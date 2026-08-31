@@ -13,13 +13,13 @@ GAI is a Go library for interacting with LLM providers, including OpenAI, Anthro
   - Streaming primitives: `streaming.go`
   - Shared domain types and helpers: `message.go`, `tool.go`, `errors.go`, `metrics.go`, `callback.go`
   - Examples and usage via `*_example_test.go` files
-- Public agent package: `agent/` contains the planned reusable agent loop and its package-local `design.md`; it is currently design-only
+- Public agent packages: `agent/` contains the reusable agent loop and `agent/agenttest/` contains deterministic test fixtures; `agent/design.md` documents behavior and rationale
 - Tests: colocated `*_test.go` for each area, plus provider-specific tests
 - Samples: `sample.jpg`, `sample.pdf`, `sample.wav` for multimodal tests/examples
 - Tracked hooks: `.githooks/pre-commit` runs LAAS against hand-written packages and excludes generated OGEN clients
 - Public documentation: `doc.go` contains the package API map, `README.md` contains the repository guide, and `*_example_test.go` contains compiled examples
 - `design.md` records the generator interfaces, shared types, state ownership, and rationale implemented by the current release
-- `agent/design.md` records the proposed agent-loop API, run flow, state responsibilities, and implementation sequence
+- `agent/design.md` records the implemented agent-loop API, run flow, state responsibilities, and rationale
 
 Conventions
 - Single module, no internal/ submodules yet
@@ -77,7 +77,7 @@ Key concepts
 - Provider adapters: thin wrappers that expose a unified interface over provider SDKs, generated clients, and HTTP APIs
 - Streaming: unified stream interface emitting chunks, with helpers for incremental assembly
 - Tools: typed function/tool-call support with validation and safe dispatch
-- Agent loop: `agent/design.md` defines an immutable Agent with fixed tools, one new user message per run, typed dialog/generation/tool hooks, read-only ordered observers, hook-controlled stopping, lasting dialog replacement, and external persistence; implementation is pending
+- Agent loop: package `agent` provides a reusable Agent with fixed borrowed configuration, one new user message per run, typed dialog/generation/tool hooks, borrowed ordered observer events, hook-controlled stopping, lasting dialog replacement, partial error results, and external persistence
 - Metrics and callbacks: hooks for observability, tracing, and policy checks
 
 Design principles
@@ -105,6 +105,7 @@ Provider-specific metadata placement
 - For streaming, assert on ordered chunk assembly and termination conditions
 - Include negative tests: timeouts, API errors, invalid tool payloads
 - Use sample media files for multimodal inputs to avoid external fetches
+- Use `agent/agenttest` scripted generators and recording observers for deterministic Agent tests
 
 Naming and location
 - Unit tests live alongside implementation: `file_test.go`

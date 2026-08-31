@@ -101,7 +101,8 @@ type Dialog []Message
 type Role uint
 
 const (
-    User Role = iota
+    RoleUnknown Role = iota
+    User
     Assistant
     ToolResult
     System
@@ -132,7 +133,7 @@ request := GenerationRequest{
 }
 ```
 
-A non-empty instruction message must have the `System` role. An empty message means no instructions. System messages are not valid dialog turns because provider APIs handle instructions separately from conversation history.
+`RoleUnknown` is the zero value and catches populated messages whose caller forgot to choose a role. It is invalid in dialogs, inputs, responses, and tool results. The exact empty message uses `RoleUnknown` only to mean that optional `Instructions` are absent. Explicit instructions, including a message with zero blocks, must have the `System` role. System messages are not valid dialog turns because provider APIs handle instructions separately from conversation history.
 
 `Instructions` is a `Message`, rather than a string, so it can preserve ordered blocks and provider metadata. This also leaves a place for images or documents if provider APIs later allow them in system instructions.
 

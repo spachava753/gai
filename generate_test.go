@@ -120,6 +120,13 @@ func TestTextInstructions(t *testing.T) {
 		}
 	})
 
+	t.Run("empty system message", func(t *testing.T) {
+		parts, err := textInstructions(SystemMessage())
+		if err != nil || parts != nil {
+			t.Fatalf("textInstructions() = %#v, %v; want nil, nil", parts, err)
+		}
+	})
+
 	t.Run("ordered text blocks", func(t *testing.T) {
 		instructions := SystemMessage(TextBlock("first"), TextBlock("second"))
 		parts, err := textInstructions(instructions)
@@ -143,6 +150,22 @@ func TestTextInstructions(t *testing.T) {
 		instructions Message
 		unsupported  bool
 	}{
+		{
+			name:         "populated unknown role",
+			instructions: Message{Blocks: []Block{TextBlock("missing role")}},
+		},
+		{
+			name:         "unknown role with extra fields",
+			instructions: Message{ExtraFields: map[string]any{"key": "value"}},
+		},
+		{
+			name:         "empty non-system role",
+			instructions: Message{Role: User},
+		},
+		{
+			name:         "tool-result error marker",
+			instructions: Message{Role: System, ToolResultError: true},
+		},
 		{
 			name:         "non-system role",
 			instructions: Message{Role: User, Blocks: []Block{TextBlock("wrong role")}},

@@ -211,6 +211,8 @@ type StreamChunk struct {
 type StreamingGenerator interface {
 	// Stream returns a lazy sequence for request. Validation and provider work
 	// should begin when the sequence is iterated, and iteration must honor ctx.
+	// The sequence borrows request as read-only data until iteration ends and
+	// must not retain it afterward.
 	Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk]
 }
 

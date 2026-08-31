@@ -9,8 +9,9 @@
 // # Requests and responses
 //
 // A [GenerationRequest] separates system [Message] content in Instructions from
-// the conversational [Dialog]. Instructions must have the [System] role; use
-// [SystemMessage] to construct them. A dialog contains user, assistant, and
+// the conversational [Dialog]. A zero Message means instructions are absent;
+// any populated instruction message must have the [System] role. Use
+// [SystemMessage] to construct one. A dialog contains user, assistant, and
 // [ToolResult] messages, each represented as an ordered sequence of [Block]
 // values.
 //
