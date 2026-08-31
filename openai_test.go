@@ -388,813 +388,799 @@ func TestToOpenAIMessage(t *testing.T) {
 }
 
 func TestOpenAIAdapterScenarios(t *testing.T) {
-	t.Run("OpenAIErrorMappingUsesHTTPStatus", testOpenAIErrorMappingUsesHTTPStatus)
-	t.Run("OpenAIGenerateReturnsContentPolicyErrorForContentFilter", testOpenAIGenerateReturnsContentPolicyErrorForContentFilter)
-	t.Run("OpenAIGenerateReturnsContentPolicyErrorForRefusal", testOpenAIGenerateReturnsContentPolicyErrorForRefusal)
-	t.Run("OpenAIStreamReturnsContentPolicyErrorForRefusal", testOpenAIStreamReturnsContentPolicyErrorForRefusal)
-	t.Run("OpenAiGeneratorUsesRequestScopedState", testOpenAiGeneratorUsesRequestScopedState)
-	t.Run("OpenAiGenerator/Count", testOpenAiGenerator_Count)
-	t.Run("OpenAiGenerator/Count/Example", testOpenAiGenerator_Count_Example)
-	t.Run("OpenAiGenerator/Generate", testOpenAiGenerator_Generate)
-	t.Run("OpenAiGenerator/Generate/audio", testOpenAiGenerator_Generate_audio)
-	t.Run("OpenAiGenerator/Generate/image", testOpenAiGenerator_Generate_image)
-	t.Run("OpenAiGenerator/Generate/openRouter", testOpenAiGenerator_Generate_openRouter)
-	t.Run("OpenAiGenerator/Generate/pdf", testOpenAiGenerator_Generate_pdf)
-	t.Run("OpenAiGenerator/Generate/thinking", testOpenAiGenerator_Generate_thinking)
-	t.Run("OpenAiGenerator/RequestTools", testOpenAiGenerator_RequestTools)
-	t.Run("OpenAiGenerator/RequestTools/openRouter", testOpenAiGenerator_RequestTools_openRouter)
-	t.Run("OpenAiGenerator/RequestTools/openRouterParallelToolUse", testOpenAiGenerator_RequestTools_openRouterParallelToolUse)
-	t.Run("OpenAiGenerator/RequestTools/parallelToolUse", testOpenAiGenerator_RequestTools_parallelToolUse)
-	t.Run("OpenAiGenerator/Stream", testOpenAiGenerator_Stream)
-	t.Run("OpenAiGenerator/Stream/parallelToolUse", testOpenAiGenerator_Stream_parallelToolUse)
-	t.Run("OpenAiGenerator/calculateImageTokens", testOpenAiGenerator_calculateImageTokens)
-}
-
-func testOpenAiGenerator_Generate_image(t *testing.T) {
-	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
-	imgBytes, err := os.ReadFile("sample.jpg")
-	if err != nil {
-		t.Skip("could not open sample.jpg")
-		return
-	}
-	imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))
-	client := oai.NewClient(
-		option.WithAPIKey(apiKey),
-	)
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Image,
-					MimeType:     "image/jpeg",
-					Content:      imgBase64,
-				},
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("What is in this image? (Hint, it's a character from The Croods, a DreamWorks animated movie.)"),
-				},
-			},
-		},
-	}
-	resp, err := gen.Generate(context.Background(), GenerationRequest{
-		Model:        oai.ChatModelGPT4o,
-		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
-		Dialog:       dialog,
-		Options:      NewGenerationOptions(WithMaxGenerationTokens(512)),
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(resp.Candidates) != 1 {
-		t.Fatalf("candidates = %d, want 1", len(resp.Candidates))
-	}
-	if len(resp.Candidates[0].Blocks) != 1 {
-		t.Fatalf("blocks = %d, want 1", len(resp.Candidates[0].Blocks))
-	}
-	if !strings.Contains(resp.Candidates[0].Blocks[0].Content.String(), "Crood") {
-		t.Fatalf("content does not contain Crood")
-	}
-}
-func testOpenAiGenerator_Generate_audio(t *testing.T) {
-	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
-	audioBytes, err := os.ReadFile("sample.wav")
-	if err != nil {
-		t.Skip("could not open sample.wav")
-		return
-	}
-	// Encode as base64 for inline audio usage
-	audioBase64 := Str(base64.StdEncoding.EncodeToString(audioBytes))
-	client := oai.NewClient(
-		option.WithAPIKey(apiKey),
-	)
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	// Using inline audio data
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Audio,
-					MimeType:     "audio/wav",
-					Content:      audioBase64,
-				},
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("In this audio, a person is introducing themselves. What is the name of person in the greeting in this audio? Return a one word response of the name"),
-				},
-			},
-		},
-	}
-	resp, err := gen.Generate(context.Background(), GenerationRequest{
-		Model:        oai.ChatModelGPT4oAudioPreview,
-		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
-		Dialog:       dialog,
-		Options:      NewGenerationOptions(WithMaxGenerationTokens(128)),
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Blocks) > 0 {
-		if got := strings.ToLower(resp.Candidates[0].Blocks[0].Content.String()); !strings.Contains(got, "friday") {
-			t.Fatalf("content = %q, want it to contain friday", got)
-		}
-	}
-}
-func testOpenAiGenerator_Generate(t *testing.T) {
-	// Create an OpenAI client
-	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
-	client := oai.NewClient(
-		option.WithAPIKey(apiKey),
-	)
-	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Hi!"),
-				},
-			},
-		},
-	}
-	request := GenerationRequest{
-		Model:        oai.ChatModelGPT4oMini,
-		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
-		Dialog:       dialog,
-	}
-	// Generate a response
-	resp, err := gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// The exact response text may vary, so we'll just print a placeholder
-	// Customize generation parameters
-	request.Options = NewGenerationOptions(
-		WithTopK(10),
-		WithCandidateCount(2),
-		WithMaxGenerationTokens(1024),
-	)
-	resp, err = gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := len(resp.Candidates); got == 0 {
-		t.Fatal("expected at least one item")
-	}
-}
-func testOpenAiGenerator_Stream(t *testing.T) {
-	// Create an OpenAI client
-	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
-	client := oai.NewClient(
-		option.WithAPIKey(apiKey),
-	)
-	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Hi!"),
-				},
-			},
-		},
-	}
-	// Stream a response
-	blocks := make([][]Block, 2)
-	for chunk := range gen.Stream(context.Background(), GenerationRequest{
-		Model:        oai.ChatModelGPT4oMini,
-		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
-		Dialog:       dialog,
-		Options:      NewGenerationOptions(WithCandidateCount(2)),
-	}) {
-		if chunk.Err != nil {
-			t.Fatalf("stream returned error: %v", chunk.Err)
-		}
-		blocks[chunk.CandidatesIndex] = append(blocks[chunk.CandidatesIndex], chunk.Block)
-	}
-	if len(blocks) == 2 && len(blocks[0]) > 1 && len(blocks[1]) > 1 {
-	}
-}
-func testOpenAiGenerator_Generate_openRouter(t *testing.T) {
-	// Create an OpenAI client for open router
-	client := oai.NewClient(
-		option.WithBaseURL("https://openrouter.ai/api/v1/"),
-		option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
-	)
-	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Hi!"),
-				},
-			},
-		},
-	}
-	// Generate a response
-	resp, err := gen.Generate(context.Background(), GenerationRequest{
-		Model:        "google/gemini-2.5-pro-preview-03-25",
-		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
-		Dialog:       dialog,
-		Options:      NewGenerationOptions(WithMaxGenerationTokens(1024)),
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// The exact response text may vary, so we'll just print a placeholder
-	if got := len(resp.Candidates); got == 0 {
-		t.Fatal("expected at least one item")
-	}
-}
-func testOpenAiGenerator_Generate_thinking(t *testing.T) {
-	requireLiveAPIKey(t, "OPENAI_API_KEY")
-	// Create an OpenAI client
-	client := oai.NewClient()
-	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Hi!"),
-				},
-			},
-		},
-	}
-	// Customize generation parameters
-	request := GenerationRequest{
-		Model:        oai.ChatModelO3Mini,
-		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
-		Dialog:       dialog,
-		Options: NewGenerationOptions(
-			WithMaxGenerationTokens(4096),
-			WithThinkingBudget("low"),
-			WithTemperature(1.0),
-		),
-	}
-	// Generate a response
-	resp, err := gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// The exact response text may vary, so we'll just print a placeholder
-	dialog = append(dialog, resp.Candidates[0], Message{
-		Role: User,
-		Blocks: []Block{
+	t.Run("OpenAIErrorMappingUsesHTTPStatus", func(t *testing.T) { testOpenAIErrorMappingUsesHTTPStatus(t) })
+	t.Run("OpenAIGenerateReturnsContentPolicyErrorForContentFilter", func(t *testing.T) { testOpenAIGenerateReturnsContentPolicyErrorForContentFilter(t) })
+	t.Run("OpenAIGenerateReturnsContentPolicyErrorForRefusal", func(t *testing.T) { testOpenAIGenerateReturnsContentPolicyErrorForRefusal(t) })
+	t.Run("OpenAIStreamReturnsContentPolicyErrorForRefusal", func(t *testing.T) { testOpenAIStreamReturnsContentPolicyErrorForRefusal(t) })
+	t.Run("OpenAiGeneratorUsesRequestScopedState", func(t *testing.T) { testOpenAiGeneratorUsesRequestScopedState(t) })
+	t.Run("OpenAiGenerator/Count", func(t *testing.T) { testOpenAiGenerator_Count(t) })
+	t.Run("OpenAiGenerator/Count/Example", func(t *testing.T) {
+		// Create an OpenAI client
+		client := oai.NewClient()
+		// Create a generator
+		generator := NewOpenAiGenerator(&client.Chat.Completions)
+		// Create a dialog with a user message
+		dialog := Dialog{
 			{
-				BlockType:    Content,
-				ModalityType: Text,
-				Content:      Str("What can you do?"),
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("What is the capital of France?"),
+					},
+				},
 			},
-		},
-	})
-	request.Dialog = dialog
-	resp, err = gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := len(resp.Candidates); got == 0 {
-		t.Fatal("expected at least one item")
-	}
-}
-func testOpenAiGenerator_RequestTools(t *testing.T) {
-	requireLiveAPIKey(t, "OPENAI_API_KEY")
-	// Create an OpenAI client
-	client := oai.NewClient(option.WithBaseURL("https://gateway.ai.cloudflare.com/v1/4eee6dd2fdc8cebc7802c5a638f460fe/cpe/openai/"))
-	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	tickerTool := Tool{
-		Name:        "get_stock_price",
-		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: func() *jsonschema.Schema {
-			schema, err := GenerateSchema[struct {
-				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-			}]()
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			return schema
-		}(),
-	}
-	dialog := Dialog{
-		{
-			Role: User,
+		}
+		request := GenerationRequest{
+			Model:        oai.ChatModelGPT4o,
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+			Dialog:       dialog,
+		}
+		// Count tokens in the dialog
+		tokenCount, err := generator.Count(context.Background(), request)
+		if err != nil {
+			t.Fatalf("count tokens: %v", err)
+		}
+		if tokenCount == 0 {
+			t.Fatal("expected non-zero token count")
+		}
+		// Add a response to the dialog
+		dialog = append(dialog, Message{
+			Role: Assistant,
 			Blocks: []Block{
 				{
 					BlockType:    Content,
 					ModalityType: Text,
-					Content:      Str("What is the price of Apple stock?"),
+					Content:      Str("The capital of France is Paris. It's known as the 'City of Light' and is famous for landmarks like the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral."),
 				},
 			},
-		},
-	}
-	request := GenerationRequest{
-		Model:        oai.ChatModelGPT4oMini,
-		Instructions: SystemMessage(TextBlock(openAIStockInstructions)),
-		Dialog:       dialog,
-		Tools:        []Tool{tickerTool},
-		Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
-	}
-	// Generate a response
-	resp, err := gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
-		t.Fatal("expected non-empty content")
-	}
-	dialog = append(dialog, resp.Candidates[0], Message{
-		Role: ToolResult,
-		Blocks: []Block{
+		})
+		request.Dialog = dialog
+		// Count tokens in the updated dialog
+		tokenCount, err = generator.Count(context.Background(), request)
+		if err != nil {
+			t.Fatalf("count tokens: %v", err)
+		}
+		if tokenCount == 0 {
+			t.Fatal("expected non-zero token count")
+		}
+	})
+	t.Run("OpenAiGenerator/Generate", func(t *testing.T) {
+		// Create an OpenAI client
+		apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
+		client := oai.NewClient(
+			option.WithAPIKey(apiKey),
+		)
+		// Instantiate a OpenAI Generator
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		dialog := Dialog{
 			{
-				ID:           resp.Candidates[0].Blocks[0].ID,
-				ModalityType: Text,
-				Content:      Str("123.45"),
-			},
-		},
-	})
-	request.Dialog = dialog
-	request.Options = nil
-	resp, err = gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
-		t.Fatal("expected non-empty content")
-	}
-}
-func testOpenAiGenerator_Stream_parallelToolUse(t *testing.T) {
-	// Create an OpenAI client
-	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
-	client := oai.NewClient(
-		option.WithAPIKey(apiKey),
-	)
-	// Define request tools
-	tickerTool := Tool{
-		Name:        "get_stock_price",
-		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: func() *jsonschema.Schema {
-			schema, err := GenerateSchema[struct {
-				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-			}]()
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			return schema
-		}(),
-	}
-	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	tickerTool.Description += "\nYou can call this tool in parallel"
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Which stock, Apple vs. Microsoft, is more expensive?"),
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("Hi!"),
+					},
 				},
 			},
-		},
-	}
-	request := GenerationRequest{
-		Model:        oai.ChatModelGPT4oMini,
-		Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
-		Dialog:       dialog,
-		Tools:        []Tool{tickerTool},
-	}
-	// Stream a response
-	var blocks []Block
-	for chunk := range gen.Stream(context.Background(), request) {
-		if chunk.Err != nil {
-			t.Fatalf("stream returned error: %v", chunk.Err)
 		}
-		blocks = append(blocks, chunk.Block)
-	}
-	if len(blocks) > 1 {
-	}
-	// collect the blocks
-	var prevToolCallId string
-	var toolCalls []Block
-	var toolcallArgs string
-	var toolCallInput ToolCallInput
-	for _, block := range blocks {
-		// Skip metadata blocks
-		if block.BlockType == MetadataBlockType {
-			continue
+		request := GenerationRequest{
+			Model:        oai.ChatModelGPT4oMini,
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+			Dialog:       dialog,
 		}
-		if block.ID != "" && block.ID != prevToolCallId {
-			if toolcallArgs != "" {
-				// Parse the arguments string into a map
-				if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				// Marshal back to JSON for consistent representation
-				toolUseJSON, err := json.Marshal(toolCallInput)
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
-				toolCallInput = ToolCallInput{}
-				toolcallArgs = ""
-			}
-			prevToolCallId = block.ID
-			toolCalls = append(toolCalls, Block{
-				ID:           block.ID,
-				BlockType:    ToolCall,
-				ModalityType: Text,
-				MimeType:     "text/plain",
-			})
-			toolCallInput.Name = block.Content.String()
-		} else {
-			toolcallArgs += block.Content.String()
-		}
-	}
-	if toolcallArgs != "" {
-		// Parse the arguments string into a map
-		if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		// Marshal back to JSON for consistent representation
-		toolUseJSON, err := json.Marshal(toolCallInput)
+		// Generate a response
+		resp, err := gen.Generate(context.Background(), request)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
-		toolCallInput = ToolCallInput{}
-	}
-	if got := len(toolCalls); got == 0 {
-		t.Fatal("expected at least one item")
-	}
-	dialog = append(dialog, Message{
-		Role:   Assistant,
-		Blocks: toolCalls,
-	}, Message{
-		Role: ToolResult,
-		Blocks: []Block{
-			{
-				ID:           toolCalls[0].ID,
-				ModalityType: Text,
-				Content:      Str("123.45"),
-			},
-		},
-	}, Message{
-		Role: ToolResult,
-		Blocks: []Block{
-			{
-				ID:           toolCalls[1].ID,
-				ModalityType: Text,
-				Content:      Str("678.45"),
-			},
-		},
-	})
-	// Stream a response
-	blocks = nil
-	request.Dialog = dialog
-	for chunk := range gen.Stream(context.Background(), request) {
-		if chunk.Err != nil {
-			t.Fatalf("stream returned error: %v", chunk.Err)
+		// The exact response text may vary, so we'll just print a placeholder
+		// Customize generation parameters
+		request.Options = NewGenerationOptions(
+			WithTopK(10),
+			WithCandidateCount(2),
+			WithMaxGenerationTokens(1024),
+		)
+		resp, err = gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		blocks = append(blocks, chunk.Block)
-	}
-	if len(blocks) > 1 {
-	}
-}
-func testOpenAiGenerator_RequestTools_parallelToolUse(t *testing.T) {
-	requireLiveAPIKey(t, "OPENAI_API_KEY")
-	// Create an OpenAI client
-	client := oai.NewClient()
-	// Define request tools
-	tickerTool := Tool{
-		Name:        "get_stock_price",
-		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: func() *jsonschema.Schema {
-			schema, err := GenerateSchema[struct {
-				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-			}]()
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+		if got := len(resp.Candidates); got == 0 {
+			t.Fatal("expected at least one item")
+		}
+	})
+	t.Run("OpenAiGenerator/Generate/audio", func(t *testing.T) {
+		apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
+		audioBytes, err := os.ReadFile("sample.wav")
+		if err != nil {
+			t.Skip("could not open sample.wav")
+			return
+		}
+		// Encode as base64 for inline audio usage
+		audioBase64 := Str(base64.StdEncoding.EncodeToString(audioBytes))
+		client := oai.NewClient(
+			option.WithAPIKey(apiKey),
+		)
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		// Using inline audio data
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Audio,
+						MimeType:     "audio/wav",
+						Content:      audioBase64,
+					},
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("In this audio, a person is introducing themselves. What is the name of person in the greeting in this audio? Return a one word response of the name"),
+					},
+				},
+			},
+		}
+		resp, err := gen.Generate(context.Background(), GenerationRequest{
+			Model:        oai.ChatModelGPT4oAudioPreview,
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+			Dialog:       dialog,
+			Options:      NewGenerationOptions(WithMaxGenerationTokens(128)),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(resp.Candidates) > 0 && len(resp.Candidates[0].Blocks) > 0 {
+			if got := strings.ToLower(resp.Candidates[0].Blocks[0].Content.String()); !strings.Contains(got, "friday") {
+				t.Fatalf("content = %q, want it to contain friday", got)
 			}
-			return schema
-		}(),
-	}
-	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	tickerTool.Description += "\nYou can call this tool in parallel"
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Which stock, Apple vs. Microsoft, is more expensive?"),
+		}
+	})
+	t.Run("OpenAiGenerator/Generate/image", func(t *testing.T) {
+		apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
+		imgBytes, err := os.ReadFile("sample.jpg")
+		if err != nil {
+			t.Skip("could not open sample.jpg")
+			return
+		}
+		imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))
+		client := oai.NewClient(
+			option.WithAPIKey(apiKey),
+		)
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Image,
+						MimeType:     "image/jpeg",
+						Content:      imgBase64,
+					},
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("What is in this image? (Hint, it's a character from The Croods, a DreamWorks animated movie.)"),
+					},
 				},
 			},
-		},
-	}
-	request := GenerationRequest{
-		Model:        oai.ChatModelGPT4oMini,
-		Instructions: SystemMessage(TextBlock(openAIStockComparisonInstructions)),
-		Dialog:       dialog,
-		Tools:        []Tool{tickerTool},
-	}
-	// Generate a response
-	resp, err := gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
-		t.Fatal("expected non-empty content")
-	}
-	if got := resp.Candidates[0].Blocks[1].Content.String(); got == "" {
-		t.Fatal("expected non-empty content")
-	}
-	dialog = append(dialog, resp.Candidates[0], Message{
-		Role: ToolResult,
-		Blocks: []Block{
-			{
-				ID:           resp.Candidates[0].Blocks[0].ID,
-				ModalityType: Text,
-				Content:      Str("123.45"),
-			},
-		},
-	}, Message{
-		Role: ToolResult,
-		Blocks: []Block{
-			{
-				ID:           resp.Candidates[0].Blocks[1].ID,
-				ModalityType: Text,
-				Content:      Str("678.45"),
-			},
-		},
+		}
+		resp, err := gen.Generate(context.Background(), GenerationRequest{
+			Model:        oai.ChatModelGPT4o,
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+			Dialog:       dialog,
+			Options:      NewGenerationOptions(WithMaxGenerationTokens(512)),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(resp.Candidates) != 1 {
+			t.Fatalf("candidates = %d, want 1", len(resp.Candidates))
+		}
+		if len(resp.Candidates[0].Blocks) != 1 {
+			t.Fatalf("blocks = %d, want 1", len(resp.Candidates[0].Blocks))
+		}
+		if !strings.Contains(resp.Candidates[0].Blocks[0].Content.String(), "Crood") {
+			t.Fatalf("content does not contain Crood")
+		}
 	})
-	request.Dialog = dialog
-	request.Options = nil
-	resp, err = gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
-		t.Fatal("expected non-empty content")
-	}
-}
-func testOpenAiGenerator_RequestTools_openRouter(t *testing.T) {
-	// Define request tools
-	tickerTool := Tool{
-		Name:        "get_stock_price",
-		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: func() *jsonschema.Schema {
-			schema, err := GenerateSchema[struct {
-				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-			}]()
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+	t.Run("OpenAiGenerator/Generate/openRouter", func(t *testing.T) {
+		// Create an OpenAI client for open router
+		client := oai.NewClient(
+			option.WithBaseURL("https://openrouter.ai/api/v1/"),
+			option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
+		)
+		// Instantiate a OpenAI Generator
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("Hi!"),
+					},
+				},
+			},
+		}
+		// Generate a response
+		resp, err := gen.Generate(context.Background(), GenerationRequest{
+			Model:        "google/gemini-2.5-pro-preview-03-25",
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+			Dialog:       dialog,
+			Options:      NewGenerationOptions(WithMaxGenerationTokens(1024)),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The exact response text may vary, so we'll just print a placeholder
+		if got := len(resp.Candidates); got == 0 {
+			t.Fatal("expected at least one item")
+		}
+	})
+	t.Run("OpenAiGenerator/Generate/pdf", func(t *testing.T) {
+		apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
+		pdfBytes, err := os.ReadFile("sample.pdf")
+		if err != nil {
+			t.Skip("could not open sample.wav")
+			return
+		}
+		client := oai.NewClient(
+			option.WithAPIKey(apiKey),
+		)
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		// Create a dialog with PDF content
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					TextBlock("What is the title of this PDF? Just output the title and nothing else"),
+					PDFBlock(pdfBytes, "sample.pdf"),
+				},
+			},
+		}
+		// Generate a response
+		ctx := context.Background()
+		response, err := gen.Generate(ctx, GenerationRequest{
+			Model:        oai.ChatModelGPT4_1,
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
+			Dialog:       dialog,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The response would contain the model's analysis of the PDF
+		if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
+			if got := response.Candidates[0].Blocks[0].Content.String(); got == "" {
+				t.Fatal("expected non-empty content")
 			}
-			return schema
-		}(),
-	}
-	// Create an OpenAI client for open router
-	client := oai.NewClient(
-		option.WithBaseURL("https://openrouter.ai/api/v1/"),
-		option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
-	)
-	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	dialog := Dialog{
-		{
+		}
+	})
+	t.Run("OpenAiGenerator/Generate/thinking", func(t *testing.T) {
+		requireLiveAPIKey(t, "OPENAI_API_KEY")
+		// Create an OpenAI client
+		client := oai.NewClient()
+		// Instantiate a OpenAI Generator
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("Hi!"),
+					},
+				},
+			},
+		}
+		// Customize generation parameters
+		request := GenerationRequest{
+			Model:        oai.ChatModelO3Mini,
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+			Dialog:       dialog,
+			Options: NewGenerationOptions(
+				WithMaxGenerationTokens(4096),
+				WithThinkingBudget("low"),
+				WithTemperature(1.0),
+			),
+		}
+		// Generate a response
+		resp, err := gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The exact response text may vary, so we'll just print a placeholder
+		dialog = append(dialog, resp.Candidates[0], Message{
 			Role: User,
 			Blocks: []Block{
 				{
 					BlockType:    Content,
 					ModalityType: Text,
-					Content:      Str("What is the price of Apple stock?"),
+					Content:      Str("What can you do?"),
 				},
 			},
-		},
-	}
-	request := GenerationRequest{
-		Model:        "google/gemini-2.5-pro-preview-03-25",
-		Instructions: SystemMessage(TextBlock(openAIStockInstructions)),
-		Dialog:       dialog,
-		Tools:        []Tool{tickerTool},
-		Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
-	}
-	// Generate a response
-	resp, err := gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
-		t.Fatal("expected non-empty content")
-	}
-	dialog = append(dialog, resp.Candidates[0], Message{
-		Role: ToolResult,
-		Blocks: []Block{
-			{
-				ID:           resp.Candidates[0].Blocks[0].ID,
-				ModalityType: Text,
-				Content:      Str("123.45"),
-			},
-		},
+		})
+		request.Dialog = dialog
+		resp, err = gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := len(resp.Candidates); got == 0 {
+			t.Fatal("expected at least one item")
+		}
 	})
-	request.Dialog = dialog
-	request.Options = nil
-	resp, err = gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
-		t.Fatal("expected non-empty content")
-	}
-}
-func testOpenAiGenerator_RequestTools_openRouterParallelToolUse(t *testing.T) {
-	// Create an OpenAI client
-	client := oai.NewClient(
-		option.WithBaseURL("https://openrouter.ai/api/v1/"),
-		option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
-	)
-	// Define request tools
-	tickerTool := Tool{
-		Name:        "get_stock_price",
-		Description: "Get the current stock price for a given ticker symbol.",
-		InputSchema: func() *jsonschema.Schema {
-			schema, err := GenerateSchema[struct {
-				Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
-			}]()
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			return schema
-		}(),
-	}
-	// Instantiate a OpenAI Generator
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Which stock, Apple vs. Microsoft, is more expensive?"),
+	t.Run("OpenAiGenerator/RequestTools", func(t *testing.T) {
+		requireLiveAPIKey(t, "OPENAI_API_KEY")
+		// Create an OpenAI client
+		client := oai.NewClient(option.WithBaseURL("https://gateway.ai.cloudflare.com/v1/4eee6dd2fdc8cebc7802c5a638f460fe/cpe/openai/"))
+		// Instantiate a OpenAI Generator
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		tickerTool := Tool{
+			Name:        "get_stock_price",
+			Description: "Get the current stock price for a given ticker symbol.",
+			InputSchema: func() *jsonschema.Schema {
+				schema, err := GenerateSchema[struct {
+					Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+				}]()
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return schema
+			}(),
+		}
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("What is the price of Apple stock?"),
+					},
 				},
 			},
-		},
-	}
-	request := GenerationRequest{
-		Model:        "google/gemini-2.5-pro-preview-03-25",
-		Instructions: SystemMessage(TextBlock(openAIStockComparisonInstructions)),
-		Dialog:       dialog,
-		Tools:        []Tool{tickerTool},
-	}
-	// Generate a response
-	resp, err := gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
-		t.Fatal("expected non-empty content")
-	}
-	if got := resp.Candidates[0].Blocks[1].Content.String(); got == "" {
-		t.Fatal("expected non-empty content")
-	}
-	dialog = append(dialog, resp.Candidates[0], Message{
-		Role: ToolResult,
-		Blocks: []Block{
-			{
-				ID:           resp.Candidates[0].Blocks[0].ID,
-				ModalityType: Text,
-				Content:      Str("123.45"),
-			},
-		},
-	}, Message{
-		Role: ToolResult,
-		Blocks: []Block{
-			{
-				ID:           resp.Candidates[0].Blocks[1].ID,
-				ModalityType: Text,
-				Content:      Str("678.45"),
-			},
-		},
-	})
-	request.Dialog = dialog
-	request.Options = nil
-	resp, err = gen.Generate(context.Background(), request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
-		t.Fatal("expected non-empty content")
-	}
-}
-func testOpenAiGenerator_Count_Example(t *testing.T) {
-	// Create an OpenAI client
-	client := oai.NewClient()
-	// Create a generator
-	generator := NewOpenAiGenerator(&client.Chat.Completions)
-	// Create a dialog with a user message
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("What is the capital of France?"),
-				},
-			},
-		},
-	}
-	request := GenerationRequest{
-		Model:        oai.ChatModelGPT4o,
-		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
-		Dialog:       dialog,
-	}
-	// Count tokens in the dialog
-	tokenCount, err := generator.Count(context.Background(), request)
-	if err != nil {
-		t.Fatalf("count tokens: %v", err)
-	}
-	if tokenCount == 0 {
-		t.Fatal("expected non-zero token count")
-	}
-	// Add a response to the dialog
-	dialog = append(dialog, Message{
-		Role: Assistant,
-		Blocks: []Block{
-			{
-				BlockType:    Content,
-				ModalityType: Text,
-				Content:      Str("The capital of France is Paris. It's known as the 'City of Light' and is famous for landmarks like the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral."),
-			},
-		},
-	})
-	request.Dialog = dialog
-	// Count tokens in the updated dialog
-	tokenCount, err = generator.Count(context.Background(), request)
-	if err != nil {
-		t.Fatalf("count tokens: %v", err)
-	}
-	if tokenCount == 0 {
-		t.Fatal("expected non-zero token count")
-	}
-}
-func testOpenAiGenerator_Generate_pdf(t *testing.T) {
-	apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
-	pdfBytes, err := os.ReadFile("sample.pdf")
-	if err != nil {
-		t.Skip("could not open sample.wav")
-		return
-	}
-	client := oai.NewClient(
-		option.WithAPIKey(apiKey),
-	)
-	gen := NewOpenAiGenerator(&client.Chat.Completions)
-	// Create a dialog with PDF content
-	dialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
-				TextBlock("What is the title of this PDF? Just output the title and nothing else"),
-				PDFBlock(pdfBytes, "sample.pdf"),
-			},
-		},
-	}
-	// Generate a response
-	ctx := context.Background()
-	response, err := gen.Generate(ctx, GenerationRequest{
-		Model:        oai.ChatModelGPT4_1,
-		Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
-		Dialog:       dialog,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// The response would contain the model's analysis of the PDF
-	if len(response.Candidates) > 0 && len(response.Candidates[0].Blocks) > 0 {
-		if got := response.Candidates[0].Blocks[0].Content.String(); got == "" {
+		}
+		request := GenerationRequest{
+			Model:        oai.ChatModelGPT4oMini,
+			Instructions: SystemMessage(TextBlock(openAIStockInstructions)),
+			Dialog:       dialog,
+			Tools:        []Tool{tickerTool},
+			Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
+		}
+		// Generate a response
+		resp, err := gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
 			t.Fatal("expected non-empty content")
 		}
-	}
+		dialog = append(dialog, resp.Candidates[0], Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           resp.Candidates[0].Blocks[0].ID,
+					ModalityType: Text,
+					Content:      Str("123.45"),
+				},
+			},
+		})
+		request.Dialog = dialog
+		request.Options = nil
+		resp, err = gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
+	})
+	t.Run("OpenAiGenerator/RequestTools/openRouter", func(t *testing.T) {
+		// Define request tools
+		tickerTool := Tool{
+			Name:        "get_stock_price",
+			Description: "Get the current stock price for a given ticker symbol.",
+			InputSchema: func() *jsonschema.Schema {
+				schema, err := GenerateSchema[struct {
+					Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+				}]()
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return schema
+			}(),
+		}
+		// Create an OpenAI client for open router
+		client := oai.NewClient(
+			option.WithBaseURL("https://openrouter.ai/api/v1/"),
+			option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
+		)
+		// Instantiate a OpenAI Generator
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("What is the price of Apple stock?"),
+					},
+				},
+			},
+		}
+		request := GenerationRequest{
+			Model:        "google/gemini-2.5-pro-preview-03-25",
+			Instructions: SystemMessage(TextBlock(openAIStockInstructions)),
+			Dialog:       dialog,
+			Tools:        []Tool{tickerTool},
+			Options:      NewGenerationOptions(WithToolChoice("get_stock_price")),
+		}
+		// Generate a response
+		resp, err := gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
+		dialog = append(dialog, resp.Candidates[0], Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           resp.Candidates[0].Blocks[0].ID,
+					ModalityType: Text,
+					Content:      Str("123.45"),
+				},
+			},
+		})
+		request.Dialog = dialog
+		request.Options = nil
+		resp, err = gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
+	})
+	t.Run("OpenAiGenerator/RequestTools/openRouterParallelToolUse", func(t *testing.T) {
+		// Create an OpenAI client
+		client := oai.NewClient(
+			option.WithBaseURL("https://openrouter.ai/api/v1/"),
+			option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
+		)
+		// Define request tools
+		tickerTool := Tool{
+			Name:        "get_stock_price",
+			Description: "Get the current stock price for a given ticker symbol.",
+			InputSchema: func() *jsonschema.Schema {
+				schema, err := GenerateSchema[struct {
+					Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+				}]()
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return schema
+			}(),
+		}
+		// Instantiate a OpenAI Generator
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("Which stock, Apple vs. Microsoft, is more expensive?"),
+					},
+				},
+			},
+		}
+		request := GenerationRequest{
+			Model:        "google/gemini-2.5-pro-preview-03-25",
+			Instructions: SystemMessage(TextBlock(openAIStockComparisonInstructions)),
+			Dialog:       dialog,
+			Tools:        []Tool{tickerTool},
+		}
+		// Generate a response
+		resp, err := gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
+		if got := resp.Candidates[0].Blocks[1].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
+		dialog = append(dialog, resp.Candidates[0], Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           resp.Candidates[0].Blocks[0].ID,
+					ModalityType: Text,
+					Content:      Str("123.45"),
+				},
+			},
+		}, Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           resp.Candidates[0].Blocks[1].ID,
+					ModalityType: Text,
+					Content:      Str("678.45"),
+				},
+			},
+		})
+		request.Dialog = dialog
+		request.Options = nil
+		resp, err = gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
+	})
+	t.Run("OpenAiGenerator/RequestTools/parallelToolUse", func(t *testing.T) {
+		requireLiveAPIKey(t, "OPENAI_API_KEY")
+		// Create an OpenAI client
+		client := oai.NewClient()
+		// Define request tools
+		tickerTool := Tool{
+			Name:        "get_stock_price",
+			Description: "Get the current stock price for a given ticker symbol.",
+			InputSchema: func() *jsonschema.Schema {
+				schema, err := GenerateSchema[struct {
+					Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+				}]()
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return schema
+			}(),
+		}
+		// Instantiate a OpenAI Generator
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		tickerTool.Description += "\nYou can call this tool in parallel"
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("Which stock, Apple vs. Microsoft, is more expensive?"),
+					},
+				},
+			},
+		}
+		request := GenerationRequest{
+			Model:        oai.ChatModelGPT4oMini,
+			Instructions: SystemMessage(TextBlock(openAIStockComparisonInstructions)),
+			Dialog:       dialog,
+			Tools:        []Tool{tickerTool},
+		}
+		// Generate a response
+		resp, err := gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
+		if got := resp.Candidates[0].Blocks[1].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
+		dialog = append(dialog, resp.Candidates[0], Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           resp.Candidates[0].Blocks[0].ID,
+					ModalityType: Text,
+					Content:      Str("123.45"),
+				},
+			},
+		}, Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           resp.Candidates[0].Blocks[1].ID,
+					ModalityType: Text,
+					Content:      Str("678.45"),
+				},
+			},
+		})
+		request.Dialog = dialog
+		request.Options = nil
+		resp, err = gen.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := resp.Candidates[0].Blocks[0].Content.String(); got == "" {
+			t.Fatal("expected non-empty content")
+		}
+	})
+	t.Run("OpenAiGenerator/Stream", func(t *testing.T) {
+		// Create an OpenAI client
+		apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
+		client := oai.NewClient(
+			option.WithAPIKey(apiKey),
+		)
+		// Instantiate a OpenAI Generator
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("Hi!"),
+					},
+				},
+			},
+		}
+		// Stream a response
+		blocks := make([][]Block, 2)
+		for chunk := range gen.Stream(context.Background(), GenerationRequest{
+			Model:        oai.ChatModelGPT4oMini,
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+			Dialog:       dialog,
+			Options:      NewGenerationOptions(WithCandidateCount(2)),
+		}) {
+			if chunk.Err != nil {
+				t.Fatalf("stream returned error: %v", chunk.Err)
+			}
+			blocks[chunk.CandidatesIndex] = append(blocks[chunk.CandidatesIndex], chunk.Block)
+		}
+		if len(blocks) == 2 && len(blocks[0]) > 1 && len(blocks[1]) > 1 {
+		}
+	})
+	t.Run("OpenAiGenerator/Stream/parallelToolUse", func(t *testing.T) {
+		// Create an OpenAI client
+		apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
+		client := oai.NewClient(
+			option.WithAPIKey(apiKey),
+		)
+		// Define request tools
+		tickerTool := Tool{
+			Name:        "get_stock_price",
+			Description: "Get the current stock price for a given ticker symbol.",
+			InputSchema: func() *jsonschema.Schema {
+				schema, err := GenerateSchema[struct {
+					Ticker string `json:"ticker" jsonschema:"required" jsonschema_description:"The stock ticker symbol, e.g. AAPL for Apple Inc."`
+				}]()
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return schema
+			}(),
+		}
+		// Instantiate a OpenAI Generator
+		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		tickerTool.Description += "\nYou can call this tool in parallel"
+		dialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("Which stock, Apple vs. Microsoft, is more expensive?"),
+					},
+				},
+			},
+		}
+		request := GenerationRequest{
+			Model:        oai.ChatModelGPT4oMini,
+			Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
+			Dialog:       dialog,
+			Tools:        []Tool{tickerTool},
+		}
+		// Stream a response
+		var blocks []Block
+		for chunk := range gen.Stream(context.Background(), request) {
+			if chunk.Err != nil {
+				t.Fatalf("stream returned error: %v", chunk.Err)
+			}
+			blocks = append(blocks, chunk.Block)
+		}
+		if len(blocks) > 1 {
+		}
+		// collect the blocks
+		var prevToolCallId string
+		var toolCalls []Block
+		var toolcallArgs string
+		var toolCallInput ToolCallInput
+		for _, block := range blocks {
+			// Skip metadata blocks
+			if block.BlockType == MetadataBlockType {
+				continue
+			}
+			if block.ID != "" && block.ID != prevToolCallId {
+				if toolcallArgs != "" {
+					// Parse the arguments string into a map
+					if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
+						t.Fatalf("unexpected error: %v", err)
+					}
+					// Marshal back to JSON for consistent representation
+					toolUseJSON, err := json.Marshal(toolCallInput)
+					if err != nil {
+						t.Fatalf("unexpected error: %v", err)
+					}
+					toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
+					toolCallInput = ToolCallInput{}
+					toolcallArgs = ""
+				}
+				prevToolCallId = block.ID
+				toolCalls = append(toolCalls, Block{
+					ID:           block.ID,
+					BlockType:    ToolCall,
+					ModalityType: Text,
+					MimeType:     "text/plain",
+				})
+				toolCallInput.Name = block.Content.String()
+			} else {
+				toolcallArgs += block.Content.String()
+			}
+		}
+		if toolcallArgs != "" {
+			// Parse the arguments string into a map
+			if err := json.Unmarshal([]byte(toolcallArgs), &toolCallInput.Parameters); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			// Marshal back to JSON for consistent representation
+			toolUseJSON, err := json.Marshal(toolCallInput)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			toolCalls[len(toolCalls)-1].Content = Str(toolUseJSON)
+			toolCallInput = ToolCallInput{}
+		}
+		if got := len(toolCalls); got == 0 {
+			t.Fatal("expected at least one item")
+		}
+		dialog = append(dialog, Message{
+			Role:   Assistant,
+			Blocks: toolCalls,
+		}, Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           toolCalls[0].ID,
+					ModalityType: Text,
+					Content:      Str("123.45"),
+				},
+			},
+		}, Message{
+			Role: ToolResult,
+			Blocks: []Block{
+				{
+					ID:           toolCalls[1].ID,
+					ModalityType: Text,
+					Content:      Str("678.45"),
+				},
+			},
+		})
+		// Stream a response
+		blocks = nil
+		request.Dialog = dialog
+		for chunk := range gen.Stream(context.Background(), request) {
+			if chunk.Err != nil {
+				t.Fatalf("stream returned error: %v", chunk.Err)
+			}
+			blocks = append(blocks, chunk.Block)
+		}
+		if len(blocks) > 1 {
+		}
+	})
+	t.Run("OpenAiGenerator/calculateImageTokens", func(t *testing.T) { testOpenAiGenerator_calculateImageTokens(t) })
 }

@@ -188,18 +188,6 @@ func testStreamingAdapterPreservesResponseExtraFields(t *testing.T) {
 	}
 }
 
-func testStreamingAdapterRejectsConflictingResponseExtraFields(t *testing.T) {
-	adapter := &StreamingAdapter{S: &mockStreamingGenerator{chunks: []StreamChunk{
-		{Block: TextBlock("hello"), ResponseExtraFields: map[string]interface{}{"request_id": "req_1"}},
-		{Block: TextBlock(" world"), ResponseExtraFields: map[string]interface{}{"request_id": "req_2"}},
-	}}}
-
-	_, err := adapter.Generate(t.Context(), GenerationRequest{})
-	if err == nil || !strings.Contains(err.Error(), "conflicting response extra field") {
-		t.Fatalf("Generate() error = %v, want conflicting response extra field", err)
-	}
-}
-
 func testStreamChunkErrorIsNotSerialized(t *testing.T) {
 	chunk := StreamChunk{
 		Block: TextBlock("partial"),

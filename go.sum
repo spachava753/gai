@@ -97,6 +97,8 @@ github.com/spachava753/laas v0.0.0-20260827055343-2491436b07dd h1:RTVzhnNU7skjax
 github.com/spachava753/laas v0.0.0-20260827055343-2491436b07dd/go.mod h1:rkhIBMvRkAte3M2bZS4+RjRwDIZYeHHOAnBbfu7H0Lw=
 github.com/spachava753/laas v0.0.0-20260827064109-d631d923c35e h1:TpvTXRVl/bdMI9KkXxEZMekSXmqNrTRRzk1dCGY6ng4=
 github.com/spachava753/laas v0.0.0-20260827064109-d631d923c35e/go.mod h1:rkhIBMvRkAte3M2bZS4+RjRwDIZYeHHOAnBbfu7H0Lw=
+github.com/spachava753/laas v0.0.0-20260827142137-e27fadbcbeab h1:kTzlH5nJEl6gwtRA8DdPparN757fCGAr04OFJNFIqXU=
+github.com/spachava753/laas v0.0.0-20260827142137-e27fadbcbeab/go.mod h1:rkhIBMvRkAte3M2bZS4+RjRwDIZYeHHOAnBbfu7H0Lw=
 github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 h1:uOfcYT+3QungH6tIGSVCR/Y3KJmgJiHcojJbMTPDZAI=
 github.com/standard-webhooks/standard-webhooks/libraries v0.0.1/go.mod h1:L1MQhA6x4dn9r007T033lsaZMv9EmBAdXyU/+EF40fo=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=

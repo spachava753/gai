@@ -18,359 +18,349 @@ func (m *mockGenerator) Generate(ctx context.Context, request GenerationRequest)
 }
 
 func TestFactoryDefaultScenarios(t *testing.T) {
-	t.Run("NewFallbackGenerator", testNewFallbackGenerator)
-	t.Run("NewGenerationOptions", testNewGenerationOptions)
-	t.Run("NewHTTPStatusFallbackConfig", testNewHTTPStatusFallbackConfig)
-	t.Run("NewRateLimitOnlyFallbackConfig", testNewRateLimitOnlyFallbackConfig)
-}
+	t.Run("NewFallbackGenerator", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			generators []Generator
+			config     *FallbackConfig
+			wantErr    bool
+		}{
+			{
+				name:       "too few generators",
+				generators: []Generator{&mockGenerator{}},
+				config:     nil,
+				wantErr:    true,
+			},
+			{
+				name:       "exactly two generators",
+				generators: []Generator{&mockGenerator{}, &mockGenerator{}},
+				config:     nil,
+				wantErr:    false,
+			},
+			{
+				name:       "more than two generators",
+				generators: []Generator{&mockGenerator{}, &mockGenerator{}, &mockGenerator{}},
+				config:     nil,
+				wantErr:    false,
+			},
+			{
+				name:       "with custom config",
+				generators: []Generator{&mockGenerator{}, &mockGenerator{}},
+				config:     &FallbackConfig{ShouldFallback: func(err error) bool { return true }},
+				wantErr:    false,
+			},
+		}
 
-func testNewFallbackGenerator(t *testing.T) {
-	tests := []struct {
-		name       string
-		generators []Generator
-		config     *FallbackConfig
-		wantErr    bool
-	}{
-		{
-			name:       "too few generators",
-			generators: []Generator{&mockGenerator{}},
-			config:     nil,
-			wantErr:    true,
-		},
-		{
-			name:       "exactly two generators",
-			generators: []Generator{&mockGenerator{}, &mockGenerator{}},
-			config:     nil,
-			wantErr:    false,
-		},
-		{
-			name:       "more than two generators",
-			generators: []Generator{&mockGenerator{}, &mockGenerator{}, &mockGenerator{}},
-			config:     nil,
-			wantErr:    false,
-		},
-		{
-			name:       "with custom config",
-			generators: []Generator{&mockGenerator{}, &mockGenerator{}},
-			config:     &FallbackConfig{ShouldFallback: func(err error) bool { return true }},
-			wantErr:    false,
-		},
-	}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				_, err := NewFallbackGenerator(tt.generators, tt.config)
+				if (err != nil) != tt.wantErr {
+					t.Errorf("NewFallbackGenerator() error = %v, wantErr %v", err, tt.wantErr)
+				}
+			})
+		}
+	})
+	t.Run("NewGenerationOptions", func(t *testing.T) { testNewGenerationOptions(t) })
+	t.Run("NewHTTPStatusFallbackConfig", func(t *testing.T) {
+		config := NewHTTPStatusFallbackConfig(400, 429)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewFallbackGenerator(tt.generators, tt.config)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewFallbackGenerator() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
+		// Should fallback on rate limit API errors.
+		if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}) {
+			t.Error("Expected to fallback on rate limit errors")
+		}
+
+		// Should fallback on specified status codes.
+		if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 400}) {
+			t.Error("Expected to fallback on status code 400")
+		}
+
+		if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429}) {
+			t.Error("Expected to fallback on status code 429")
+		}
+
+		// Should not fallback on other status codes.
+		if config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindNotFound, StatusCode: 404}) {
+			t.Error("Expected not to fallback on status code 404")
+		}
+
+		if config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServer, StatusCode: 500}) {
+			t.Error("Expected not to fallback on status code 500 when not specified")
+		}
+	})
+	t.Run("NewRateLimitOnlyFallbackConfig", func(t *testing.T) {
+		config := NewRateLimitOnlyFallbackConfig()
+
+		// Should fallback on rate limit API errors.
+		if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}) {
+			t.Error("Expected to fallback on rate limit errors")
+		}
+
+		// Should not fallback on other errors.
+		if config.ShouldFallback(errors.New("some other error")) {
+			t.Error("Expected not to fallback on non-rate-limit errors")
+		}
+
+		// Should not fallback on non-rate-limit API errors, even with other status codes.
+		if config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 429}) {
+			t.Error("Expected not to fallback on non-rate-limit API errors")
+		}
+	})
 }
 
 func TestFallbackCompositionScenarios(t *testing.T) {
-	t.Run("FallbackGenerator", testFallbackGenerator)
-	t.Run("FallbackGenerator/Generate", testFallbackGenerator_Generate)
-}
+	t.Run("FallbackGenerator", func(t *testing.T) {
+		openAIGen := &mockGenerator{response: Response{Candidates: []Message{{Role: Assistant, Blocks: []Block{TextBlock("Response from OpenAI")}}}}}
+		anthropicGen := &mockGenerator{response: Response{Candidates: []Message{{Role: Assistant, Blocks: []Block{TextBlock("Response from Anthropic")}}}}}
 
-func testFallbackGenerator_Generate(t *testing.T) {
-	// Create a successful response for testing
-	successResponse := Response{
-		Candidates: []Message{
-			{
-				Role: Assistant,
-				Blocks: []Block{
-					{
-						BlockType:    Content,
-						ModalityType: Text,
-						Content:      Str("Successful response"),
-					},
-				},
-			},
-		},
-		FinishReason: EndTurn,
-		UsageMetadata: Metadata{
-			UsageMetricInputTokens:      10,
-			UsageMetricGenerationTokens: 5,
-		},
-	}
+		fallbackGen, err := NewFallbackGenerator(
+			[]Generator{openAIGen, anthropicGen},
+			&FallbackConfig{ShouldFallback: NewHTTPStatusFallbackConfig(400, 429, 500, 502, 503, 504).ShouldFallback},
+		)
+		if err != nil {
+			t.Fatalf("NewFallbackGenerator returned error: %v", err)
+		}
 
-	// Create a fallback response for testing
-	fallbackResponse := Response{
-		Candidates: []Message{
-			{
-				Role: Assistant,
-				Blocks: []Block{
-					{
-						BlockType:    Content,
-						ModalityType: Text,
-						Content:      Str("Fallback response"),
-					},
-				},
-			},
-		},
-		FinishReason: EndTurn,
-		UsageMetadata: Metadata{
-			UsageMetricInputTokens:      10,
-			UsageMetricGenerationTokens: 7,
-		},
-	}
+		dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Tell me about AI fallback strategies")}}}
+		resp, err := fallbackGen.Generate(context.Background(), GenerationRequest{Dialog: dialog})
+		if err != nil {
+			t.Fatalf("Generate returned error: %v", err)
+		}
 
-	// Create a simple test dialog
-	testDialog := Dialog{
-		{
-			Role: User,
-			Blocks: []Block{
+		content := requireContentBlock(t, requireBlock(t, requireCandidate(t, resp), 0))
+		if got, want := content, "Response from OpenAI"; got != want {
+			t.Fatalf("content = %q, want %q", got, want)
+		}
+	})
+	t.Run("FallbackGenerator/Generate", func(t *testing.T) {
+		// Create a successful response for testing
+		successResponse := Response{
+			Candidates: []Message{
 				{
-					BlockType:    Content,
-					ModalityType: Text,
-					Content:      Str("Test message"),
+					Role: Assistant,
+					Blocks: []Block{
+						{
+							BlockType:    Content,
+							ModalityType: Text,
+							Content:      Str("Successful response"),
+						},
+					},
 				},
 			},
-		},
-	}
+			FinishReason: EndTurn,
+			UsageMetadata: Metadata{
+				UsageMetricInputTokens:      10,
+				UsageMetricGenerationTokens: 5,
+			},
+		}
 
-	testOptions := NewGenerationOptions(WithTemperature(0.7))
+		// Create a fallback response for testing
+		fallbackResponse := Response{
+			Candidates: []Message{
+				{
+					Role: Assistant,
+					Blocks: []Block{
+						{
+							BlockType:    Content,
+							ModalityType: Text,
+							Content:      Str("Fallback response"),
+						},
+					},
+				},
+			},
+			FinishReason: EndTurn,
+			UsageMetadata: Metadata{
+				UsageMetricInputTokens:      10,
+				UsageMetricGenerationTokens: 7,
+			},
+		}
 
-	tests := []struct {
-		name       string
-		generators []Generator
-		config     *FallbackConfig
-		dialog     Dialog
-		options    GenerationOptions
-		want       Response
-		wantErr    bool
-	}{
-		{
-			name: "first generator succeeds",
-			generators: []Generator{
-				&mockGenerator{response: successResponse, err: nil},
-				&mockGenerator{response: fallbackResponse, err: nil},
-			},
-			config:  nil,
-			dialog:  testDialog,
-			options: testOptions,
-			want:    successResponse,
-			wantErr: false,
-		},
-		{
-			name: "first generator fails with rate limit, second succeeds",
-			generators: []Generator{
-				&mockGenerator{response: Response{}, err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}},
-				&mockGenerator{response: fallbackResponse, err: nil},
-			},
-			config:  nil,
-			dialog:  testDialog,
-			options: testOptions,
-			want:    fallbackResponse,
-			wantErr: false,
-		},
-		{
-			name: "first generator fails with 500 error, second succeeds",
-			generators: []Generator{
-				&mockGenerator{
-					response: Response{},
-					err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServer, StatusCode: 500, Message: "internal server error"},
-				},
-				&mockGenerator{response: fallbackResponse, err: nil},
-			},
-			config:  nil,
-			dialog:  testDialog,
-			options: testOptions,
-			want:    fallbackResponse,
-			wantErr: false,
-		},
-		{
-			name: "first generator fails with 400 error, no fallback",
-			generators: []Generator{
-				&mockGenerator{
-					response: Response{},
-					err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 400, Message: "bad request"},
-				},
-				&mockGenerator{response: fallbackResponse, err: nil},
-			},
-			config:  nil,
-			dialog:  testDialog,
-			options: testOptions,
-			want:    Response{},
-			wantErr: true,
-		},
-		{
-			name: "first generator fails with 400 error, custom config fallbacks",
-			generators: []Generator{
-				&mockGenerator{
-					response: Response{},
-					err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 400, Message: "bad request"},
-				},
-				&mockGenerator{response: fallbackResponse, err: nil},
-			},
-			config: &FallbackConfig{
-				ShouldFallback: func(err error) bool {
-					var apiErr *ApiErr
-					return errors.As(err, &apiErr) && apiErr.StatusCode == 400
+		// Create a simple test dialog
+		testDialog := Dialog{
+			{
+				Role: User,
+				Blocks: []Block{
+					{
+						BlockType:    Content,
+						ModalityType: Text,
+						Content:      Str("Test message"),
+					},
 				},
 			},
-			dialog:  testDialog,
-			options: testOptions,
-			want:    fallbackResponse,
-			wantErr: false,
-		},
-		{
-			name: "all generators fail with fallback errors",
-			generators: []Generator{
-				&mockGenerator{response: Response{}, err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}},
-				&mockGenerator{
-					response: Response{},
-					err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServer, StatusCode: 500, Message: "internal server error"},
-				},
-			},
-			config:  nil,
-			dialog:  testDialog,
-			options: testOptions,
-			want:    Response{},
-			wantErr: true,
-		},
-		{
-			name: "HTTP status fallback config works",
-			generators: []Generator{
-				&mockGenerator{
-					response: Response{},
-					err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "too many requests"},
-				},
-				&mockGenerator{response: fallbackResponse, err: nil},
-			},
-			config:  &FallbackConfig{ShouldFallback: NewHTTPStatusFallbackConfig(429).ShouldFallback},
-			dialog:  testDialog,
-			options: testOptions,
-			want:    fallbackResponse,
-			wantErr: false,
-		},
-		{
-			name: "Rate limit only config works",
-			generators: []Generator{
-				&mockGenerator{response: Response{}, err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}},
-				&mockGenerator{response: fallbackResponse, err: nil},
-			},
-			config:  &FallbackConfig{ShouldFallback: NewRateLimitOnlyFallbackConfig().ShouldFallback},
-			dialog:  testDialog,
-			options: testOptions,
-			want:    fallbackResponse,
-			wantErr: false,
-		},
-	}
+		}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fallbackGen, err := NewFallbackGenerator(tt.generators, tt.config)
-			if err != nil {
-				t.Fatalf("Failed to create fallback generator: %v", err)
-			}
+		testOptions := NewGenerationOptions(WithTemperature(0.7))
 
-			got, err := fallbackGen.Generate(context.Background(), GenerationRequest{
-				Dialog:  tt.dialog,
-				Options: tt.options,
-			})
+		tests := []struct {
+			name       string
+			generators []Generator
+			config     *FallbackConfig
+			dialog     Dialog
+			options    GenerationOptions
+			want       Response
+			wantErr    bool
+		}{
+			{
+				name: "first generator succeeds",
+				generators: []Generator{
+					&mockGenerator{response: successResponse, err: nil},
+					&mockGenerator{response: fallbackResponse, err: nil},
+				},
+				config:  nil,
+				dialog:  testDialog,
+				options: testOptions,
+				want:    successResponse,
+				wantErr: false,
+			},
+			{
+				name: "first generator fails with rate limit, second succeeds",
+				generators: []Generator{
+					&mockGenerator{response: Response{}, err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}},
+					&mockGenerator{response: fallbackResponse, err: nil},
+				},
+				config:  nil,
+				dialog:  testDialog,
+				options: testOptions,
+				want:    fallbackResponse,
+				wantErr: false,
+			},
+			{
+				name: "first generator fails with 500 error, second succeeds",
+				generators: []Generator{
+					&mockGenerator{
+						response: Response{},
+						err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServer, StatusCode: 500, Message: "internal server error"},
+					},
+					&mockGenerator{response: fallbackResponse, err: nil},
+				},
+				config:  nil,
+				dialog:  testDialog,
+				options: testOptions,
+				want:    fallbackResponse,
+				wantErr: false,
+			},
+			{
+				name: "first generator fails with 400 error, no fallback",
+				generators: []Generator{
+					&mockGenerator{
+						response: Response{},
+						err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 400, Message: "bad request"},
+					},
+					&mockGenerator{response: fallbackResponse, err: nil},
+				},
+				config:  nil,
+				dialog:  testDialog,
+				options: testOptions,
+				want:    Response{},
+				wantErr: true,
+			},
+			{
+				name: "first generator fails with 400 error, custom config fallbacks",
+				generators: []Generator{
+					&mockGenerator{
+						response: Response{},
+						err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 400, Message: "bad request"},
+					},
+					&mockGenerator{response: fallbackResponse, err: nil},
+				},
+				config: &FallbackConfig{
+					ShouldFallback: func(err error) bool {
+						var apiErr *ApiErr
+						return errors.As(err, &apiErr) && apiErr.StatusCode == 400
+					},
+				},
+				dialog:  testDialog,
+				options: testOptions,
+				want:    fallbackResponse,
+				wantErr: false,
+			},
+			{
+				name: "all generators fail with fallback errors",
+				generators: []Generator{
+					&mockGenerator{response: Response{}, err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}},
+					&mockGenerator{
+						response: Response{},
+						err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServer, StatusCode: 500, Message: "internal server error"},
+					},
+				},
+				config:  nil,
+				dialog:  testDialog,
+				options: testOptions,
+				want:    Response{},
+				wantErr: true,
+			},
+			{
+				name: "HTTP status fallback config works",
+				generators: []Generator{
+					&mockGenerator{
+						response: Response{},
+						err:      &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "too many requests"},
+					},
+					&mockGenerator{response: fallbackResponse, err: nil},
+				},
+				config:  &FallbackConfig{ShouldFallback: NewHTTPStatusFallbackConfig(429).ShouldFallback},
+				dialog:  testDialog,
+				options: testOptions,
+				want:    fallbackResponse,
+				wantErr: false,
+			},
+			{
+				name: "Rate limit only config works",
+				generators: []Generator{
+					&mockGenerator{response: Response{}, err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}},
+					&mockGenerator{response: fallbackResponse, err: nil},
+				},
+				config:  &FallbackConfig{ShouldFallback: NewRateLimitOnlyFallbackConfig().ShouldFallback},
+				dialog:  testDialog,
+				options: testOptions,
+				want:    fallbackResponse,
+				wantErr: false,
+			},
+		}
 
-			// Check error cases
-			if (err != nil) != tt.wantErr {
-				t.Errorf("FallbackGenerator.Generate() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fallbackGen, err := NewFallbackGenerator(tt.generators, tt.config)
+				if err != nil {
+					t.Fatalf("Failed to create fallback generator: %v", err)
+				}
 
-			// For successful cases, check response
-			if !tt.wantErr {
-				// Check candidates
-				if len(got.Candidates) != len(tt.want.Candidates) {
-					t.Errorf("FallbackGenerator.Generate() candidates count = %d, want %d",
-						len(got.Candidates), len(tt.want.Candidates))
+				got, err := fallbackGen.Generate(context.Background(), GenerationRequest{
+					Dialog:  tt.dialog,
+					Options: tt.options,
+				})
+
+				// Check error cases
+				if (err != nil) != tt.wantErr {
+					t.Errorf("FallbackGenerator.Generate() error = %v, wantErr %v", err, tt.wantErr)
 					return
 				}
 
-				// Check the first candidate's content
-				if len(got.Candidates) > 0 && len(got.Candidates[0].Blocks) > 0 {
-					gotContent := got.Candidates[0].Blocks[0].Content.String()
-					wantContent := tt.want.Candidates[0].Blocks[0].Content.String()
-					if gotContent != wantContent {
-						t.Errorf("FallbackGenerator.Generate() content = %s, want %s",
-							gotContent, wantContent)
+				// For successful cases, check response
+				if !tt.wantErr {
+					// Check candidates
+					if len(got.Candidates) != len(tt.want.Candidates) {
+						t.Errorf("FallbackGenerator.Generate() candidates count = %d, want %d",
+							len(got.Candidates), len(tt.want.Candidates))
+						return
+					}
+
+					// Check the first candidate's content
+					if len(got.Candidates) > 0 && len(got.Candidates[0].Blocks) > 0 {
+						gotContent := got.Candidates[0].Blocks[0].Content.String()
+						wantContent := tt.want.Candidates[0].Blocks[0].Content.String()
+						if gotContent != wantContent {
+							t.Errorf("FallbackGenerator.Generate() content = %s, want %s",
+								gotContent, wantContent)
+						}
+					}
+
+					// Check finish reason
+					if got.FinishReason != tt.want.FinishReason {
+						t.Errorf("FallbackGenerator.Generate() finish reason = %v, want %v",
+							got.FinishReason, tt.want.FinishReason)
 					}
 				}
-
-				// Check finish reason
-				if got.FinishReason != tt.want.FinishReason {
-					t.Errorf("FallbackGenerator.Generate() finish reason = %v, want %v",
-						got.FinishReason, tt.want.FinishReason)
-				}
-			}
-		})
-	}
-}
-
-func testNewHTTPStatusFallbackConfig(t *testing.T) {
-	config := NewHTTPStatusFallbackConfig(400, 429)
-
-	// Should fallback on rate limit API errors.
-	if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}) {
-		t.Error("Expected to fallback on rate limit errors")
-	}
-
-	// Should fallback on specified status codes.
-	if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 400}) {
-		t.Error("Expected to fallback on status code 400")
-	}
-
-	if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429}) {
-		t.Error("Expected to fallback on status code 429")
-	}
-
-	// Should not fallback on other status codes.
-	if config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindNotFound, StatusCode: 404}) {
-		t.Error("Expected not to fallback on status code 404")
-	}
-
-	if config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServer, StatusCode: 500}) {
-		t.Error("Expected not to fallback on status code 500 when not specified")
-	}
-}
-
-func testNewRateLimitOnlyFallbackConfig(t *testing.T) {
-	config := NewRateLimitOnlyFallbackConfig()
-
-	// Should fallback on rate limit API errors.
-	if !config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindRateLimit, StatusCode: 429, Message: "rate limit exceeded"}) {
-		t.Error("Expected to fallback on rate limit errors")
-	}
-
-	// Should not fallback on other errors.
-	if config.ShouldFallback(errors.New("some other error")) {
-		t.Error("Expected not to fallback on non-rate-limit errors")
-	}
-
-	// Should not fallback on non-rate-limit API errors, even with other status codes.
-	if config.ShouldFallback(&ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindInvalidRequest, StatusCode: 429}) {
-		t.Error("Expected not to fallback on non-rate-limit API errors")
-	}
-}
-
-func testFallbackGenerator(t *testing.T) {
-	openAIGen := &mockGenerator{response: Response{Candidates: []Message{{Role: Assistant, Blocks: []Block{TextBlock("Response from OpenAI")}}}}}
-	anthropicGen := &mockGenerator{response: Response{Candidates: []Message{{Role: Assistant, Blocks: []Block{TextBlock("Response from Anthropic")}}}}}
-
-	fallbackGen, err := NewFallbackGenerator(
-		[]Generator{openAIGen, anthropicGen},
-		&FallbackConfig{ShouldFallback: NewHTTPStatusFallbackConfig(400, 429, 500, 502, 503, 504).ShouldFallback},
-	)
-	if err != nil {
-		t.Fatalf("NewFallbackGenerator returned error: %v", err)
-	}
-
-	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Tell me about AI fallback strategies")}}}
-	resp, err := fallbackGen.Generate(context.Background(), GenerationRequest{Dialog: dialog})
-	if err != nil {
-		t.Fatalf("Generate returned error: %v", err)
-	}
-
-	content := requireContentBlock(t, requireBlock(t, requireCandidate(t, resp), 0))
-	if got, want := content, "Response from OpenAI"; got != want {
-		t.Fatalf("content = %q, want %q", got, want)
-	}
+			})
+		}
+	})
 }
