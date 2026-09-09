@@ -323,6 +323,7 @@ A provider generator keeps only what it needs to send a request:
 | `GeminiGenerator` | Gemini client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `CerebrasGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 | `OpenRouterGenerator` | private generated client | `Generator`, `StreamingGenerator` |
+| `OpenCodeGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 | `ResponsesGenerator` | Responses service | `Generator`, `StreamingGenerator` |
 | `ZaiGenerator` | private generated client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `DeepSeekGenerator` | private generated client | `Generator`, `StreamingGenerator` |

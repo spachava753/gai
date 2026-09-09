@@ -222,6 +222,7 @@ func TestProviderOptionParsersIgnoreUnknownOptions(t *testing.T) {
 		parse func(GenerationOptions) error
 	}{
 		{name: "OpenAI", parse: func(options GenerationOptions) error { _, err := parseOpenAIGenerationOptions(options); return err }},
+		{name: "OpenCode", parse: func(options GenerationOptions) error { _, err := parseOpenCodeGenerationOptions(options); return err }},
 		{name: "Anthropic", parse: func(options GenerationOptions) error { _, err := parseAnthropicGenerationOptions(options); return err }},
 		{name: "Gemini", parse: func(options GenerationOptions) error { _, err := parseGeminiGenerationOptions(options); return err }},
 		{name: "Cerebras", parse: func(options GenerationOptions) error { _, err := parseCerebrasGenerationOptions(options); return err }},

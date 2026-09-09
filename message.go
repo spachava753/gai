@@ -124,6 +124,10 @@ const (
 	// [GeminiGenerator]. See [GeminiExtraFieldThoughtSignature].
 	ThinkingGeneratorGemini = "gemini"
 
+	// ThinkingGeneratorOpenCode is the [ThinkingExtraFieldGeneratorKey] value for
+	// [OpenCodeGenerator].
+	ThinkingGeneratorOpenCode = "opencode"
+
 	// ThinkingGeneratorOpenRouter is the [ThinkingExtraFieldGeneratorKey] value
 	// for [OpenRouterGenerator]. See [OpenRouterExtraFieldReasoningType].
 	ThinkingGeneratorOpenRouter = "openrouter"

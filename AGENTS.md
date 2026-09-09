@@ -1,14 +1,14 @@
 # GAI (Go AI generation utilities)
 
-GAI is a Go library for interacting with LLM providers, including OpenAI, Anthropic, Google Gemini, Cerebras, OpenRouter, ZAI, and DeepSeek, with consistent APIs, composable generators, streaming support, metrics, and robust testing. The core library is in the repository root as a standard Go module.
+GAI is a Go library for interacting with LLM providers, including OpenAI, OpenCode, Anthropic, Google Gemini, Cerebras, OpenRouter, ZAI, and DeepSeek, with consistent APIs, composable generators, streaming support, metrics, and robust testing. The core library is in the repository root as a standard Go module.
 
 @README.md provides a general overview and quick start. See @ROADMAP.md for planned work.
 
 ## Project structure and organization
 
 - Root Go module (go.mod) with all library code colocated for ease of import
-  - Provider clients: `openai.go`, `anthropic.go`, `gemini.go`, `cerebras.go`, `openrouter.go`, `responses.go`, `zai.go`, `deepseek.go`
-  - Generated OpenAPI clients: `internal/cerebras/`, `internal/deepseek/`, `internal/openrouter/`, `internal/zai/`
+  - Provider clients: `openai.go`, `opencode.go`, `anthropic.go`, `gemini.go`, `cerebras.go`, `openrouter.go`, `responses.go`, `zai.go`, `deepseek.go`
+  - Generated OpenAPI clients: `internal/cerebras/`, `internal/deepseek/`, `internal/opencode/`, `internal/openrouter/`, `internal/zai/`
   - Generation pipeline and composition: `generate.go`, `retry_generator.go`, `fallback_generator.go`, `preprocessing_generator.go`
   - Streaming primitives: `streaming.go`
   - Shared domain types and helpers: `message.go`, `tool.go`, `errors.go`, `metrics.go`, `callback.go`
@@ -32,7 +32,7 @@ Requirements: Go 1.26.6+.
 
 Common commands
 - Install deps: `go mod download`
-- Lint: `go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|openrouter|zai)$' ./...`
+- Lint: `go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|opencode|openrouter|zai)$' ./...`
 - Lint with golangci-lint if installed: `golangci-lint run` (optional)
 - Run tests (all, live API tests skipped): `go test ./...`
 - Run live API tests only when explicitly requested by the user: `LIVE_TESTS=1 go test ./...` (also requires the relevant provider API keys)
@@ -117,6 +117,7 @@ Naming and location
 Secrets
 - Never commit API keys. Applications may load provider credentials from environment variables, then must pass them explicitly to constructors:
   - OpenAI: `OPENAI_API_KEY`
+  - OpenCode: `OPENCODE_API_KEY`
   - Anthropic: `ANTHROPIC_API_KEY`
   - Google: `GOOGLE_API_KEY` or ADC where applicable
   - Cerebras: `CEREBRAS_API_KEY`

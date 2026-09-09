@@ -86,6 +86,7 @@ A response contains generated candidate messages, a normalized finish reason, us
 | --- | --- | --- |
 | OpenAI Chat Completions | `NewOpenAiGenerator` | `StreamingGenerator`, `TokenCounter` |
 | OpenAI Responses | `NewResponsesGenerator` | `StreamingGenerator` |
+| OpenCode | `NewOpenCodeGenerator` | `StreamingGenerator` |
 | Anthropic | `NewAnthropicGenerator` | `StreamingGenerator`, `TokenCounter` |
 | Google Gemini | `NewGeminiGenerator` | `StreamingGenerator`, `TokenCounter` |
 | Cerebras | `NewCerebrasGenerator` | `StreamingGenerator` |
@@ -94,6 +95,8 @@ A response contains generated candidate messages, a normalized finish reason, us
 | Z.AI | `NewZaiGenerator` | `StreamingGenerator`, `TokenCounter` |
 
 Provider type documentation lists supported content, common options, native options, response metadata, and replay requirements. See the [package documentation](https://pkg.go.dev/github.com/spachava753/gai).
+
+`OpenCodeGenerator` uses the OpenCode Go subscription Chat Completions endpoint. It passes model IDs and `WithThinkingBudget` effort labels through to OpenCode, preserves both `reasoning_content` and structured `reasoning_details` for tool-call replay, and sends supported `ImageBlock` values as `image_url` data URLs. Reuse one `WithOpenCodeSessionID` value across a dialog so OpenCode keeps multi-turn tool reasoning on the same upstream provider. OpenCode or the selected model rejects unsupported capabilities.
 
 ## Options
 
@@ -232,7 +235,7 @@ Use `GetMetric` with provider-specific metric constants for native cost, timing,
 go test ./...
 go vet ./...
 go test -race ./...
-go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|openrouter|zai)$' ./...
+go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|opencode|openrouter|zai)$' ./...
 ```
 
 The tracked pre-commit hook runs LAAS against hand-written packages. Activate it after cloning:
