@@ -161,7 +161,7 @@ When adding new configuration
 ## Git and contribution workflow
 
 - Activate the tracked pre-commit hook after cloning: `git config --local core.hooksPath .githooks`
-- Default branch: `main`; use feature branches for changes
+- This is a greenfield project. Work directly on `main` and push commits to `main` by default; feature branches and pull requests are not required unless explicitly requested.
 - Keep commits small, focused, and with descriptive messages
 - This module is pre-`v1.0.0`; breaking API changes are acceptable when they improve the package, though they should still be intentional and documented in code/tests/docs as appropriate
 - Ensure `go fmt`, `go vet`, and `go test ./...` pass before pushing
