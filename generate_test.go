@@ -247,7 +247,7 @@ func testOpenAiGeneratorUsesRequestScopedState(t *testing.T) {
 			Message:      oai.ChatCompletionMessage{Role: "assistant", Content: "ok"},
 		}},
 	}}
-	generator := NewOpenAiGenerator(client)
+	generator := newTestOpenAIGenerator(t, client)
 	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}
 
 	_, err := generator.Generate(context.Background(), GenerationRequest{

@@ -346,15 +346,20 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 				j++
 			}
 			// Combine all json deltas into one
-			var paramMap map[string]any
+			var paramMap map[string]json.RawMessage
 			if jsonDelta != "" {
 				if err := json.Unmarshal([]byte(jsonDelta), &paramMap); err != nil {
 					return nil, fmt.Errorf("malformed tool_call param JSON: %w", err)
 				}
 			} else {
-				paramMap = make(map[string]any)
+				paramMap = make(map[string]json.RawMessage)
 			}
-			tci := ToolCallInput{Name: toolName, Parameters: paramMap}
+			// Preserve arbitrary argument numbers until the caller explicitly decodes
+			// ToolCallInput. A float64 intermediate corrupts large integers on replay.
+			tci := struct {
+				Name       string                     `json:"name"`
+				Parameters map[string]json.RawMessage `json:"parameters"`
+			}{Name: toolName, Parameters: paramMap}
 			marshal, err := json.Marshal(tci)
 			if err != nil {
 				return nil, fmt.Errorf("unable to marshal ToolCallInput: %w", err)

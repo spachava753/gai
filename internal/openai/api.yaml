@@ -901,17 +901,12 @@ components:
           $ref: "#/components/schemas/ToolArguments"
 
     ToolArguments:
-      oneOf:
-        - type: string
-        - $ref: "#/components/schemas/JSONObject"
-      # OpenAI/DeepSeek/Kimi normally return a STRING containing JSON. Z.AI's
-      # response schema says OBJECT, while its assistant request says STRING.
-      # LIVE: glm-4.7 and glm-5.3-flash both returned strings; no object observed.
-      # The object branch is deliberate tolerance of the published shape, NOT a
-      # claim that Z.AI requires a separate response path in practice.
-      # Decode either into GAI's arguments, but serialize the argument object as
-      # a STRING when replaying to these request APIs. Keep original JSON text
-      # where exact numeric values/formatting matter; a float64 map can lose it.
+      type: string
+      # A JSON-encoded argument object, in both responses and replay requests.
+      # LIVE: Z.AI glm-4.7 and glm-5.3-flash returned strings, like the other
+      # tested APIs. Its published object declaration contradicts those probes;
+      # no object-valued arguments were observed or are supported here.
+      # Keep the JSON text intact: a float64 map can lose numeric precision.
 
     CustomToolCall:
       type: object
@@ -1273,8 +1268,7 @@ components:
           type: string
           nullable: true
           # This is a JSON STRING FRAGMENT, not a complete argument object. Do
-          # not parse each piece as JSON or overwrite the previous piece. The
-          # non-streaming ToolArguments object tolerance does not apply here.
+          # not parse each piece as JSON or overwrite the previous piece.
 
     # -------------------------------------------------------------------------
     # Usage: optional counters from each provider, not independently additive

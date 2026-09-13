@@ -25,9 +25,7 @@ func TestStreamAssemblyScenarios(t *testing.T) {
 	t.Run("StreamChunkErrorIsNotSerialized", func(t *testing.T) { testStreamChunkErrorIsNotSerialized(t) })
 	t.Run("StreamingAdapter", func(t *testing.T) {
 		requireLiveAPIKey(t, "OPENAI_API_KEY")
-
-		client := openai.NewClient()
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := newLiveOpenAIGenerator(t)
 		adapter := StreamingAdapter{S: gen}
 		dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the capital of France?")}}}
 
@@ -96,8 +94,7 @@ func TestStreamAssemblyScenarios(t *testing.T) {
 		}
 	})
 	t.Run("StreamingAdapter/errorHandling", func(t *testing.T) {
-		client := openai.NewClient()
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := newTestOpenAIGenerator(t, &mockChatCompletionService{})
 		adapter := StreamingAdapter{S: gen}
 
 		_, err := adapter.Generate(context.Background(), GenerationRequest{
@@ -136,9 +133,7 @@ func TestStreamAssemblyScenarios(t *testing.T) {
 	})
 	t.Run("StreamingAdapter/parallelToolCalls", func(t *testing.T) {
 		requireLiveAPIKey(t, "OPENAI_API_KEY")
-
-		client := openai.NewClient()
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := newLiveOpenAIGenerator(t)
 
 		stockTool := Tool{
 			Name:        "get_stock_price",
@@ -222,9 +217,7 @@ func TestStreamAssemblyScenarios(t *testing.T) {
 	})
 	t.Run("StreamingAdapter/withTools", func(t *testing.T) {
 		requireLiveAPIKey(t, "OPENAI_API_KEY")
-
-		client := openai.NewClient()
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := newLiveOpenAIGenerator(t)
 
 		weatherTool := Tool{
 			Name:        "get_weather",

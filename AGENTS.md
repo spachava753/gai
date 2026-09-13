@@ -9,7 +9,7 @@ GAI is a Go library for interacting with LLM providers, including OpenAI, OpenCo
 - Root Go module (go.mod) with all library code colocated for ease of import
   - Provider clients: `openai.go`, `opencode.go`, `anthropic.go`, `gemini.go`, `cerebras.go`, `openrouter.go`, `responses.go`, `zai.go`, `deepseek.go`
   - Generated OpenAPI clients: `internal/openai/` uses oapi-codegen; `internal/cerebras/`, `internal/deepseek/`, `internal/opencode/`, `internal/openrouter/`, and `internal/zai/` still use OGEN.
-  - Shared Chat Completions client: `internal/openai/api.yaml`, `config.yaml`, and `oapi-overlay.yaml` generate the checked-in `client.gen.go` with lossless opaque JSON, nullable values, and float64 numbers. Run `go generate ./internal/openai`; generation paths are package-relative. `go test ./internal/openai` checks regeneration and local codec/HTTP contracts. This client is not wired into `OpenAiGenerator` yet.
+  - Shared Chat Completions client: `internal/openai/api.yaml`, `config.yaml`, and `oapi-overlay.yaml` generate the checked-in `client.gen.go` with lossless opaque JSON, nullable values, and float64 numbers. Run `go generate ./internal/openai`; generation paths are package-relative. `go test ./internal/openai` checks regeneration and local codec/HTTP contracts. Its raw HTTP methods back `OpenAiGenerator`; streaming framing and per-invocation assembly live in `openai_stream.go`, with no automatic POST retries.
   - Generation pipeline and composition: `generate.go`, `retry_generator.go`, `fallback_generator.go`, `preprocessing_generator.go`
   - Streaming primitives: `streaming.go`
   - Shared domain types and helpers: `message.go`, `tool.go`, `errors.go`, `metrics.go`, `callback.go`

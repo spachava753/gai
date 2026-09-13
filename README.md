@@ -25,17 +25,17 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 	"github.com/spachava753/gai"
 )
 
 func main() {
-	client := openai.NewClient(option.WithAPIKey(os.Getenv("OPENAI_API_KEY")))
-	generator := gai.NewOpenAiGenerator(&client.Chat.Completions)
+	generator, err := gai.NewOpenAiGenerator(nil, "", os.Getenv("OPENAI_API_KEY"))
+	if err != nil {
+		panic(err)
+	}
 
 	response, err := generator.Generate(context.Background(), gai.GenerationRequest{
-		Model: openai.ChatModelGPT5Mini,
+		Model: "gpt-5-mini",
 		Instructions: gai.SystemMessage(
 			gai.TextBlock("Answer clearly and concisely."),
 		),
@@ -95,6 +95,10 @@ A response contains generated candidate messages, a normalized finish reason, us
 | Z.AI | `NewZaiGenerator` | `StreamingGenerator`, `TokenCounter` |
 
 Provider type documentation lists supported content, common options, native options, response metadata, and replay requirements. See the [package documentation](https://pkg.go.dev/github.com/spachava753/gai).
+
+`OpenAiGenerator` takes an HTTP client, a base URL (including any API prefix), and an explicit API key. It no longer accepts an OpenAI SDK completion service. An empty base URL selects OpenAI; a custom endpoint does not change option behavior. `WithMaxGenerationTokens` uses `max_completion_tokens` by default; add `WithOpenAITokenLimitField("max_tokens")` for endpoints that require that field. There are no automatic request retries or model-name capability rules.
+
+Chat Completions streaming consumes through EOF to retain metadata after `[DONE]`; use a context deadline. Parallel tool calls are assembled by index and emitted as complete calls at stream completion. Replay metadata stays in message/block `ExtraFields` under the documented OpenAI keys, not on the generator. If serializing arbitrary metadata through untyped JSON maps, use `json.Decoder.UseNumber` to avoid rounding large integers.
 
 `OpenCodeGenerator` uses the OpenCode Go subscription Chat Completions endpoint. It passes model IDs and `WithThinkingBudget` effort labels through to OpenCode, preserves both `reasoning_content` and structured `reasoning_details` for tool-call replay, and sends supported `ImageBlock` values as `image_url` data URLs. Reuse one `WithOpenCodeSessionID` value across a dialog so OpenCode keeps multi-turn tool reasoning on the same upstream provider. OpenCode or the selected model rejects unsupported capabilities.
 
@@ -244,7 +248,7 @@ The shared Chat Completions wire client in `internal/openai` uses oapi-codegen. 
 go generate ./internal/openai
 ```
 
-Its tests check that the generated file is current and exercise JSON round trips and local HTTP behavior. This client is not yet connected to `OpenAiGenerator`; the other generated provider packages still use OGEN.
+Its tests check that the generated file is current and exercise JSON round trips and local HTTP behavior. `OpenAiGenerator` uses this client; the other generated provider packages still use OGEN.
 
 The tracked pre-commit hook runs LAAS against hand-written packages. Activate it after cloning:
 

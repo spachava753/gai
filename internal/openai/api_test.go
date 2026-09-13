@@ -101,7 +101,6 @@ func TestResponseRoundTrips(t *testing.T) {
 		"minimal":               `{"choices":[]}`,
 		"null content":          `{"choices":[{"message":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":"stop"}],"system_fingerprint":null,"usage":null}`,
 		"string arguments":      `{"choices":[{"index":0,"message":{"role":"assistant","content":"","reasoning_content":"Lookup","tool_calls":[{"id":"c","type":"function","index":0,"function":{"name":"lookup","arguments":"{\"x\":9007199254740993}"}}]},"finish_reason":"tool_calls"}]}`,
-		"object arguments":      `{"choices":[{"message":{"tool_calls":[{"id":"c","type":"function","function":{"name":"lookup","arguments":{"x":9007199254740993}}}]}}]}`,
 		"opaque reasoning":      `{"choices":[{"message":{"reasoning_details":[{"type":"reasoning.text","index":0,"text":"Thinking","signature":null,"future":{"x":9007199254740993}},{"type":"reasoning.encrypted","id":"r","data":"ciphertext","signature":"sig","summary":[{"text":"summary"}]}]}}]}`,
 		"metadata":              `{"id":"c","request_id":"r","model":"m","cost":"0","metadata":{"nested":[1,null]},"moderation":{"input":{"flagged":false}},"web_search":[{"title":"Source","link":"https://example.com","future":true}],"future_response":{"x":9007199254740993}}`,
 		"audio and annotations": `{"choices":[{"message":{"audio":{"id":"a","data":"AA==","expires_at":123,"transcript":"Hi"},"refusal":null,"annotations":[{"type":"url_citation","url_citation":{"url":"https://example.com"}}]}}]}`,
@@ -270,24 +269,11 @@ func TestHTTPHeadersAndRequestBody(t *testing.T) {
 	}
 }
 
-func TestTypedUnionPrecision(t *testing.T) {
-	var args ToolArguments
-	if err := json.Unmarshal([]byte(`{"x":9007199254740993}`), &args); err != nil {
-		t.Fatal(err)
-	}
-	object, err := args.AsJSONObject()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = args.FromJSONObject(object); err != nil {
-		t.Fatal(err)
-	}
-	output, err := json.Marshal(args)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(output) != `{"x":9007199254740993}` {
-		t.Fatalf("typed union access changed arguments: %s", output)
+func TestToolArguments(t *testing.T) {
+	roundTrip(t, `"{\"x\":9007199254740993}"`, new(ToolArguments))
+	var response ChatCompletionResponse
+	if err := json.Unmarshal([]byte(`{"choices":[{"message":{"tool_calls":[{"id":"c","type":"function","function":{"name":"lookup","arguments":{"x":9007199254740993}}}]}}]}`), &response); err == nil {
+		t.Fatal("accepted object-valued tool arguments; expected a JSON-encoded string")
 	}
 }
 

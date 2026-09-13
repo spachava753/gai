@@ -16,10 +16,9 @@ func Test_mixGenerators(t *testing.T) {
 
 	// Initialize clients for both providers
 	anthropicClient := a.NewClient()
-	openaiClient := openai.NewClient()
 	// Create generators for each provider
 	anthropicGen := NewAnthropicGenerator(&anthropicClient.Messages)
-	openaiGen := NewOpenAiGenerator(&openaiClient.Chat.Completions)
+	openaiGen := newLiveOpenAIGenerator(t)
 	// Start a conversation with a user message
 	dialog := Dialog{
 		{

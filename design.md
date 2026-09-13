@@ -17,8 +17,10 @@ Response          <- normalization <----------+
 For example, one OpenAI generator can handle requests with different models and instructions:
 
 ```go
-client := openai.NewClient()
-generator := NewOpenAiGenerator(&client.Chat.Completions)
+generator, err := NewOpenAiGenerator(nil, "", apiKey)
+if err != nil {
+    return err
+}
 
 request := GenerationRequest{
     Model:        "gpt-4o-mini",
@@ -318,7 +320,7 @@ A provider generator keeps only what it needs to send a request:
 
 | Generator | Stored fields | Interfaces |
 | --- | --- | --- |
-| `OpenAiGenerator` | completion service | `Generator`, `StreamingGenerator`, `TokenCounter` |
+| `OpenAiGenerator` | generated Chat Completions HTTP client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `AnthropicGenerator` | message service | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `GeminiGenerator` | Gemini client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `CerebrasGenerator` | private generated client | `Generator`, `StreamingGenerator` |

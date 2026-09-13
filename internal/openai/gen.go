@@ -1,5 +1,5 @@
 // Package openai contains the generated shared Chat Completions wire client.
-// It is not yet used by gai.OpenAiGenerator.
+// It backs gai.OpenAiGenerator.
 //
 // Use Client's raw HTTP response methods for streaming and full error fidelity.
 // ClientWithResponses buffers and closes the body; it does not parse SSE.

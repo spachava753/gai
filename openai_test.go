@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"github.com/google/jsonschema-go/jsonschema"
 	oai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 	"os"
 	"strings"
 )
@@ -33,6 +33,17 @@ Tool Result: Apple: 123.45; Nvidia: 345.65
 Assistant: Nvidia
 </example>
 `
+
+func ExampleNewOpenAiGenerator() {
+	generator, err := NewOpenAiGenerator(nil, "https://api.openai.com/v1", "application-supplied-key")
+	if err != nil {
+		panic(err)
+	}
+	options := NewGenerationOptions(WithMaxGenerationTokens(128), WithOpenAITokenLimitField("max_tokens"))
+	_ = GenerationRequest{Model: "caller-selected-model", Options: options}
+	fmt.Println(generator != nil, options[OpenAIGenerationOptionTokenLimitField])
+	// Output: true max_tokens
+}
 
 func TestToOpenAIMessage(t *testing.T) {
 	tests := []struct {
@@ -339,46 +350,32 @@ func TestToOpenAIMessage(t *testing.T) {
 			}
 
 			if !tt.wantErr {
-				// Custom comparison that ignores unexported fields
-				// This approach checks only the message types and key properties,
-				// without attempting to compare the unexported fields of the complex
-				// OpenAI SDK types such as the internal implementations of Opt[T]
-				// and other generic structures.
-				//
-				// We're specifically checking that the message role (User, Assistant, Tool)
-				// matches, and for specific message types, we verify relevant fields like
-				// tool call IDs and tool function names.
-
-				// Check if the role/message type matches
-				if (got.OfUser != nil) != (tt.want.OfUser != nil) ||
-					(got.OfAssistant != nil) != (tt.want.OfAssistant != nil) ||
-					(got.OfTool != nil) != (tt.want.OfTool != nil) ||
-					(got.OfSystem != nil) != (tt.want.OfSystem != nil) {
-					t.Errorf("toOpenAIMessage() returned wrong message type")
-					return
+				wantRole := ""
+				switch {
+				case tt.want.OfUser != nil:
+					wantRole = "user"
+				case tt.want.OfAssistant != nil:
+					wantRole = "assistant"
+				case tt.want.OfTool != nil:
+					wantRole = "tool"
+				case tt.want.OfSystem != nil:
+					wantRole = "system"
 				}
-
-				// For tool call messages, verify tool call ID matches
-				if got.OfTool != nil && tt.want.OfTool != nil {
-					if got.OfTool.ToolCallID != tt.want.OfTool.ToolCallID {
-						t.Errorf("Tool call ID mismatch: got %v, want %v",
-							got.OfTool.ToolCallID, tt.want.OfTool.ToolCallID)
-					}
+				if got.Role != wantRole {
+					t.Errorf("role = %s, want %s", got.Role, wantRole)
 				}
-
-				// For assistant messages with tool calls, verify tool call info
-				if got.OfAssistant != nil && tt.want.OfAssistant != nil {
-					// Check if both have tool calls
-					if (len(got.OfAssistant.ToolCalls) > 0) != (len(tt.want.OfAssistant.ToolCalls) > 0) {
-						t.Errorf("Tool calls presence mismatch")
-						return
+				if tt.want.OfTool != nil && (got.ToolCallId == nil || *got.ToolCallId != tt.want.OfTool.ToolCallID) {
+					t.Error("tool call ID mismatch")
+				}
+				if tt.want.OfAssistant != nil {
+					calls, _ := got.ToolCalls.Get()
+					if len(calls) != len(tt.want.OfAssistant.ToolCalls) {
+						t.Fatal("tool call count mismatch")
 					}
-
-					// If they have tool calls, verify basic properties
-					if len(got.OfAssistant.ToolCalls) > 0 && len(tt.want.OfAssistant.ToolCalls) > 0 {
-						if got.OfAssistant.ToolCalls[0].OfFunction.ID != tt.want.OfAssistant.ToolCalls[0].OfFunction.ID ||
-							got.OfAssistant.ToolCalls[0].OfFunction.Function.Name != tt.want.OfAssistant.ToolCalls[0].OfFunction.Function.Name {
-							t.Errorf("Tool call details mismatch")
+					if len(calls) > 0 {
+						want := tt.want.OfAssistant.ToolCalls[0].OfFunction
+						if calls[0].Id == nil || *calls[0].Id != want.ID || calls[0].Function == nil || calls[0].Function.Name == nil || *calls[0].Function.Name != want.Function.Name {
+							t.Error("tool call details mismatch")
 						}
 					}
 				}
@@ -388,6 +385,10 @@ func TestToOpenAIMessage(t *testing.T) {
 }
 
 func TestOpenAIAdapterScenarios(t *testing.T) {
+	t.Run("HTTP", func(t *testing.T) { testOpenAIHTTPClient(t) })
+	t.Run("SSE", func(t *testing.T) { testOpenAIHTTPStreaming(t) })
+	t.Run("termination", func(t *testing.T) { testOpenAIStreamTermination(t) })
+	t.Run("audio and candidates", func(t *testing.T) { testOpenAIStreamAudioAndCandidates(t) })
 	t.Run("OpenAIErrorMappingUsesHTTPStatus", func(t *testing.T) { testOpenAIErrorMappingUsesHTTPStatus(t) })
 	t.Run("OpenAIGenerateReturnsContentPolicyErrorForContentFilter", func(t *testing.T) { testOpenAIGenerateReturnsContentPolicyErrorForContentFilter(t) })
 	t.Run("OpenAIGenerateReturnsContentPolicyErrorForRefusal", func(t *testing.T) { testOpenAIGenerateReturnsContentPolicyErrorForRefusal(t) })
@@ -396,9 +397,8 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 	t.Run("OpenAiGenerator/Count", func(t *testing.T) { testOpenAiGenerator_Count(t) })
 	t.Run("OpenAiGenerator/Count/Example", func(t *testing.T) {
 		// Create an OpenAI client
-		client := oai.NewClient()
-		// Create a generator
-		generator := NewOpenAiGenerator(&client.Chat.Completions)
+		client := &OpenAiGenerator{}
+		generator := client
 		// Create a dialog with a user message
 		dialog := Dialog{
 			{
@@ -449,11 +449,9 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 	t.Run("OpenAiGenerator/Generate", func(t *testing.T) {
 		// Create an OpenAI client
 		apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
-		client := oai.NewClient(
-			option.WithAPIKey(apiKey),
-		)
+		client := newLiveOpenAIGenerator(t, "", apiKey)
 		// Instantiate a OpenAI Generator
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := client
 		dialog := Dialog{
 			{
 				Role: User,
@@ -500,10 +498,8 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 		}
 		// Encode as base64 for inline audio usage
 		audioBase64 := Str(base64.StdEncoding.EncodeToString(audioBytes))
-		client := oai.NewClient(
-			option.WithAPIKey(apiKey),
-		)
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		client := newLiveOpenAIGenerator(t, "", apiKey)
+		gen := client
 		// Using inline audio data
 		dialog := Dialog{
 			{
@@ -546,10 +542,8 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 			return
 		}
 		imgBase64 := Str(base64.StdEncoding.EncodeToString(imgBytes))
-		client := oai.NewClient(
-			option.WithAPIKey(apiKey),
-		)
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		client := newLiveOpenAIGenerator(t, "", apiKey)
+		gen := client
 		dialog := Dialog{
 			{
 				Role: User,
@@ -589,12 +583,9 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 	})
 	t.Run("OpenAiGenerator/Generate/openRouter", func(t *testing.T) {
 		// Create an OpenAI client for open router
-		client := oai.NewClient(
-			option.WithBaseURL("https://openrouter.ai/api/v1/"),
-			option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
-		)
+		client := newLiveOpenAIGenerator(t, "https://openrouter.ai/api/v1/", requireLiveAPIKey(t, "OPENROUTER_API_KEY"))
 		// Instantiate a OpenAI Generator
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := client
 		dialog := Dialog{
 			{
 				Role: User,
@@ -629,10 +620,8 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 			t.Skip("could not open sample.wav")
 			return
 		}
-		client := oai.NewClient(
-			option.WithAPIKey(apiKey),
-		)
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		client := newLiveOpenAIGenerator(t, "", apiKey)
+		gen := client
 		// Create a dialog with PDF content
 		dialog := Dialog{
 			{
@@ -663,9 +652,9 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 	t.Run("OpenAiGenerator/Generate/thinking", func(t *testing.T) {
 		requireLiveAPIKey(t, "OPENAI_API_KEY")
 		// Create an OpenAI client
-		client := oai.NewClient()
+		client := newLiveOpenAIGenerator(t)
 		// Instantiate a OpenAI Generator
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := client
 		dialog := Dialog{
 			{
 				Role: User,
@@ -717,9 +706,9 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 	t.Run("OpenAiGenerator/RequestTools", func(t *testing.T) {
 		requireLiveAPIKey(t, "OPENAI_API_KEY")
 		// Create an OpenAI client
-		client := oai.NewClient(option.WithBaseURL("https://gateway.ai.cloudflare.com/v1/4eee6dd2fdc8cebc7802c5a638f460fe/cpe/openai/"))
+		client := newLiveOpenAIGenerator(t, "https://gateway.ai.cloudflare.com/v1/4eee6dd2fdc8cebc7802c5a638f460fe/cpe/openai/", os.Getenv("OPENAI_API_KEY"))
 		// Instantiate a OpenAI Generator
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := client
 		tickerTool := Tool{
 			Name:        "get_stock_price",
 			Description: "Get the current stock price for a given ticker symbol.",
@@ -796,12 +785,9 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 			}(),
 		}
 		// Create an OpenAI client for open router
-		client := oai.NewClient(
-			option.WithBaseURL("https://openrouter.ai/api/v1/"),
-			option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
-		)
+		client := newLiveOpenAIGenerator(t, "https://openrouter.ai/api/v1/", requireLiveAPIKey(t, "OPENROUTER_API_KEY"))
 		// Instantiate a OpenAI Generator
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := client
 		dialog := Dialog{
 			{
 				Role: User,
@@ -851,10 +837,7 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 	})
 	t.Run("OpenAiGenerator/RequestTools/openRouterParallelToolUse", func(t *testing.T) {
 		// Create an OpenAI client
-		client := oai.NewClient(
-			option.WithBaseURL("https://openrouter.ai/api/v1/"),
-			option.WithAPIKey(requireLiveAPIKey(t, "OPENROUTER_API_KEY")),
-		)
+		client := newLiveOpenAIGenerator(t, "https://openrouter.ai/api/v1/", requireLiveAPIKey(t, "OPENROUTER_API_KEY"))
 		// Define request tools
 		tickerTool := Tool{
 			Name:        "get_stock_price",
@@ -870,7 +853,7 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 			}(),
 		}
 		// Instantiate a OpenAI Generator
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := client
 		dialog := Dialog{
 			{
 				Role: User,
@@ -932,7 +915,7 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 	t.Run("OpenAiGenerator/RequestTools/parallelToolUse", func(t *testing.T) {
 		requireLiveAPIKey(t, "OPENAI_API_KEY")
 		// Create an OpenAI client
-		client := oai.NewClient()
+		client := newLiveOpenAIGenerator(t)
 		// Define request tools
 		tickerTool := Tool{
 			Name:        "get_stock_price",
@@ -948,7 +931,7 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 			}(),
 		}
 		// Instantiate a OpenAI Generator
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := client
 		tickerTool.Description += "\nYou can call this tool in parallel"
 		dialog := Dialog{
 			{
@@ -1011,11 +994,9 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 	t.Run("OpenAiGenerator/Stream", func(t *testing.T) {
 		// Create an OpenAI client
 		apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
-		client := oai.NewClient(
-			option.WithAPIKey(apiKey),
-		)
+		client := newLiveOpenAIGenerator(t, "", apiKey)
 		// Instantiate a OpenAI Generator
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := client
 		dialog := Dialog{
 			{
 				Role: User,
@@ -1047,9 +1028,7 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 	t.Run("OpenAiGenerator/Stream/parallelToolUse", func(t *testing.T) {
 		// Create an OpenAI client
 		apiKey := requireLiveAPIKey(t, "OPENAI_API_KEY")
-		client := oai.NewClient(
-			option.WithAPIKey(apiKey),
-		)
+		client := newLiveOpenAIGenerator(t, "", apiKey)
 		// Define request tools
 		tickerTool := Tool{
 			Name:        "get_stock_price",
@@ -1065,7 +1044,7 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 			}(),
 		}
 		// Instantiate a OpenAI Generator
-		gen := NewOpenAiGenerator(&client.Chat.Completions)
+		gen := client
 		tickerTool.Description += "\nYou can call this tool in parallel"
 		dialog := Dialog{
 			{

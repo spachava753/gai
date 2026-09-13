@@ -485,12 +485,7 @@ type TokenLogProb struct {
 }
 
 // ToolArguments defines model for ToolArguments.
-type ToolArguments struct {
-	union json.RawMessage
-}
-
-// ToolArguments0 defines model for ToolArguments.0.
-type ToolArguments0 = string
+type ToolArguments = string
 
 // ToolCall defines model for ToolCall.
 type ToolCall struct {
@@ -7270,68 +7265,6 @@ func (t StopSequences) MarshalJSON() ([]byte, error) {
 }
 
 func (t *StopSequences) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsToolArguments0 returns the union data inside the ToolArguments as a ToolArguments0
-func (t ToolArguments) AsToolArguments0() (ToolArguments0, error) {
-	var body ToolArguments0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromToolArguments0 overwrites any union data inside the ToolArguments as the provided ToolArguments0
-func (t *ToolArguments) FromToolArguments0(v ToolArguments0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeToolArguments0 performs a merge with any union data inside the ToolArguments, using the provided ToolArguments0
-func (t *ToolArguments) MergeToolArguments0(v ToolArguments0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsJSONObject returns the union data inside the ToolArguments as a JSONObject
-func (t ToolArguments) AsJSONObject() (JSONObject, error) {
-	var body JSONObject
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromJSONObject overwrites any union data inside the ToolArguments as the provided JSONObject
-func (t *ToolArguments) FromJSONObject(v JSONObject) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeJSONObject performs a merge with any union data inside the ToolArguments, using the provided JSONObject
-func (t *ToolArguments) MergeJSONObject(v JSONObject) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t ToolArguments) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *ToolArguments) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

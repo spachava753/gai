@@ -10,17 +10,16 @@ import (
 	_ "image/gif"  // Register GIF format
 	_ "image/jpeg" // Register JPEG format
 	_ "image/png"  // Register PNG format
-	"iter"
+	"io"
 	"math"
-	"slices"
+	"net/http"
+	"net/url"
 	"strings"
 
-	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/packages/param"
-	oaissestream "github.com/openai/openai-go/v3/packages/ssestream"
-	"github.com/pkoukk/tiktoken-go" // Added for token counting
+	"github.com/oapi-codegen/nullable"
+	"github.com/pkoukk/tiktoken-go"
 
-	oai "github.com/openai/openai-go/v3"
+	wire "github.com/spachava753/gai/internal/openai"
 )
 
 const (
@@ -51,112 +50,653 @@ func init() {
 	tiktoken.MODEL_TO_ENCODING["gpt-4.1-2025-04-14"] = tiktoken.MODEL_O200K_BASE
 	tiktoken.MODEL_TO_ENCODING["gpt-4.1-mini-2025-04-14"] = tiktoken.MODEL_O200K_BASE
 	tiktoken.MODEL_TO_ENCODING["gpt-4.1-nano--2025-04-14"] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO3Mini] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO3Mini2025_01_31] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1_2024_12_17] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1Preview] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1Preview2024_09_12] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1Mini] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelO1Mini2024_09_12] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4o] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4o2024_11_20] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4o2024_08_06] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4o2024_05_13] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oAudioPreview] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oAudioPreview2024_10_01] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oAudioPreview2024_12_17] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oMiniAudioPreview] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oMiniAudioPreview2024_12_17] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelChatgpt4oLatest] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oMini] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4oMini2024_07_18] = tiktoken.MODEL_O200K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4Turbo] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4Turbo2024_04_09] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_0125Preview] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4TurboPreview] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_1106Preview] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4VisionPreview] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_0314] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_0613] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_32k] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_32k0314] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT4_32k0613] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo16k] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo0301] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo0613] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo1106] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo0125] = tiktoken.MODEL_CL100K_BASE
-	tiktoken.MODEL_TO_ENCODING[oai.ChatModelGPT3_5Turbo16k0613] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["o3-mini"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["o3-mini-2025-01-31"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["o1"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["o1-2024-12-17"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["o1-preview"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["o1-preview-2024-09-12"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["o1-mini"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["o1-mini-2024-09-12"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o-2024-11-20"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o-2024-08-06"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o-2024-05-13"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o-audio-preview"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o-audio-preview-2024-10-01"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o-audio-preview-2024-12-17"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o-mini-audio-preview"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o-mini-audio-preview-2024-12-17"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["chatgpt-4o-latest"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o-mini"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4o-mini-2024-07-18"] = tiktoken.MODEL_O200K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-turbo"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-turbo-2024-04-09"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-0125-preview"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-turbo-preview"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-1106-preview"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-vision-preview"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-0314"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-0613"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-32k"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-32k-0314"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-4-32k-0613"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-3.5-turbo"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-3.5-turbo-16k"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-3.5-turbo-0301"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-3.5-turbo-0613"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-3.5-turbo-1106"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-3.5-turbo-0125"] = tiktoken.MODEL_CL100K_BASE
+	tiktoken.MODEL_TO_ENCODING["gpt-3.5-turbo-16k-0613"] = tiktoken.MODEL_CL100K_BASE
 }
 
-// OpenAiGenerator adapts OpenAI Chat Completions to [Generator],
-// [StreamingGenerator], and [TokenCounter]. It accepts text, image, audio, and
-// PDF input, produces text or audio, and supports function tools.
+// OpenAIDefaultBaseURL is used by NewOpenAiGenerator when baseURL is empty.
+const OpenAIDefaultBaseURL = "https://api.openai.com/v1"
+
+const (
+	// OpenAIExtraFieldWireFields holds map[string]json.RawMessage provider fields
+	// on Message.ExtraFields or Block.ExtraFields, at their original wire scope.
+	// Conversion owns content, role, and tool identity; these fields cannot replace
+	// them. Returned maps belong to the response, not the generator.
+	OpenAIExtraFieldWireFields = "openai_wire_fields"
+	// OpenAIExtraFieldChoice holds map[string]json.RawMessage choice metadata
+	// (including finish reason, index, and logprobs) in Message.ExtraFields.
+	// It is retained for inspection, not replayed as request-message fields.
+	OpenAIExtraFieldChoice = "openai_choice"
+	// OpenAIExtraFieldAudio holds map[string]json.RawMessage output audio
+	// metadata in Block.ExtraFields, excluding its ID and binary data. Replay
+	// sends the block's audio ID rather than the output-only metadata.
+	OpenAIExtraFieldAudio = "openai_audio"
+	// OpenAIResponseExtraFieldHeaders holds a cloned http.Header in Response.ExtraFields.
+	OpenAIResponseExtraFieldHeaders = "openai_headers"
+	// OpenAIResponseExtraFieldWireFields holds response-level map[string]json.RawMessage
+	// metadata in Response.ExtraFields, excluding choices and usage.
+	OpenAIResponseExtraFieldWireFields = "openai_wire_fields"
+	// OpenAIGenerationOptionTokenLimitField selects the wire field for
+	// WithMaxGenerationTokens. See WithOpenAITokenLimitField.
+	OpenAIGenerationOptionTokenLimitField = "openai_token_limit_field"
+)
+
+// WithOpenAITokenLimitField selects "max_tokens" or "max_completion_tokens" for
+// WithMaxGenerationTokens. The default is "max_completion_tokens", preserving
+// OpenAiGenerator's OpenAI behavior. Selection is never inferred from the model.
+func WithOpenAITokenLimitField(field string) GenerationOption {
+	return func(options GenerationOptions) { options[OpenAIGenerationOptionTokenLimitField] = field }
+}
+
+// OpenAiGenerator adapts Chat Completions to Generator, StreamingGenerator, and
+// TokenCounter. It borrows only a client; model, history, tools, and options are
+// supplied on each call. It supports text, image/PDF and audio input, text/audio
+// output, function tools, and reasoning replay. Provider fields are retained at
+// message/block scope under OpenAIExtraFieldWireFields.
 //
-// It consumes [WithTemperature], [WithTopP], [WithFrequencyPenalty],
-// [WithPresencePenalty], [WithCandidateCount], [WithMaxGenerationTokens],
-// [WithToolChoice], [WithStopSequences], [WithOutputModalities],
-// [WithAudioConfig], and [WithThinkingBudget]. Image token counting can use
-// [OpenAIExtraFieldImageWidth], [OpenAIExtraFieldImageHeight], and
-// [OpenAIExtraFieldImageDetail].
-type OpenAiGenerator struct {
-	client OpenAICompletionService
+// Common generation options are supported. WithMaxGenerationTokens uses
+// max_completion_tokens unless WithOpenAITokenLimitField selects max_tokens.
+// Stream parses SSE without reconnecting; callers should supply a context
+// deadline. It consumes through EOF to retain metadata after [DONE].
+type OpenAiGenerator struct{ client *wire.Client }
+
+// NewOpenAiGenerator constructs a stateless Chat Completions adapter. A nil
+// httpClient uses http.DefaultClient; an empty baseURL uses OpenAIDefaultBaseURL.
+// Credentials are explicit: an empty apiKey returns ErrMissingAPIKey. The base
+// URL includes the API prefix (such as /v1), not /chat/completions. No SDK retry
+// policy or environment configuration is applied.
+func NewOpenAiGenerator(httpClient *http.Client, baseURL, apiKey string) (*OpenAiGenerator, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("openai: %w", ErrMissingAPIKey)
+	}
+	if baseURL == "" {
+		baseURL = OpenAIDefaultBaseURL
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, InvalidParameterErr{Parameter: "baseURL", Reason: "expected an HTTP(S) base URL without query or fragment"}
+	}
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	client, err := wire.NewClient(baseURL, wire.WithHTTPClient(httpClient), wire.WithRequestEditorFn(func(_ context.Context, r *http.Request) error {
+		r.Header.Set("Authorization", "Bearer "+apiKey)
+		return nil
+	}))
+	if err != nil {
+		return nil, fmt.Errorf("openai: create client: %w", err)
+	}
+	return &OpenAiGenerator{client: client}, nil
 }
 
-// convertToolToOpenAI converts our tool definition to OpenAI's format
-func convertToolToOpenAI(tool Tool) (oai.ChatCompletionToolUnionParam, error) {
-	// Convert tool schema to OpenAI's JSON schema format
-	parameters := make(map[string]interface{})
+var _ Generator = (*OpenAiGenerator)(nil)
+var _ StreamingGenerator = (*OpenAiGenerator)(nil)
+var _ TokenCounter = (*OpenAiGenerator)(nil)
+
+func convertToolToOpenAI(tool Tool) (wire.ToolDefinition, error) {
+	parameters := wire.JSONObject{}
 	if tool.InputSchema != nil {
-		// Serialize the schema to JSON then unmarshal into interface{} for OpenAI
-		schemaJSON, err := json.Marshal(tool.InputSchema)
+		data, err := json.Marshal(tool.InputSchema)
 		if err != nil {
-			return oai.ChatCompletionFunctionTool(oai.FunctionDefinitionParam{}), err
-		} else {
-			if err := json.Unmarshal(schemaJSON, &parameters); err != nil {
-				return oai.ChatCompletionFunctionTool(oai.FunctionDefinitionParam{}), err
-			}
+			return wire.ToolDefinition{}, err
+		}
+		if err := json.Unmarshal(data, &parameters); err != nil {
+			return wire.ToolDefinition{}, err
 		}
 	}
-
-	// if the input schema doesn't contain anything but the type, treat as no schema
-	// example: {"type": "object"}
-	if len(parameters) == 1 && parameters["type"].(string) == "object" {
-		parameters = make(map[string]interface{})
-	}
-
-	return oai.ChatCompletionFunctionTool(oai.FunctionDefinitionParam{
-		Name:        tool.Name,
-		Description: oai.String(tool.Description),
-		Parameters:  parameters,
-	}), nil
+	return wire.ToolDefinition{Type: "function", Function: &wire.FunctionDefinition{Name: &tool.Name, Description: &tool.Description, Parameters: &parameters}}, nil
 }
 
-func convertToolsToOpenAI(tools []Tool) ([]oai.ChatCompletionToolUnionParam, error) {
-	converted := make([]oai.ChatCompletionToolUnionParam, 0, len(tools))
-	seen := make(map[string]struct{}, len(tools))
+func convertToolsToOpenAI(tools []Tool) ([]wire.ToolDefinition, error) {
+	converted := make([]wire.ToolDefinition, 0, len(tools))
+	seen := map[string]bool{}
 	for _, tool := range tools {
-		if tool.Name == "" {
-			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be empty")}
+		if tool.Name == "" || tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired || seen[tool.Name] {
+			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name must be nonempty, unique, and not reserved")}
 		}
-		if tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired {
-			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name cannot be %s", tool.Name)}
-		}
-		if _, exists := seen[tool.Name]; exists {
-			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool already provided")}
-		}
-		seen[tool.Name] = struct{}{}
-
-		providerTool, err := convertToolToOpenAI(tool)
+		seen[tool.Name] = true
+		result, err := convertToolToOpenAI(tool)
 		if err != nil {
 			return nil, &InvalidToolErr{Tool: tool.Name, Cause: err}
 		}
-		converted = append(converted, providerTool)
+		converted = append(converted, result)
 	}
 	return converted, nil
+}
+
+// openAIFields accepts JSON-round-tripped ExtraFields as well as raw maps and
+// always returns an owned map, so conversion cannot mutate borrowed messages.
+func openAIFields(extra map[string]interface{}) (map[string]json.RawMessage, error) {
+	fields := map[string]json.RawMessage{}
+	if value, ok := extra[OpenAIExtraFieldWireFields]; ok {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &fields); err != nil {
+			return nil, fmt.Errorf("openai wire fields: %w", err)
+		}
+	}
+	if fields == nil {
+		fields = map[string]json.RawMessage{}
+	}
+	return fields, nil
+}
+
+func openAIRawFields(value any, exclude ...string) map[string]json.RawMessage {
+	data, _ := json.Marshal(value)
+	fields := map[string]json.RawMessage{}
+	_ = json.Unmarshal(data, &fields)
+	for _, key := range exclude {
+		delete(fields, key)
+	}
+	return fields
+}
+
+// openAIPart maps one content block to its wire shape and keeps part-scoped
+// provider metadata. Media data and MIME type remain caller-owned inputs.
+func openAIPart(block Block) (wire.ContentPart, error) {
+	fields, err := openAIFields(block.ExtraFields)
+	if err != nil {
+		return wire.ContentPart{}, err
+	}
+	part := wire.ContentPart{AdditionalProperties: fields}
+	switch block.ModalityType {
+	case Text:
+		part.Type = "text"
+		text := block.Content.String()
+		part.Text = &text
+	case Image:
+		if block.MimeType == "" {
+			return part, fmt.Errorf("image block missing mimetype")
+		}
+		dataURL := fmt.Sprintf("data:%s;base64,%s", block.MimeType, block.Content.String())
+		if block.MimeType == "application/pdf" {
+			filename, ok := block.ExtraFields[BlockFieldFilenameKey].(string)
+			if !ok {
+				return part, fmt.Errorf("filename field missing or not a string")
+			}
+			part.Type = "file"
+			part.File = &wire.FileContent{FileData: &dataURL, Filename: &filename}
+		} else {
+			part.Type = "image_url"
+			var media wire.MediaURL
+			data, _ := json.Marshal(map[string]any{"url": dataURL})
+			_ = media.UnmarshalJSON(data)
+			part.ImageUrl = &media
+		}
+	case Audio:
+		if block.MimeType == "" {
+			return part, fmt.Errorf("audio block missing mimetype")
+		}
+		format, _ := strings.CutPrefix(block.MimeType, "audio/")
+		if format != "wav" && format != "mp3" {
+			return part, fmt.Errorf("unsupported audio format: %s", block.MimeType)
+		}
+		data := block.Content.String()
+		part.Type = "input_audio"
+		part.InputAudio = &wire.InputAudio{Data: &data, Format: &format}
+	default:
+		return part, UnsupportedInputModalityErr(block.ModalityType.String())
+	}
+	for _, key := range []string{"type", "text", "image_url", "input_audio", "file"} {
+		delete(part.AdditionalProperties, key)
+	}
+	return part, nil
+}
+
+// toOpenAIMessage walks blocks in order, separating tool calls, reasoning, and
+// audio references from content. Scalar text is used only when no part metadata
+// would be lost. It builds fresh field maps and never mutates borrowed history.
+func toOpenAIMessage(msg Message) (wire.Message, error) {
+	fields, err := openAIFields(msg.ExtraFields)
+	if err != nil {
+		return wire.Message{}, err
+	}
+	result := wire.Message{Role: msg.Role.String(), AdditionalProperties: fields}
+	if len(msg.Blocks) == 0 && !(msg.Role == Assistant && len(fields) > 0) {
+		return result, fmt.Errorf("message must have at least one block")
+	}
+	if msg.Role != User && msg.Role != Assistant && msg.Role != ToolResult && msg.Role != System {
+		return result, fmt.Errorf("unsupported role: %v", msg.Role)
+	}
+	if msg.Role == ToolResult {
+		result.Role = "tool"
+		id := msg.Blocks[0].ID
+		if id == "" {
+			return result, fmt.Errorf("tool result message block must have an ID")
+		}
+		result.ToolCallId = &id
+	}
+	var parts []wire.ContentPart
+	var calls []wire.ToolCall
+	var reasoning strings.Builder
+	for _, block := range msg.Blocks {
+		switch block.BlockType {
+		case Content:
+			if msg.Role == ToolResult && block.ID != *result.ToolCallId {
+				return result, fmt.Errorf("all blocks in tool result message must have the same ID")
+			}
+			if msg.Role == Assistant && block.ModalityType == Audio {
+				if block.ID == "" {
+					return result, fmt.Errorf("assistant audio block missing ID")
+				}
+				if result.Audio.IsSpecified() {
+					return result, fmt.Errorf("multiple assistant audio references cannot be represented")
+				}
+				result.Audio = nullable.NewNullableWithValue(wire.AudioReference{Id: &block.ID})
+				continue
+			}
+			part, err := openAIPart(block)
+			if err != nil {
+				return result, err
+			}
+			parts = append(parts, part)
+		case ToolCall:
+			if msg.Role != Assistant {
+				return result, fmt.Errorf("unsupported block type for %s: %s", msg.Role, block.BlockType)
+			}
+			var input struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"parameters"`
+			}
+			if err := json.Unmarshal([]byte(block.Content.String()), &input); err != nil {
+				return result, fmt.Errorf("invalid tool call content: %w", err)
+			}
+			if input.Name == "" || len(input.Arguments) == 0 {
+				return result, fmt.Errorf("tool call requires name and arguments")
+			}
+			args := string(input.Arguments)
+			extra, err := openAIFields(block.ExtraFields)
+			if err != nil {
+				return result, err
+			}
+			functionFields := map[string]json.RawMessage{}
+			if value := extra["function"]; value != nil {
+				if err := json.Unmarshal(value, &functionFields); err != nil {
+					return result, err
+				}
+				delete(functionFields, "name")
+				delete(functionFields, "arguments")
+			}
+			for _, key := range []string{"id", "type", "function"} {
+				delete(extra, key)
+			}
+			functionType := "function"
+			calls = append(calls, wire.ToolCall{Id: &block.ID, Type: &functionType, Function: &wire.ToolCallFunction{Name: &input.Name, Arguments: &args, AdditionalProperties: functionFields}, AdditionalProperties: extra})
+		case Thinking:
+			if msg.Role != Assistant {
+				return result, fmt.Errorf("reasoning requires assistant role")
+			}
+			reasoning.WriteString(block.Content.String())
+		default:
+			return result, fmt.Errorf("unsupported block type for %s: %s", msg.Role, block.BlockType)
+		}
+	}
+	for _, key := range []string{"role", "tool_call_id", "tool_calls", "audio"} {
+		delete(fields, key)
+	}
+	if len(parts) > 0 {
+		var content wire.MessageContent
+		var text strings.Builder
+		plainText := true
+		for _, part := range parts {
+			if part.Type != "text" || part.Text == nil || len(part.AdditionalProperties) != 0 {
+				plainText = false
+				break
+			}
+			text.WriteString(*part.Text)
+		}
+		if plainText {
+			_ = content.FromMessageContent0(text.String())
+		} else {
+			_ = content.FromMessageContent1(parts)
+		}
+		result.Content = nullable.NewNullableWithValue(content)
+		delete(fields, "content")
+	}
+	if len(calls) > 0 {
+		result.ToolCalls = nullable.NewNullableWithValue(calls)
+	}
+	if reasoning.Len() > 0 && fields["reasoning_content"] == nil && fields["reasoning"] == nil {
+		result.ReasoningContent = nullable.NewNullableWithValue(reasoning.String())
+	}
+	return result, nil
+}
+
+// openAIRequest builds one request from common options and ordered messages.
+// Only present options are transmitted; the caller selects the token-limit field
+// rather than the adapter inferring provider capabilities from a model name.
+func openAIRequest(request GenerationRequest, stream bool) (wire.ChatCompletionRequest, *openAIGenerationOptions, error) {
+	params := wire.ChatCompletionRequest{Model: request.Model}
+	if len(request.Dialog) == 0 {
+		return params, nil, ErrEmptyDialog
+	}
+	options, err := parseOpenAIGenerationOptions(request.Options)
+	if err != nil {
+		return params, nil, err
+	}
+	tools, err := convertToolsToOpenAI(request.Tools)
+	if err != nil {
+		return params, nil, err
+	}
+	instructions, err := textInstructions(request.Instructions)
+	if err != nil {
+		return params, nil, err
+	}
+	if len(instructions) > 0 {
+		message, err := toOpenAIMessage(request.Instructions)
+		if err != nil {
+			return params, nil, err
+		}
+		params.Messages = append(params.Messages, message)
+	}
+	for _, msg := range request.Dialog {
+		message, err := toOpenAIMessage(msg)
+		if err != nil {
+			return params, nil, err
+		}
+		params.Messages = append(params.Messages, message)
+	}
+	if len(tools) > 0 {
+		params.Tools = nullable.NewNullableWithValue(tools)
+	}
+	if options.Temperature != nil {
+		params.Temperature = nullable.NewNullableWithValue(*options.Temperature)
+	}
+	if options.TopP != nil {
+		params.TopP = nullable.NewNullableWithValue(*options.TopP)
+	}
+	if options.FrequencyPenalty != nil {
+		params.FrequencyPenalty = nullable.NewNullableWithValue(*options.FrequencyPenalty)
+	}
+	if options.PresencePenalty != nil {
+		params.PresencePenalty = nullable.NewNullableWithValue(*options.PresencePenalty)
+	}
+	field, _, err := generationOption[string](request.Options, OpenAIGenerationOptionTokenLimitField)
+	if err != nil {
+		return params, nil, err
+	}
+	if field != "" && field != "max_tokens" && field != "max_completion_tokens" {
+		return params, nil, InvalidParameterErr{Parameter: OpenAIGenerationOptionTokenLimitField, Reason: "expected max_tokens or max_completion_tokens"}
+	}
+	if options.MaxGenerationTokens != nil {
+		value := nullable.NewNullableWithValue(int64(*options.MaxGenerationTokens))
+		if field == "max_tokens" {
+			params.MaxTokens = value
+		} else {
+			params.MaxCompletionTokens = value
+		}
+	}
+	if options.CandidateCount != nil {
+		params.N = nullable.NewNullableWithValue(int64(*options.CandidateCount))
+	}
+	if len(options.StopSequences) > 0 {
+		var stop wire.StopSequences
+		if len(options.StopSequences) == 1 {
+			_ = stop.FromStopSequences0(options.StopSequences[0])
+		} else {
+			_ = stop.FromStopSequences1(options.StopSequences)
+		}
+		params.Stop = nullable.NewNullableWithValue(stop)
+	}
+	if options.ToolChoice != "" {
+		var choice wire.ToolChoice
+		if options.ToolChoice == ToolChoiceAuto || options.ToolChoice == ToolChoiceToolsRequired {
+			_ = choice.FromToolChoice0(options.ToolChoice)
+		} else {
+			functionType := "function"
+			_ = choice.FromToolChoiceObject(wire.ToolChoiceObject{Type: &functionType, Function: &wire.NamedTool{Name: &options.ToolChoice}})
+		}
+		params.ToolChoice = nullable.NewNullableWithValue(choice)
+	}
+	if options.ThinkingBudget != "" {
+		params.ReasoningEffort = nullable.NewNullableWithValue(options.ThinkingBudget)
+	}
+	var modalities []string
+	for _, modality := range options.OutputModalities {
+		if modality != Text && modality != Audio {
+			return params, nil, UnsupportedOutputModalityErr(modality.String() + " output not supported by model")
+		}
+		modalities = append(modalities, modality.String())
+		if modality == Audio {
+			if options.AudioConfig.VoiceName == "" {
+				return params, nil, InvalidParameterErr{Parameter: "AudioConfig.VoiceName", Reason: "voice name is required for audio output"}
+			}
+			if options.AudioConfig.Format == "" {
+				return params, nil, InvalidParameterErr{Parameter: "AudioConfig.Format", Reason: "format is required for audio output"}
+			}
+			params.Audio = nullable.NewNullableWithValue(wire.AudioOptions{Voice: &options.AudioConfig.VoiceName, Format: &options.AudioConfig.Format})
+		}
+	}
+	if len(modalities) > 0 {
+		params.Modalities = nullable.NewNullableWithValue(modalities)
+	}
+	if stream {
+		include := true
+		params.Stream = nullable.NewNullableWithValue(true)
+		params.StreamOptions = nullable.NewNullableWithValue(wire.StreamOptions{IncludeUsage: &include})
+	}
+	return params, options, nil
+}
+
+func openAIUsage(usage wire.Usage) Metadata {
+	result := Metadata{}
+	if usage.PromptTokens != nil {
+		result[UsageMetricInputTokens] = int(*usage.PromptTokens)
+	}
+	if usage.CompletionTokens != nil {
+		result[UsageMetricGenerationTokens] = int(*usage.CompletionTokens)
+	}
+	details, _ := usage.PromptTokensDetails.Get()
+	cached := details.CachedTokens
+	if cached == nil {
+		cached = usage.CachedTokens
+	}
+	if cached == nil {
+		cached = usage.PromptCacheHitTokens
+	}
+	if cached != nil {
+		result[UsageMetricCacheReadTokens] = int(*cached)
+	}
+	return result
+}
+
+// openAIResponseMessage normalizes text, audio, reasoning, and function calls
+// without decoding arbitrary argument numbers through float64. Remaining wire
+// fields stay at their original message or block scope for explicit replay.
+func openAIResponseMessage(message wire.ResponseMessage, audioFormat string) (Message, error) {
+	result := Message{Role: Assistant}
+	fields := openAIRawFields(message, "role", "tool_calls", "audio")
+	if message.Content.IsSpecified() && !message.Content.IsNull() {
+		content, _ := message.Content.Get()
+		if text, err := content.AsMessageContent0(); err == nil {
+			if text != "" {
+				result.Blocks = append(result.Blocks, TextBlock(text))
+				delete(fields, "content")
+			}
+		} else {
+			parts, err := content.AsMessageContent1()
+			if err != nil {
+				return result, fmt.Errorf("decode content parts: %w", err)
+			}
+			for _, part := range parts {
+				if part.Type != "text" || part.Text == nil {
+					return result, fmt.Errorf("unsupported output content part: %s", part.Type)
+				}
+				block := TextBlock(*part.Text)
+				extra := openAIRawFields(part, "type", "text")
+				if len(extra) > 0 {
+					block.ExtraFields = map[string]interface{}{OpenAIExtraFieldWireFields: extra}
+				}
+				result.Blocks = append(result.Blocks, block)
+			}
+			delete(fields, "content")
+		}
+	}
+	for _, value := range []nullable.Nullable[string]{message.ReasoningContent, message.Reasoning} {
+		if text, err := value.Get(); err == nil && text != "" {
+			result.Blocks = append(result.Blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(text), ExtraFields: map[string]interface{}{ThinkingExtraFieldGeneratorKey: "openai"}})
+		}
+	}
+	if audio, err := message.Audio.Get(); err == nil && audio.Id != nil && *audio.Id != "" {
+		block := Block{ID: *audio.Id, BlockType: Content, ModalityType: Audio, MimeType: "audio/" + audioFormat,
+			ExtraFields: map[string]interface{}{OpenAIExtraFieldAudio: openAIRawFields(audio, "id", "data")}}
+		if audio.Data != nil {
+			block.Content = Str(*audio.Data)
+		}
+		result.Blocks = append(result.Blocks, block)
+		if audio.Transcript != nil && *audio.Transcript != "" {
+			result.Blocks = append(result.Blocks, TextBlock(*audio.Transcript))
+		}
+	}
+	calls, _ := message.ToolCalls.Get()
+	for _, call := range calls {
+		if call.Function == nil || call.Function.Name == nil || call.Function.Arguments == nil {
+			return result, fmt.Errorf("unsupported or incomplete tool call")
+		}
+		args := *call.Function.Arguments
+		var parameters map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(args), &parameters); err != nil {
+			return result, fmt.Errorf("failed to parse tool arguments: %w", err)
+		}
+		payload, err := json.Marshal(struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"parameters"`
+		}{*call.Function.Name, json.RawMessage(args)})
+		if err != nil {
+			return result, err
+		}
+		block := Block{BlockType: ToolCall, ModalityType: Text, MimeType: "application/json", Content: Str(payload)}
+		if call.Id != nil {
+			block.ID = *call.Id
+		}
+		extra := openAIRawFields(call, "id", "type", "function")
+		if functionFields := openAIRawFields(call.Function, "name", "arguments"); len(functionFields) > 0 {
+			extra["function"], _ = json.Marshal(functionFields)
+		}
+		block.ExtraFields = map[string]interface{}{OpenAIExtraFieldWireFields: extra}
+		result.Blocks = append(result.Blocks, block)
+	}
+	if len(fields) > 0 {
+		result.ExtraFields = map[string]interface{}{OpenAIExtraFieldWireFields: fields}
+	}
+	return result, nil
+}
+
+func openAIFinish(reason, refusal string, tools bool) (FinishReason, error) {
+	if refusal != "" {
+		return ContentPolicyViolation, ContentPolicyErr(refusal)
+	}
+	switch reason {
+	case "stop":
+		if tools {
+			return ToolUse, nil
+		}
+		return EndTurn, nil
+	case "tool_calls":
+		return ToolUse, nil
+	case "length":
+		return MaxGenerationLimit, ErrMaxGenerationLimit
+	case "content_filter":
+		return ContentPolicyViolation, ContentPolicyErr("content policy violation detected")
+	default:
+		return Unknown, nil
+	}
+}
+
+// Generate sends one request, preserving response headers and opaque metadata.
+func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
+	if g.client == nil {
+		return Response{}, fmt.Errorf("openai: client not initialized")
+	}
+	params, options, err := openAIRequest(request, false)
+	if err != nil {
+		return Response{}, err
+	}
+	response, err := g.client.CreateChatCompletion(ctx, nil, params)
+	if err != nil {
+		return Response{}, fmt.Errorf("openai request: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Response{}, mapHTTPAPIError(ProviderOpenAI, response)
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(response.Body)
+	if err != nil {
+		return Response{}, fmt.Errorf("openai response: %w", err)
+	}
+	var completion wire.ChatCompletionResponse
+	if err := json.Unmarshal(data, &completion); err != nil {
+		return Response{}, fmt.Errorf("decode openai response: %w", err)
+	}
+	if completion.Error.IsSpecified() && !completion.Error.IsNull() {
+		return Response{}, &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindUnknown, StatusCode: response.StatusCode, Message: parseAPIErrorMessage(string(data)), RawBody: string(data)}
+	}
+	usage, _ := completion.Usage.Get()
+	result := Response{UsageMetadata: openAIUsage(usage), ExtraFields: map[string]interface{}{OpenAIResponseExtraFieldHeaders: response.Header.Clone(), OpenAIResponseExtraFieldWireFields: openAIRawFields(completion, "choices", "usage")}}
+	if completion.Choices == nil {
+		return result, fmt.Errorf("openai response missing choices")
+	}
+	for _, choice := range *completion.Choices {
+		if choice.Message == nil {
+			return result, fmt.Errorf("openai choice missing message")
+		}
+		message, err := openAIResponseMessage(*choice.Message, options.AudioConfig.Format)
+		if err != nil {
+			return result, err
+		}
+		if message.ExtraFields == nil {
+			message.ExtraFields = map[string]interface{}{}
+		}
+		message.ExtraFields[OpenAIExtraFieldChoice] = openAIRawFields(choice, "message")
+		result.Candidates = append(result.Candidates, message)
+	}
+	if len(*completion.Choices) > 0 {
+		first := (*completion.Choices)[0]
+		reason, _ := first.FinishReason.Get()
+		refusal, _ := first.Message.Refusal.Get()
+		calls, _ := first.Message.ToolCalls.Get()
+		result.FinishReason, err = openAIFinish(reason, refusal, len(calls) > 0)
+	}
+	return result, err
 }
 
 type openAIGenerationOptions struct {
@@ -236,844 +776,6 @@ func parseOpenAIGenerationOptions(values GenerationOptions) (*openAIGenerationOp
 	}
 	return options, nil
 }
-
-// toOpenAIMessage converts a gai.Message to an OpenAI chat message.
-// It returns an error if the message contains unsupported modalities or block types.
-func toOpenAIMessage(msg Message) (oai.ChatCompletionMessageParamUnion, error) {
-	if len(msg.Blocks) == 0 {
-		return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("message must have at least one block")
-	}
-
-	// Check for video modality in any block
-	for _, block := range msg.Blocks {
-		if block.ModalityType == Video {
-			return oai.ChatCompletionMessageParamUnion{}, UnsupportedInputModalityErr("video")
-		}
-	}
-
-	// If the message is a ToolResult, it'll be handled in the switch statement below
-
-	switch msg.Role {
-	case User:
-		// Special case for single text block, to supply the content directly as a string,
-		// instead of as a part of an object. This is especially helpful when using third-party
-		// providers like open-router or deepseek, which do not support multiple objects supplied as
-		// content for a message.
-		if len(msg.Blocks) == 1 && msg.Blocks[0].ModalityType == Text {
-			return oai.UserMessage(msg.Blocks[0].Content.String()), nil
-		}
-
-		// User messages should only have Content blocks
-		for _, block := range msg.Blocks {
-			if block.BlockType != Content {
-				return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("unsupported block type for user: %v", block.BlockType)
-			}
-		}
-
-		// Handle multimodal content
-		var parts []oai.ChatCompletionContentPartUnionParam
-		for _, block := range msg.Blocks {
-			switch block.ModalityType {
-			case Text:
-				parts = append(parts, oai.TextContentPart(block.Content.String()))
-			case Image:
-				// Convert image content to an image part
-				if block.MimeType == "" {
-					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("image block missing mimetype")
-				}
-
-				dataUrl := fmt.Sprintf("data:%s;base64,%s",
-					block.MimeType,
-					block.Content.String())
-
-				switch block.MimeType {
-				case "application/pdf":
-					val, ok := block.ExtraFields[BlockFieldFilenameKey]
-					if !ok {
-						return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("filename field missing in extra fields")
-					}
-					filename, ok := val.(string)
-					if !ok {
-						return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("filename field is not a string")
-					}
-					parts = append(parts, oai.FileContentPart(oai.ChatCompletionContentPartFileFileParam{
-						FileData: oai.String(dataUrl),
-						Filename: oai.String(filename),
-					}))
-				default:
-					parts = append(parts, oai.ImageContentPart(oai.ChatCompletionContentPartImageImageURLParam{
-						URL: dataUrl,
-					}))
-				}
-			case Audio:
-				// Convert audio content to an audio input part
-				if block.MimeType == "" {
-					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("audio block missing mimetype")
-				}
-				// Extract format from mimetype (e.g., "audio/wav" -> "wav")
-				format, _ := strings.CutPrefix(block.MimeType, "audio/")
-				if !slices.Contains([]string{"wav", "mp3"}, format) {
-					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("unsupported audio format: %v", block.MimeType)
-				}
-				parts = append(parts, oai.InputAudioContentPart(oai.ChatCompletionContentPartInputAudioInputAudioParam{
-					Data:   block.Content.String(),
-					Format: format,
-				}))
-			default:
-				return oai.ChatCompletionMessageParamUnion{}, UnsupportedInputModalityErr(block.ModalityType.String())
-			}
-		}
-
-		return oai.UserMessage(parts), nil
-
-	case Assistant:
-		// Handle multiple blocks
-		var contentParts oai.ChatCompletionAssistantMessageParamContentUnion
-		var toolCalls []oai.ChatCompletionMessageToolCallUnionParam
-		var audioID string
-
-		for _, block := range msg.Blocks {
-			switch block.BlockType {
-			case Content:
-				if block.ModalityType == Text {
-					contentParts.OfArrayOfContentParts = append(
-						contentParts.OfArrayOfContentParts,
-						oai.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion{
-							OfText: &oai.ChatCompletionContentPartTextParam{
-								Text: block.Content.String(),
-							},
-						},
-					)
-				} else if block.ModalityType == Audio {
-					if block.ID == "" {
-						return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("assistant audio block missing ID")
-					}
-					// Remember audio ID for later use
-					audioID = block.ID
-				} else {
-					return oai.ChatCompletionMessageParamUnion{}, UnsupportedInputModalityErr(block.ModalityType.String())
-				}
-			case ToolCall:
-				// Parse the tool call content as ToolCallInput
-				var toolUse ToolCallInput
-				if err := json.Unmarshal([]byte(block.Content.String()), &toolUse); err != nil {
-					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("invalid tool call content: %w", err)
-				}
-
-				// Convert parameters to JSON string for OpenAI
-				argsJSON, err := json.Marshal(toolUse.Parameters)
-				if err != nil {
-					return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("failed to marshal tool parameters: %w", err)
-				}
-
-				toolCalls = append(toolCalls, oai.ChatCompletionMessageToolCallUnionParam{
-					OfFunction: &oai.ChatCompletionMessageFunctionToolCallParam{
-						ID: block.ID,
-						Function: oai.ChatCompletionMessageFunctionToolCallFunctionParam{
-							Name:      toolUse.Name,
-							Arguments: string(argsJSON),
-						},
-					},
-				})
-			default:
-				return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("unsupported block type for assistant: %v", block.BlockType)
-			}
-		}
-
-		result := oai.ChatCompletionMessageParamUnion{
-			OfAssistant: &oai.ChatCompletionAssistantMessageParam{},
-		}
-		if len(contentParts.OfArrayOfContentParts) > 0 {
-			result.OfAssistant.Content = contentParts
-		}
-		if len(toolCalls) > 0 {
-			result.OfAssistant.ToolCalls = toolCalls
-		}
-		if audioID != "" {
-			result.OfAssistant.Audio = oai.ChatCompletionAssistantMessageParamAudio{
-				ID: audioID,
-			}
-		}
-		return result, nil
-
-	case ToolResult:
-		// OpenAI handles tool results differently from Anthropic:
-		// - OpenAI: Each tool result must be in a separate message with a single tool_call_id.
-		//   All blocks in the message must have the same tool ID and be text modality.
-		// - Anthropic: Multiple tool results for parallel tool calls must be in a single message
-		//   with multiple tool_result blocks, each with its own tool_use_id.
-		//
-		// OpenAI's API has these requirements for tool results:
-		// 1. Each tool result message must reference exactly one tool_call_id
-		// 2. All blocks in a tool result message must have the same tool ID
-		// 3. All blocks must be text modality
-		// 4. Multiple tool results (for parallel tool calls) require separate messages
-
-		// For ToolResult messages, we convert them to OpenAI's tool message format
-		if len(msg.Blocks) == 0 {
-			return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("tool result message must have at least one block")
-		}
-
-		// Get the ID from the first block
-		toolID := msg.Blocks[0].ID
-		if toolID == "" {
-			return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("tool result message block must have an ID")
-		}
-
-		// Special case for single text block, to supply the content directly as a string,
-		// instead of as a part of an object. This is especially helpful when using third-party
-		// providers like open-router or deepseek, which do not support multiple objects supplied as
-		// content for a message.
-		if len(msg.Blocks) == 1 && msg.Blocks[0].ModalityType == Text {
-			return oai.ToolMessage(msg.Blocks[0].Content.String(), toolID), nil
-		}
-
-		// Create text parts for each block with the same ID
-		var textParts []oai.ChatCompletionContentPartTextParam
-		for _, block := range msg.Blocks {
-			// Verify all blocks have the same tool ID
-			if block.ID != toolID {
-				return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("all blocks in tool result message must have the same ID")
-			}
-
-			// Verify all blocks are text modality
-			if block.ModalityType != Text {
-				return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("OpenAI only supports text modality in tool result messages")
-			}
-
-			textParts = append(textParts, oai.ChatCompletionContentPartTextParam{
-				Text: block.Content.String(),
-			})
-		}
-
-		// Create the tool message with the text parts
-		return oai.ToolMessage(textParts, toolID), nil
-
-	default:
-		return oai.ChatCompletionMessageParamUnion{}, fmt.Errorf("unsupported role: %v", msg.Role)
-	}
-}
-
-// Generate sends one Chat Completions request and normalizes candidates, text,
-// audio, tool calls, usage, and provider failures into [Response].
-func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
-	if g.client == nil {
-		return Response{}, fmt.Errorf("openai: client not initialized")
-	}
-
-	dialog := request.Dialog
-	if len(dialog) == 0 {
-		return Response{}, ErrEmptyDialog
-	}
-	options, err := parseOpenAIGenerationOptions(request.Options)
-	if err != nil {
-		return Response{}, err
-	}
-	tools, err := convertToolsToOpenAI(request.Tools)
-	if err != nil {
-		return Response{}, err
-	}
-	instructions, err := textInstructions(request.Instructions)
-	if err != nil {
-		return Response{}, err
-	}
-
-	// Convert each message to OpenAI format
-	var messages []oai.ChatCompletionMessageParamUnion
-	for _, msg := range dialog {
-		oaiMsg, err := toOpenAIMessage(msg)
-		if err != nil {
-			return Response{}, fmt.Errorf("failed to convert message: %w", err)
-		}
-		messages = append(messages, oaiMsg)
-	}
-
-	// Create OpenAI chat completion params
-	params := oai.ChatCompletionNewParams{
-		Model:    request.Model,
-		Messages: messages,
-	}
-
-	if len(instructions) > 0 {
-		parts := make([]oai.ChatCompletionContentPartTextParam, 0, len(instructions))
-		for _, instruction := range instructions {
-			parts = append(parts, oai.ChatCompletionContentPartTextParam{Text: instruction})
-		}
-		params.Messages = append([]oai.ChatCompletionMessageParamUnion{
-			oai.SystemMessage(parts),
-		}, messages...)
-	}
-
-	// Map our options to OpenAI params if options are provided
-	if options != nil {
-		// Set temperature if non-zero
-		if options.Temperature != nil {
-			params.Temperature = oai.Float(*options.Temperature)
-		}
-
-		// Set top_p if non-zero
-		if options.TopP != nil {
-			params.TopP = oai.Float(*options.TopP)
-		}
-
-		// Set frequency penalty if non-zero
-		if options.FrequencyPenalty != nil {
-			params.FrequencyPenalty = oai.Float(*options.FrequencyPenalty)
-		}
-
-		// Set presence penalty if non-zero
-		if options.PresencePenalty != nil {
-			params.PresencePenalty = oai.Float(*options.PresencePenalty)
-		}
-
-		// Set max tokens if specified
-		if options.MaxGenerationTokens != nil {
-			params.MaxCompletionTokens = oai.Int(int64(*options.MaxGenerationTokens))
-		}
-
-		// Set number of completions if specified
-		if options.CandidateCount != nil {
-			params.N = oai.Int(int64(*options.CandidateCount))
-		}
-
-		// Set stop sequences if specified
-		if len(options.StopSequences) > 0 {
-			// OpenAI accepts either a single string or array of strings
-			if len(options.StopSequences) == 1 {
-				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfString: oai.String(options.StopSequences[0])}
-			} else {
-				params.Stop = oai.ChatCompletionNewParamsStopUnion{OfStringArray: options.StopSequences}
-			}
-		}
-
-		// Set tool choice if specified
-		if options.ToolChoice != "" {
-			switch options.ToolChoice {
-			case ToolChoiceAuto:
-				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceAuto)}
-			case ToolChoiceToolsRequired:
-				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceToolsRequired)}
-			default:
-				// Specific tool name
-				params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfFunctionToolChoice: &oai.ChatCompletionNamedToolChoiceParam{
-					Function: oai.ChatCompletionNamedToolChoiceFunctionParam{
-						Name: options.ToolChoice,
-					},
-				}}
-			}
-		}
-
-		// Handle multimodality options
-		if len(options.OutputModalities) > 0 {
-			// Set requested modalities
-			modalities := make([]string, 0, len(options.OutputModalities))
-			hasAudio := false
-			for _, m := range options.OutputModalities {
-				switch m {
-				case Text:
-					modalities = append(modalities, "text")
-				case Audio:
-					modalities = append(modalities, "audio")
-					hasAudio = true
-				case Image:
-					return Response{}, UnsupportedOutputModalityErr("image output not supported by model")
-				case Video:
-					return Response{}, UnsupportedOutputModalityErr("video output not supported by model")
-				}
-			}
-			params.Modalities = modalities
-
-			// Set audio configuration if audio output is requested
-			if hasAudio {
-				if options.AudioConfig.VoiceName == "" {
-					return Response{}, InvalidParameterErr{
-						Parameter: "AudioConfig.VoiceName",
-						Reason:    "voice name is required for audio output",
-					}
-				}
-				if options.AudioConfig.Format == "" {
-					return Response{}, InvalidParameterErr{
-						Parameter: "AudioConfig.Format",
-						Reason:    "format is required for audio output",
-					}
-				}
-
-				params.Audio = oai.ChatCompletionAudioParam{
-					Voice: oai.ChatCompletionAudioParamVoiceUnion{
-						OfString: param.NewOpt(options.AudioConfig.VoiceName),
-					},
-					Format: oai.ChatCompletionAudioParamFormat(options.AudioConfig.Format),
-				}
-			}
-		}
-
-		if options.ThinkingBudget != "" {
-			params.ReasoningEffort = oai.ReasoningEffort(options.ThinkingBudget)
-		}
-	}
-
-	if len(tools) > 0 {
-		params.Tools = tools
-	}
-
-	// Make the API call
-	resp, err := g.client.New(ctx, params)
-	if err != nil {
-		if mapped := mapOpenAISDKError(ProviderOpenAI, err); mapped != nil {
-			return Response{}, mapped
-		}
-		return Response{}, fmt.Errorf("failed to create new message: %w", err)
-	}
-
-	// Convert OpenAI response to our Response type
-	result := Response{
-		UsageMetadata: make(Metadata),
-	}
-
-	// Add usage metrics if available
-	if usage := resp.Usage; usage.PromptTokens > 0 || usage.CompletionTokens > 0 {
-		if promptTokens := usage.PromptTokens; promptTokens > 0 {
-			result.UsageMetadata[UsageMetricInputTokens] = int(promptTokens)
-		}
-		if completionTokens := usage.CompletionTokens; completionTokens > 0 {
-			result.UsageMetadata[UsageMetricGenerationTokens] = int(completionTokens)
-		}
-		if usage.PromptTokensDetails.CachedTokens > 0 {
-			result.UsageMetadata[UsageMetricCacheReadTokens] = int(usage.PromptTokensDetails.CachedTokens)
-		}
-	}
-
-	var hasToolCalls bool
-
-	// Convert all choices to our Message type
-	for _, choice := range resp.Choices {
-		// Convert the message content
-		var blocks []Block
-
-		// Handle text content
-		if content := choice.Message.Content; content != "" {
-			blocks = append(blocks, Block{
-				BlockType:    Content,
-				ModalityType: Text,
-				MimeType:     "text/plain",
-				Content:      Str(content),
-			})
-		}
-
-		// Handle audio content if present
-		if choice.Message.Audio.ID != "" {
-			// Add audio block
-			blocks = append(blocks, Block{
-				ID:           choice.Message.Audio.ID,
-				BlockType:    Content,
-				ModalityType: Audio,
-				MimeType:     "audio/" + options.AudioConfig.Format,
-				Content:      Str(choice.Message.Audio.Data),
-			})
-
-			// Add transcript as a separate text block if available
-			if choice.Message.Audio.Transcript != "" {
-				blocks = append(blocks, Block{
-					BlockType:    Content,
-					ModalityType: Text,
-					MimeType:     "text/plain",
-					Content:      Str(choice.Message.Audio.Transcript),
-				})
-			}
-		}
-
-		// Handle tool calls
-		if toolCalls := choice.Message.ToolCalls; len(toolCalls) > 0 {
-			hasToolCalls = true
-			for _, toolCall := range toolCalls {
-				// Create a ToolCallInput with standardized format
-				toolUse := ToolCallInput{
-					Name: toolCall.Function.Name,
-				}
-
-				// Parse the arguments string into a map
-				if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &toolUse.Parameters); err != nil {
-					return Response{}, fmt.Errorf("failed to parse tool arguments: %w", err)
-				}
-
-				// Marshal back to JSON for consistent representation
-				toolUseJSON, err := json.Marshal(toolUse)
-				if err != nil {
-					return Response{}, fmt.Errorf("failed to marshal tool use: %w", err)
-				}
-
-				blocks = append(blocks, Block{
-					ID:           toolCall.ID,
-					BlockType:    ToolCall,
-					ModalityType: Text,
-					MimeType:     "application/json",
-					Content:      Str(toolUseJSON),
-				})
-			}
-		}
-
-		result.Candidates = append(result.Candidates, Message{
-			Role:   Assistant,
-			Blocks: blocks,
-		})
-	}
-
-	// Set finish reason
-	if len(resp.Choices) > 0 {
-		choice := resp.Choices[0]
-		// The API documents refusal as an independent assistant-message field.
-		// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/
-		if choice.Message.Refusal != "" {
-			result.FinishReason = ContentPolicyViolation
-			return result, ContentPolicyErr(choice.Message.Refusal)
-		}
-		switch choice.FinishReason {
-		case "stop":
-			result.FinishReason = EndTurn
-		case "length":
-			result.FinishReason = MaxGenerationLimit
-			// Return ErrMaxGenerationLimit when the model reaches its token limit,
-			// regardless of whether MaxGenerationTokens was explicitly set
-			return result, ErrMaxGenerationLimit
-		case "tool_calls":
-			result.FinishReason = ToolUse
-		case "content_filter":
-			// content_filter means output was omitted by the API's content filters.
-			// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/
-			result.FinishReason = ContentPolicyViolation
-			return result, ContentPolicyErr("content policy violation detected")
-		default:
-			result.FinishReason = Unknown
-		}
-	}
-
-	// some OpenAI providers return an EndTurn stop reason, despite being a tool call
-	if hasToolCalls && result.FinishReason == EndTurn {
-		result.FinishReason = ToolUse
-	}
-
-	return result, nil
-}
-
-// Stream starts one Chat Completions stream when iterated and emits ordered
-// text, audio, tool-call, usage, and terminal-error [StreamChunk] values.
-func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
-	return func(yield func(StreamChunk) bool) {
-		if g.client == nil {
-			yield(StreamChunk{Err: fmt.Errorf("openai: client not initialized")})
-			return
-		}
-
-		dialog := request.Dialog
-		if len(dialog) == 0 {
-			yield(StreamChunk{Err: ErrEmptyDialog})
-			return
-		}
-		options, err := parseOpenAIGenerationOptions(request.Options)
-		if err != nil {
-			yield(StreamChunk{Err: err})
-			return
-		}
-		tools, err := convertToolsToOpenAI(request.Tools)
-		if err != nil {
-			yield(StreamChunk{Err: err})
-			return
-		}
-		instructions, err := textInstructions(request.Instructions)
-		if err != nil {
-			yield(StreamChunk{Err: err})
-			return
-		}
-
-		// Convert each message to OpenAI format
-		var messages []oai.ChatCompletionMessageParamUnion
-		for _, msg := range dialog {
-			oaiMsg, err := toOpenAIMessage(msg)
-			if err != nil {
-				yield(StreamChunk{Err: fmt.Errorf("failed to convert message: %w", err)})
-				return
-			}
-			messages = append(messages, oaiMsg)
-		}
-
-		// Create OpenAI chat completion params
-		params := oai.ChatCompletionNewParams{
-			Model:    request.Model,
-			Messages: messages,
-		}
-
-		if len(instructions) > 0 {
-			parts := make([]oai.ChatCompletionContentPartTextParam, 0, len(instructions))
-			for _, instruction := range instructions {
-				parts = append(parts, oai.ChatCompletionContentPartTextParam{Text: instruction})
-			}
-			params.Messages = append([]oai.ChatCompletionMessageParamUnion{
-				oai.SystemMessage(parts),
-			}, messages...)
-		}
-
-		// Map our options to OpenAI params if options are provided
-		if options != nil {
-			// Set temperature if non-zero
-			if options.Temperature != nil {
-				params.Temperature = oai.Float(*options.Temperature)
-			}
-
-			// Set top_p if non-zero
-			if options.TopP != nil {
-				params.TopP = oai.Float(*options.TopP)
-			}
-
-			// Set frequency penalty if non-zero
-			if options.FrequencyPenalty != nil {
-				params.FrequencyPenalty = oai.Float(*options.FrequencyPenalty)
-			}
-
-			// Set presence penalty if non-zero
-			if options.PresencePenalty != nil {
-				params.PresencePenalty = oai.Float(*options.PresencePenalty)
-			}
-
-			// Set max tokens if specified
-			if options.MaxGenerationTokens != nil {
-				params.MaxCompletionTokens = oai.Int(int64(*options.MaxGenerationTokens))
-			}
-
-			// Set number of completions if specified
-			if options.CandidateCount != nil {
-				params.N = oai.Int(int64(*options.CandidateCount))
-			}
-
-			// Set stop sequences if specified
-			if len(options.StopSequences) > 0 {
-				// OpenAI accepts either a single string or array of strings
-				if len(options.StopSequences) == 1 {
-					params.Stop = oai.ChatCompletionNewParamsStopUnion{OfString: oai.String(options.StopSequences[0])}
-				} else {
-					params.Stop = oai.ChatCompletionNewParamsStopUnion{OfStringArray: options.StopSequences}
-				}
-			}
-
-			// Set tool choice if specified
-			if options.ToolChoice != "" {
-				switch options.ToolChoice {
-				case ToolChoiceAuto:
-					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceAuto)}
-				case ToolChoiceToolsRequired:
-					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: oai.String(ToolChoiceToolsRequired)}
-				default:
-					// Specific tool name
-					params.ToolChoice = oai.ChatCompletionToolChoiceOptionUnionParam{OfFunctionToolChoice: &oai.ChatCompletionNamedToolChoiceParam{
-						Function: oai.ChatCompletionNamedToolChoiceFunctionParam{
-							Name: options.ToolChoice,
-						},
-					}}
-				}
-			}
-
-			// Handle multimodality options
-			if len(options.OutputModalities) > 0 {
-				// Set requested modalities
-				modalities := make([]string, 0, len(options.OutputModalities))
-				hasAudio := false
-				for _, m := range options.OutputModalities {
-					switch m {
-					case Text:
-						modalities = append(modalities, "text")
-					case Audio:
-						modalities = append(modalities, "audio")
-						hasAudio = true
-					case Image:
-						yield(StreamChunk{Err: UnsupportedOutputModalityErr("image output not supported by model")})
-						return
-					case Video:
-						yield(StreamChunk{Err: UnsupportedOutputModalityErr("video output not supported by model")})
-						return
-					}
-				}
-				params.Modalities = modalities
-
-				// Set audio configuration if audio output is requested
-				if hasAudio {
-					if options.AudioConfig.VoiceName == "" {
-						yield(StreamChunk{Err: InvalidParameterErr{
-							Parameter: "AudioConfig.VoiceName",
-							Reason:    "voice name is required for audio output",
-						}})
-						return
-					}
-					if options.AudioConfig.Format == "" {
-						yield(StreamChunk{Err: InvalidParameterErr{
-							Parameter: "AudioConfig.Format",
-							Reason:    "format is required for audio output",
-						}})
-						return
-					}
-					params.Audio = oai.ChatCompletionAudioParam{
-						Voice: oai.ChatCompletionAudioParamVoiceUnion{
-							OfString: param.NewOpt(options.AudioConfig.VoiceName),
-						},
-						Format: oai.ChatCompletionAudioParamFormat(options.AudioConfig.Format),
-					}
-				}
-			}
-
-			if options.ThinkingBudget != "" {
-				params.ReasoningEffort = oai.ReasoningEffort(options.ThinkingBudget)
-			}
-		}
-
-		if len(tools) > 0 {
-			params.Tools = tools
-		}
-
-		// Enable usage in streaming response
-		params.StreamOptions = oai.ChatCompletionStreamOptionsParam{
-			IncludeUsage: oai.Bool(true),
-		}
-
-		// Start the stream
-		stream := g.client.NewStreaming(ctx, params)
-		defer stream.Close()
-
-		var finalUsage *oai.CompletionUsage
-
-		for stream.Next() {
-			chunk := stream.Current()
-
-			// Capture usage if present (only in final chunk)
-			if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
-				finalUsage = &chunk.Usage
-			}
-
-			// Final chunk may have usage but no choices
-			if len(chunk.Choices) == 0 {
-				continue
-			}
-
-			if len(chunk.Choices) > 1 {
-				panic("choices > 1 not supported")
-			}
-
-			switch chunk.Choices[0].FinishReason {
-			case "length":
-				yield(StreamChunk{Err: ErrMaxGenerationLimit})
-				return
-			case "content_filter":
-				yield(StreamChunk{Err: ContentPolicyErr("could not produce response")})
-				return
-			}
-
-			if chunk.Choices[0].Delta.Refusal != "" {
-				yield(StreamChunk{Err: ContentPolicyErr(chunk.Choices[0].Delta.Refusal)})
-				return
-			}
-
-			if chunk.Choices[0].Delta.Content != "" {
-				if !yield(StreamChunk{
-					Block: Block{
-						BlockType:    Content,
-						ModalityType: Text,
-						MimeType:     "text/plain",
-						Content:      Str(chunk.Choices[0].Delta.Content),
-					},
-					CandidatesIndex: int(chunk.Choices[0].Index),
-				}) {
-					return
-				}
-			}
-
-			if len(chunk.Choices[0].Delta.ToolCalls) > 1 {
-				panic("tool call > 1 not supported")
-			}
-
-			if len(chunk.Choices[0].Delta.ToolCalls) == 1 {
-				toolCall := chunk.Choices[0].Delta.ToolCalls[0]
-				if toolCall.Function.Name != "" {
-					if !yield(StreamChunk{
-						Block: Block{
-							ID:           toolCall.ID,
-							BlockType:    ToolCall,
-							ModalityType: Text,
-							MimeType:     "text/plain",
-							Content:      Str(toolCall.Function.Name),
-						},
-						CandidatesIndex: int(chunk.Choices[0].Index),
-					}) {
-						return
-					}
-				}
-				if toolCall.Function.Arguments != "" {
-					if !yield(StreamChunk{
-						Block: Block{
-							BlockType:    ToolCall,
-							ModalityType: Text,
-							MimeType:     "text/plain",
-							Content:      Str(toolCall.Function.Arguments),
-						},
-						CandidatesIndex: int(chunk.Choices[0].Index),
-					}) {
-						return
-					}
-				}
-			}
-		}
-
-		// Check for stream errors
-		if stream.Err() != nil {
-			if mapped := mapOpenAISDKError(ProviderOpenAI, stream.Err()); mapped != nil {
-				yield(StreamChunk{Err: mapped})
-			} else {
-				yield(StreamChunk{Err: stream.Err()})
-			}
-			return
-		}
-
-		// Emit metadata block as final block if we have usage data
-		if finalUsage != nil {
-			metadata := make(Metadata)
-
-			if finalUsage.PromptTokens > 0 {
-				metadata[UsageMetricInputTokens] = int(finalUsage.PromptTokens)
-			}
-			if finalUsage.CompletionTokens > 0 {
-				metadata[UsageMetricGenerationTokens] = int(finalUsage.CompletionTokens)
-			}
-			if finalUsage.PromptTokensDetails.CachedTokens > 0 {
-				metadata[UsageMetricCacheReadTokens] = int(finalUsage.PromptTokensDetails.CachedTokens)
-			}
-
-			if len(metadata) > 0 {
-				yield(StreamChunk{
-					Block:           MetadataBlock(metadata),
-					CandidatesIndex: 0,
-				})
-			}
-		}
-	}
-}
-
-// OpenAICompletionService is the Chat Completions SDK subset required by
-// [OpenAiGenerator]. The OpenAI SDK's client.Chat.Completions service satisfies
-// this interface.
-type OpenAICompletionService interface {
-	// New performs one non-streaming Chat Completions request.
-	New(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (res *oai.ChatCompletion, err error)
-	// NewStreaming starts one streaming Chat Completions request.
-	NewStreaming(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (stream *oaissestream.Stream[oai.ChatCompletionChunk])
-}
-
-// NewOpenAiGenerator returns a stateless OpenAI Chat Completions adapter backed
-// by client. The OpenAI SDK's client.Chat.Completions service satisfies
-// [OpenAICompletionService].
-func NewOpenAiGenerator(client OpenAICompletionService) *OpenAiGenerator {
-	return &OpenAiGenerator{client: client}
-}
-
-var _ Generator = (*OpenAiGenerator)(nil)
-var _ StreamingGenerator = (*OpenAiGenerator)(nil)
-var _ TokenCounter = (*OpenAiGenerator)(nil)
-var _ OpenAICompletionService = (*oai.ChatCompletionService)(nil)
 
 // calculateImageTokens calculates the number of tokens used by an image block
 // based on OpenAI's token calculation rules for different models.
@@ -1371,9 +1073,9 @@ func (g *OpenAiGenerator) Count(ctx context.Context, request GenerationRequest) 
 	}
 	for _, tool := range tools {
 		var toolDefStr string
-		toolDefStr += tool.OfFunction.Function.Name + "\n"
-		toolDefStr += tool.OfFunction.Function.Description.String() + "\n"
-		paramsJSON, err := json.Marshal(tool.OfFunction.Function.Parameters)
+		toolDefStr += *tool.Function.Name + "\n"
+		toolDefStr += *tool.Function.Description + "\n"
+		paramsJSON, err := json.Marshal(tool.Function.Parameters)
 		if err == nil {
 			toolDefStr += string(paramsJSON) + "\n"
 		}

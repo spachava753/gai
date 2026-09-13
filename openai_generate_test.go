@@ -1,18 +1,27 @@
 package gai
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	oaissestream "github.com/openai/openai-go/v3/packages/ssestream"
 
 	oai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
+
+	wire "github.com/spachava753/gai/internal/openai"
 )
 
-// mockChatCompletionService is a mock implementation of OpenAICompletionService
+// mockChatCompletionService supplies SDK-shaped fixtures over an HTTP transport.
 type mockChatCompletionService struct {
 	response     *oai.ChatCompletion
 	err          error
@@ -20,33 +29,71 @@ type mockChatCompletionService struct {
 	requests     []oai.ChatCompletionNewParams
 }
 
-func (m *mockChatCompletionService) New(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (*oai.ChatCompletion, error) {
-	m.requests = append(m.requests, body)
-	return m.response, m.err
-}
-
-func (m *mockChatCompletionService) NewStreaming(ctx context.Context, body oai.ChatCompletionNewParams, opts ...option.RequestOption) (stream *oaissestream.Stream[oai.ChatCompletionChunk]) {
-	return oaissestream.NewStream[oai.ChatCompletionChunk](&openAIStreamDecoder{events: m.streamEvents}, nil)
-}
-
-type openAIStreamDecoder struct {
-	events []oaissestream.Event
-	index  int
-	cur    oaissestream.Event
-}
-
-func (d *openAIStreamDecoder) Next() bool {
-	if d.index >= len(d.events) {
-		return false
+// newTestOpenAIGenerator keeps the existing SDK-shaped fixtures as wire-format
+// test data, but sends requests through the real generated HTTP client.
+func newTestOpenAIGenerator(t *testing.T, fixture *mockChatCompletionService) *OpenAiGenerator {
+	t.Helper()
+	if fixture == nil {
+		return &OpenAiGenerator{}
 	}
-	d.cur = d.events[d.index]
-	d.index++
-	return true
+	generator, err := NewOpenAiGenerator(&http.Client{Transport: fixture}, "https://fixture.invalid/v1", "fixture-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return generator
 }
 
-func (d *openAIStreamDecoder) Event() oaissestream.Event { return d.cur }
-func (d *openAIStreamDecoder) Close() error              { return nil }
-func (d *openAIStreamDecoder) Err() error                { return nil }
+func (m *mockChatCompletionService) RoundTrip(request *http.Request) (*http.Response, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	data, err := io.ReadAll(request.Body)
+	if err != nil {
+		return nil, err
+	}
+	var body oai.ChatCompletionNewParams
+	if err := json.Unmarshal(data, &body); err != nil {
+		return nil, err
+	}
+	m.requests = append(m.requests, body)
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	response := &http.Response{StatusCode: 200, Header: make(http.Header), Request: request}
+	if string(raw["stream"]) == "true" {
+		var stream strings.Builder
+		for _, event := range m.streamEvents {
+			fmt.Fprintf(&stream, "data: %s\n\n", event.Data)
+		}
+		stream.WriteString("data: [DONE]\n\n")
+		response.Header.Set("Content-Type", "text/event-stream")
+		response.Body = io.NopCloser(strings.NewReader(stream.String()))
+	} else {
+		data, err := json.Marshal(m.response)
+		if err != nil {
+			return nil, err
+		}
+		response.Header.Set("Content-Type", "application/json")
+		response.Body = io.NopCloser(bytes.NewReader(data))
+	}
+	return response, nil
+}
+
+// newLiveOpenAIGenerator only constructs the adapter; tests must call
+// requireLiveAPIKey before any network operation.
+func newLiveOpenAIGenerator(t *testing.T, connection ...string) *OpenAiGenerator {
+	t.Helper()
+	baseURL, key := "", os.Getenv("OPENAI_API_KEY")
+	if len(connection) == 2 {
+		baseURL, key = connection[0], connection[1]
+	}
+	generator, err := NewOpenAiGenerator(nil, baseURL, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return generator
+}
 
 func testOpenAIGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	client := &mockChatCompletionService{response: &oai.ChatCompletion{
@@ -55,7 +102,7 @@ func testOpenAIGenerateReturnsContentPolicyErrorForRefusal(t *testing.T) {
 			Message:      oai.ChatCompletionMessage{Refusal: "I cannot help with that."},
 		}},
 	}}
-	generator := NewOpenAiGenerator(client)
+	generator := newTestOpenAIGenerator(t, client)
 
 	response, err := generator.Generate(context.Background(), GenerationRequest{
 		Model:  "gpt-5",
@@ -77,7 +124,7 @@ func testOpenAIGenerateReturnsContentPolicyErrorForContentFilter(t *testing.T) {
 	client := &mockChatCompletionService{response: &oai.ChatCompletion{
 		Choices: []oai.ChatCompletionChoice{{FinishReason: "content_filter"}},
 	}}
-	generator := NewOpenAiGenerator(client)
+	generator := newTestOpenAIGenerator(t, client)
 
 	response, err := generator.Generate(context.Background(), GenerationRequest{
 		Model:  "gpt-5",
@@ -99,7 +146,7 @@ func testOpenAIStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	client := &mockChatCompletionService{streamEvents: []oaissestream.Event{{
 		Data: []byte(`{"id":"chatcmpl_123","object":"chat.completion.chunk","created":0,"model":"gpt-5","choices":[{"index":0,"delta":{"refusal":"I cannot help with that."},"finish_reason":""}]}`),
 	}}}
-	generator := NewOpenAiGenerator(client)
+	generator := newTestOpenAIGenerator(t, client)
 
 	var gotErr error
 	for chunk := range generator.Stream(context.Background(), GenerationRequest{
@@ -118,6 +165,296 @@ func testOpenAIStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
 	}
 	if !strings.Contains(policyErr.Error(), "I cannot help with that.") {
 		t.Fatalf("Stream error = %q, want refusal message", policyErr)
+	}
+}
+
+func testOpenAIHTTPClient(t *testing.T) {
+	t.Run("tool arguments replay as strings", func(t *testing.T) {
+		for _, test := range []struct {
+			name, arguments string
+			wantError       bool
+		}{
+			{"observed string response", `"{\"n\":9007199254740993}"`, false},
+			{"reject object response", `{"n":9007199254740993}`, true},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				var message wire.ResponseMessage
+				data := `{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":` + test.arguments + `}}]}`
+				err := json.Unmarshal([]byte(data), &message)
+				if test.wantError {
+					if err == nil {
+						t.Fatal("accepted object-valued tool arguments")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				converted, err := openAIResponseMessage(message, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				replayed, err := toOpenAIMessage(converted)
+				if err != nil {
+					t.Fatal(err)
+				}
+				encoded, err := json.Marshal(replayed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// A string-typed destination rejects object-valued request arguments.
+				var request struct {
+					ToolCalls []struct {
+						Function struct {
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				}
+				if err := json.Unmarshal(encoded, &request); err != nil {
+					t.Fatalf("replayed arguments must be strings: %s: %v", encoded, err)
+				}
+				if len(request.ToolCalls) != 1 || request.ToolCalls[0].Function.Arguments != `{"n":9007199254740993}` {
+					t.Fatalf("arguments changed during replay: %s", encoded)
+				}
+			})
+		}
+	})
+	t.Run("constructor", func(t *testing.T) {
+		if _, err := NewOpenAiGenerator(nil, "", ""); !errors.Is(err, ErrMissingAPIKey) {
+			t.Fatalf("missing key: %v", err)
+		}
+		for _, base := range []string{"relative/path", "file:///tmp/client", "https://example.com?key=value"} {
+			if _, err := NewOpenAiGenerator(nil, base, "key"); err == nil {
+				t.Fatalf("accepted %q", base)
+			}
+		}
+	})
+	t.Run("headers errors and no retry", func(t *testing.T) {
+		for _, status := range []int{400, 429, 503} {
+			t.Run(fmt.Sprint(status), func(t *testing.T) {
+				calls := 0
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					if r.URL.Path != "/prefix/chat/completions" || r.Header.Get("Authorization") != "Bearer fixture" {
+						t.Errorf("request: %s %v", r.URL, r.Header)
+					}
+					w.Header().Set("Content-Type", "text/html")
+					w.Header().Set("Retry-After", "3")
+					w.WriteHeader(status)
+					_, _ = io.WriteString(w, "gateway failure")
+				}))
+				defer server.Close()
+				g, err := NewOpenAiGenerator(server.Client(), server.URL+"/prefix", "fixture")
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := GenerationRequest{Model: "m", Dialog: Dialog{Message{Role: User, Blocks: []Block{TextBlock("hello")}}}}
+				_, err = g.Generate(t.Context(), request)
+				var api *ApiErr
+				if !errors.As(err, &api) || api.StatusCode != status || api.RawBody != "gateway failure" {
+					t.Fatalf("error: %#v", err)
+				}
+				if delay, ok := api.RetryAfter(); !ok || delay != 3*time.Second {
+					t.Fatalf("retry timing: %v %v", delay, ok)
+				}
+				if calls != 1 {
+					t.Fatalf("POST retried %d times", calls)
+				}
+			})
+		}
+	})
+	t.Run("wire replay and token fields", func(t *testing.T) {
+		var requests []map[string]json.RawMessage
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var request map[string]json.RawMessage
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			requests = append(requests, request)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("x-request-id", "request-1")
+			_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":null,"reasoning_content":"thinking","reasoning_details":[{"type":"reasoning.encrypted","data":"cipher","signature":"sig"}],"opaque":{"n":9007199254740993},"tool_calls":[{"id":"c","type":"function","function":{"name":"lookup","arguments":"{\"n\":9007199254740993}","signature":"tool-sig"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":0,"completion_tokens":4},"provider_number":9007199254740993}`)
+		}))
+		defer server.Close()
+		g, err := NewOpenAiGenerator(server.Client(), server.URL, "fixture")
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := GenerationRequest{Model: "first", Dialog: Dialog{Message{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(WithMaxGenerationTokens(8), WithOpenAITokenLimitField("max_tokens"))}
+		response, err := g.Generate(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(requests[0]["max_tokens"]) != "8" || requests[0]["max_completion_tokens"] != nil {
+			t.Fatalf("token selection: %s", requests[0])
+		}
+		if response.ExtraFields[OpenAIResponseExtraFieldHeaders].(http.Header).Get("x-request-id") != "request-1" {
+			t.Fatal("lost headers")
+		}
+		if !strings.Contains(response.Candidates[0].Blocks[1].Content.String(), "9007199254740993") {
+			t.Fatalf("tool arguments rounded: %+v", response.Candidates[0])
+		}
+		// Persist and reload to exercise ExtraFields without Go-specific map types.
+		saved, err := json.Marshal(response.Candidates[0].ExtraFields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		replay := response.Candidates[0]
+		replay.ExtraFields = nil
+		decoder := json.NewDecoder(bytes.NewReader(saved))
+		decoder.UseNumber()
+		if err := decoder.Decode(&replay.ExtraFields); err != nil {
+			t.Fatal(err)
+		}
+		request.Model = "second"
+		request.Options = NewGenerationOptions(WithMaxGenerationTokens(9))
+		request.Dialog = append(request.Dialog, replay)
+		if _, err := g.Generate(t.Context(), request); err != nil {
+			t.Fatal(err)
+		}
+		if requests[1]["max_tokens"] != nil || string(requests[1]["max_completion_tokens"]) != "9" {
+			t.Fatalf("stale token field: %s", requests[1])
+		}
+		messageJSON := string(requests[1]["messages"])
+		for _, value := range []string{`"reasoning_content":"thinking"`, `"signature":"sig"`, `"signature":"tool-sig"`, `"arguments":"{\"n\":9007199254740993}"`, `"content":null`, `"opaque":{"n":9007199254740993}`} {
+			if !strings.Contains(messageJSON, value) {
+				t.Errorf("missing %s in %s", value, messageJSON)
+			}
+		}
+	})
+}
+
+func testOpenAIHTTPStreaming(t *testing.T) {
+	stream := ": keepalive\r\n\r\n" +
+		`data: {"choices":[{"index":0,"delta":{"content":"Hi","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"part"}],"tool_calls":[{"index":1,"id":"b","type":"function","function":{"name":"second","arguments":"{\"n\":"}},{"index":0,"id":"a","type":"function","function":{"name":"first","arguments":"{"}}]}}]}` + "\r\n\r\n" +
+		`data: {"choices":[{"index":0,"delta":{"reasoning_details":[{"index":0,"data":"two","signature":"sig"}],"tool_calls":[{"index":0,"function":{"arguments":"}"}},{"index":1,"function":{"arguments":"9007199254740993}"}}]},"finish_reason":"tool_calls","usage":{"completion_tokens":7}}]}` + "\n\n" +
+		"data: [DONE]\n\n" + `data: {"cost":"0","choices":[],"usage":{"completion_tokens":7}}` + "\n\n"
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, stream)
+	}))
+	defer server.Close()
+	g, err := NewOpenAiGenerator(server.Client(), server.URL, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := (&StreamingAdapter{S: g}).Generate(t.Context(), GenerationRequest{Model: "m", Dialog: Dialog{Message{Role: User, Blocks: []Block{TextBlock("hi")}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("POST replayed %d times", calls)
+	}
+	if len(response.Candidates) != 1 || len(response.Candidates[0].Blocks) != 3 {
+		t.Fatalf("assembled response: %+v", response)
+	}
+	blocks := response.Candidates[0].Blocks
+	if blocks[1].ID != "a" || blocks[2].ID != "b" || !strings.Contains(blocks[2].Content.String(), "9007199254740993") {
+		t.Fatalf("corrupted tools: %+v", blocks)
+	}
+	fields := response.ExtraFields[OpenAIResponseExtraFieldWireFields].(map[string]json.RawMessage)
+	if string(fields["cost"]) != `"0"` {
+		t.Fatalf("lost trailing cost: %s", fields)
+	}
+	candidateFields := response.Candidates[0].ExtraFields[OpenAIExtraFieldWireFields].(map[string]json.RawMessage)
+	if !strings.Contains(string(candidateFields["reasoning_details"]), `"data":"parttwo"`) {
+		t.Fatalf("lost reasoning fragments: %s", candidateFields)
+	}
+	if value, ok := OutputTokens(response.UsageMetadata); !ok || value != 7 {
+		t.Fatalf("usage: %+v", response.UsageMetadata)
+	}
+}
+
+func testOpenAIStreamTermination(t *testing.T) {
+	for _, test := range []struct {
+		name, body string
+		want       string
+	}{
+		{"empty", "", "unexpected EOF"},
+		{"incomplete", `data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}` + "\n\n", "unexpected EOF"},
+		{"malformed", "data: {\n\n", "decode openai event"},
+		{"provider error", `data: {"error":{"message":"quota"}}` + "\n\n", "quota"},
+		{"length", `data: {"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":"length"}]}` + "\n\n", "maximum generation limit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, test.body)
+			}))
+			defer server.Close()
+			g, err := NewOpenAiGenerator(server.Client(), server.URL, "fixture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var terminal error
+			for chunk := range g.Stream(t.Context(), GenerationRequest{Model: "m", Dialog: Dialog{Message{Role: User, Blocks: []Block{TextBlock("hi")}}}}) {
+				if chunk.Err != nil {
+					terminal = chunk.Err
+				}
+			}
+			if terminal == nil || !strings.Contains(terminal.Error(), test.want) {
+				t.Fatalf("error: %v, want %s", terminal, test.want)
+			}
+		})
+	}
+	t.Run("early stop closes body", func(t *testing.T) {
+		closed := make(chan struct{})
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, `data: {"choices":[{"index":0,"delta":{"content":"first"}}]}`+"\n\n")
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			close(closed)
+		}))
+		defer server.Close()
+		g, err := NewOpenAiGenerator(server.Client(), server.URL, "fixture")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		for chunk := range g.Stream(ctx, GenerationRequest{Model: "m", Dialog: Dialog{Message{Role: User, Blocks: []Block{TextBlock("hi")}}}}) {
+			if chunk.Err != nil {
+				t.Fatal(chunk.Err)
+			}
+			break
+		}
+		select {
+		case <-closed:
+		case <-ctx.Done():
+			t.Fatal("consumer stop did not close response")
+		}
+	})
+}
+
+func testOpenAIStreamAudioAndCandidates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"choices":[{"index":0,"delta":{"content":"first","audio":{"id":"audio-1","data":"AA","transcript":"hel"}}},{"index":1,"delta":{"content":"second"}}]}`+"\n\n"+
+			`data: {"choices":[{"index":0,"delta":{"audio":{"data":"BB","transcript":"lo"}},"finish_reason":"stop"},{"index":1,"delta":{},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	g, err := NewOpenAiGenerator(server.Client(), server.URL, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var audio Block
+	var second bool
+	for chunk := range g.Stream(t.Context(), GenerationRequest{Model: "m", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hi")}}}, Options: NewGenerationOptions(WithOutputModalities(Text, Audio), WithAudioConfig(AudioConfig{VoiceName: "alloy", Format: "wav"}))}) {
+		if chunk.Err != nil {
+			t.Fatal(chunk.Err)
+		}
+		if chunk.Block.ModalityType == Audio {
+			audio = chunk.Block
+		}
+		if chunk.CandidatesIndex == 1 && chunk.Block.Content != nil && chunk.Block.Content.String() == "second" {
+			second = true
+		}
+	}
+	if !second || audio.ID != "audio-1" || audio.Content == nil || audio.Content.String() != "AABB" || audio.MimeType != "audio/wav" {
+		t.Fatalf("candidates/audio lost: %v %+v", second, audio)
 	}
 }
 
@@ -195,7 +532,7 @@ func TestGenerate(t *testing.T) {
 					ID:           "call_789",
 					BlockType:    ToolCall,
 					ModalityType: Text,
-					Content:      Str(`{"name":"get_weather","arguments":{"location":"London"}}`),
+					Content:      Str(`{"name":"get_weather","parameters":{"location":"London"}}`),
 				},
 			},
 		},
@@ -204,6 +541,7 @@ func TestGenerate(t *testing.T) {
 			Blocks: []Block{
 				{
 					ID:           "call_789",
+					BlockType:    Content,
 					ModalityType: Text,
 					Content:      Str("The weather in London is 15°C and cloudy with a 30% chance of rain."),
 				},
@@ -362,7 +700,7 @@ func TestGenerate(t *testing.T) {
 			options:  testOptions,
 			want:     Response{},
 			wantErr:  true,
-			errorMsg: "failed to create new message: request timeout: deadline exceeded",
+			errorMsg: "request timeout: deadline exceeded",
 		},
 		{
 			name: "error: rate limit",
@@ -374,7 +712,7 @@ func TestGenerate(t *testing.T) {
 			options:  testOptions,
 			want:     Response{},
 			wantErr:  true,
-			errorMsg: "failed to create new message: rate limit exceeded, please try again later",
+			errorMsg: "rate limit exceeded, please try again later",
 		},
 		{
 			name: "normal assistant response",
@@ -422,7 +760,7 @@ func TestGenerate(t *testing.T) {
 								ID:           "call_123",
 								BlockType:    ToolCall,
 								ModalityType: Text,
-								Content:      Str(`{"name":"get_weather","arguments":{"location":"London"}}`),
+								Content:      Str(`{"name":"get_weather","parameters":{"location":"London"}}`),
 							},
 						},
 					},
@@ -452,13 +790,13 @@ func TestGenerate(t *testing.T) {
 								ID:           "call_456",
 								BlockType:    ToolCall,
 								ModalityType: Text,
-								Content:      Str(`{"name":"get_weather","arguments":{"location":"London"}}`),
+								Content:      Str(`{"name":"get_weather","parameters":{"location":"London"}}`),
 							},
 							{
 								ID:           "call_457",
 								BlockType:    ToolCall,
 								ModalityType: Text,
-								Content:      Str(`{"name":"get_time","arguments":{"timezone":"UTC"}}`),
+								Content:      Str(`{"name":"get_time","parameters":{"timezone":"UTC"}}`),
 							},
 						},
 					},
@@ -592,7 +930,7 @@ func TestGenerate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create generator with mock client
-			g := NewOpenAiGenerator(tt.client)
+			g := newTestOpenAIGenerator(t, tt.client)
 
 			// Call Generate
 			got, err := g.Generate(context.Background(), GenerationRequest{
@@ -608,7 +946,7 @@ func TestGenerate(t *testing.T) {
 				return
 			}
 
-			if tt.wantErr && err != nil && err.Error() != tt.errorMsg {
+			if tt.wantErr && err != nil && !strings.Contains(err.Error(), tt.errorMsg) {
 				t.Errorf("Generate() error message = %v, want %v", err.Error(), tt.errorMsg)
 				return
 			}
