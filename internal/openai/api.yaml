@@ -1,0 +1,1488 @@
+# This is GAI's maintained Chat Completions wire format, NOT a copy of one
+# provider's specification. "openai" names the protocol/client, not a claim that
+# native OpenAI accepts every field below.
+#
+# Scope: native OpenAI, DeepSeek, Z.AI, Moonshot/Kimi, and OpenCode Go's Chat
+# Completions routes. Responses and Anthropic Messages are different protocols
+# and deliberately do not belong here. Uploads, tokenizers, model discovery, and
+# tool execution are also outside this operation.
+#
+# Maintenance rules (please preserve these when updating upstream fields):
+# - Describe JSON shapes, not a registry of model capabilities. Model names,
+#   effort levels, tool choices, IDs, and finish reasons remain open strings.
+# - Do not copy provider-specific min/max, length, pattern, or format constraints.
+#   The caller chooses values and the remote API validates its own restrictions.
+# - Do not add defaults: omitted, false, zero, empty, and null are different.
+#   In particular, never enable/disable thinking or choose a token field here.
+# - additionalProperties: {} explicitly retains unknown JSON. The oapi-codegen
+#   overlay maps these values to json.RawMessage to avoid numeric precision loss.
+#   Never blindly replay a whole response as a request, though.
+# - A permissive schema is not permission to send every supported field at once.
+#   The handwritten adapter constructs a request from that call's GAI inputs.
+#   It must not silently drop content, change tools, or turn off reasoning.
+# - Preserve replay data on GAI messages/blocks, not on the generator. Stream
+#   buffers and indexed tool-call assembly belong to one invocation only.
+#
+# Sources reviewed September 2026:
+# OpenAI: https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+#         OpenAI Go SDK v3.52.0 (also includes content-level cache breakpoints).
+# DeepSeek: https://api-docs.deepseek.com/api/create-chat-completion
+#           https://api-docs.deepseek.com/guides/thinking_mode
+# Z.AI: https://docs.z.ai/api-reference/llm/chat-completion.md
+#       https://docs.z.ai/guides/capabilities/thinking-mode.md
+#       https://docs.z.ai/guides/vlm/glm-5.3-flash
+# Kimi: https://platform.kimi.ai/docs/api/chat.md
+#       https://platform.kimi.ai/docs/api/models-overview.md
+#       https://platform.kimi.ai/docs/guide/use-dynamic-tool-loading.md
+# Go: https://opencode.ai/docs/go/
+# Structured replay: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+#
+# Comments explicitly label September 13, 2026 LIVE observations below. Other
+# compatibility notes describe documentation, not a claim that every model or
+# endpoint was tested. The local investigation is in .plan/, but the important
+# decisions are recorded here because those notes are not distributed with GAI.
+openapi: 3.0.3
+info:
+  title: GAI shared OpenAI-compatible Chat Completions API
+  version: 0.1.0
+  description: >-
+    A permissive client-side wire schema for OpenAI, DeepSeek, Z.AI, Moonshot,
+    and compatible OpenCode Go endpoints. Accepted schema fields are not a
+    promise of support by any particular provider. Callers supply the model,
+    options, history, and explicit credentials on the appropriate connection.
+servers:
+  # The operation adds ONLY /chat/completions. The base includes the API prefix:
+  # OpenAI:  https://api.openai.com/v1
+  # DeepSeek:https://api.deepseek.com (or the documented /v1 alias)
+  # Z.AI:    https://api.z.ai/api/paas/v4
+  # Coding:  https://api.z.ai/api/coding/paas/v4
+  # Kimi:    https://api.moonshot.ai/v1
+  # Go:      https://opencode.ai/zen/go/v1
+  # Do not embed Z.AI's /paas/v4 or an extra /v1 in the operation path. Credentials
+  # are endpoint/account-specific; no automatic regional or gateway switching.
+  - url: https://api.openai.com/v1
+security:
+  - bearerAuth: []
+paths:
+  /chat/completions:
+    post:
+      operationId: createChatCompletion
+      description: Create a completion or a stream of completion events.
+      parameters:
+        # These are per-request headers, not mutable fields on a shared client.
+        # A wrapper may label errors as Go while retaining the original error.
+        - name: x-opencode-session
+          in: header
+          description: Stable Go conversation affinity ID, supplied by the caller.
+          schema:
+            type: string
+        # Kimi's request signature is NOT a reasoning signature. A valid nonce
+        # asks the server to return verification headers; it is optional.
+        - name: X-Msh-Request-Nonce
+          in: header
+          schema:
+            type: string
+        # Z.AI documents this language header; do not impose its language enum
+        # or send a default to unrelated providers.
+        - name: Accept-Language
+          in: header
+          schema:
+            type: string
+        - name: OpenAI-Organization
+          in: header
+          schema:
+            type: string
+        - name: OpenAI-Project
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          # HTTP 200 can also contain an error, including an in-stream error.
+          # The adapter must check error fields and finish reasons, not just HTTP.
+          description: Completion, stream, or a provider error after HTTP success.
+          # Raw client responses also expose headers not declared here.
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/RequestID"
+            Msh-Request-Timestamp:
+              $ref: "#/components/headers/MoonshotRequestTimestamp"
+            Msh-Request-Signature:
+              $ref: "#/components/headers/MoonshotRequestSignature"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+            text/event-stream:
+              # Events use `data: <JSON>` and the UNQUOTED `data: [DONE]`
+              # sentinel. Do not require named events. The generated raw client
+              # exposes the body; framing and termination belong to the adapter.
+              # Z.AI's published success schema omits SSE; live calls confirmed it.
+              # A single object schema avoids ambiguous oneOf branches for error,
+              # usage-only, and cost-only events, all of which may omit choices.
+              # Never automatically resubmit a generation POST on disconnect.
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ChatCompletionChunk"
+                  - type: string
+                    enum: ["[DONE]"]
+                    # This enum is a framing token, NOT a provider capability.
+                    # Native live streams all ended with it. Go's reviewed proxy
+                    # can send cost AFTER it: the adapter must keep consuming that
+                    # route long enough to collect trailing metadata. Do not put
+                    # an unconditional "return on DONE" in shared conversion.
+        default:
+          # The raw client returns all HTTP statuses without interpreting them;
+          # a nil Go error does not mean HTTP success.
+          description: Non-success HTTP response; preserve status, body, and retry timing.
+          headers:
+            Retry-After:
+              # Both delta-seconds and HTTP-date are legal. Keep the header as
+              # text; interpreting it and choosing whether to retry are separate.
+              schema:
+                type: string
+            x-request-id:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            # Kimi explicitly documents HTML 504 pages. Keep raw bodies instead
+            # of trying to decode them as the JSON error envelope.
+            # These are documented examples, not an exhaustive media-type list.
+            # Use the raw client to retain any body, including malformed JSON,
+            # unlisted media types, and responses without Content-Type.
+            text/html:
+              schema:
+                type: string
+                format: binary
+            text/plain:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Explicit caller-supplied credential; never loaded from global configuration.
+  headers:
+    RequestID:
+      description: Provider request identifier, retained for diagnostics.
+      schema:
+        type: string
+    MoonshotRequestTimestamp:
+      description: Kimi request verification timestamp, normally Unix milliseconds.
+      schema:
+        # HTTP headers are text. Do not fail an otherwise usable response because
+        # a verification timestamp cannot be parsed into a particular integer.
+        type: string
+    MoonshotRequestSignature:
+      description: Kimi request verification token; not assistant reasoning replay data.
+      schema:
+        type: string
+  schemas:
+    # -------------------------------------------------------------------------
+    # Request: union of fields, NOT oneOf provider-specific request objects.
+    # Those objects overlap and become ambiguous as APIs evolve. Selecting the
+    # right fields is a caller/adapter decision, not a model-name discriminator.
+    # Optional settings accept explicit null because upstream nullable annotations
+    # differ. Generated types must preserve null versus omission; the adapter should normally
+    # omit unspecified settings, NOT populate every optional property with null.
+    # This relaxation does not claim every provider accepts null for every option.
+    # -------------------------------------------------------------------------
+    ChatCompletionRequest:
+      type: object
+      additionalProperties: {}
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          # No enum: DeepSeek's live /models returned deepseek-flash while some
+          # docs still name deepseek-v4-flash. IDs change without a GAI release.
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+          # No minItems/model-specific role constraints. GAI validates its own
+          # input contracts; the provider validates the request it receives.
+        tools:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ToolDefinition"
+        tool_choice:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ToolChoice"
+        parallel_tool_calls:
+          type: boolean
+          nullable: true
+          # Native OpenAI control. Other services may return several calls even
+          # without documenting this switch; absence does not imply serial calls.
+        max_tokens:
+          type: integer
+          nullable: true
+          format: int64
+          # LIVE: honored by glm-4.7 and deepseek-flash, rejected by gpt-5.4-nano.
+          # Do not mark globally deprecated merely because OpenAI deprecates it.
+        max_completion_tokens:
+          type: integer
+          nullable: true
+          format: int64
+          # LIVE: honored by gpt-4.1-nano, gpt-5.4-nano, and kimi-k2.6. Z.AI and
+          # DeepSeek returned HTTP 200 but generated 118 tokens with this set to 8.
+          # LIVE: sending BOTH fields was rejected by the tested OpenAI models.
+          # Both properties are optional here; the caller must choose which one
+          # to send. Neither defaults, fallback retries, nor duplicate emission
+          # can safely make this choice on behalf of the caller.
+        temperature:
+          type: number
+          nullable: true
+          # No range: OpenAI/DeepSeek document up to 2, Z.AI up to 1, while current
+          # Kimi models fix this value by thinking mode. Leave validation remote.
+        top_p:
+          type: number
+          nullable: true
+        frequency_penalty:
+          type: number
+          nullable: true
+        presence_penalty:
+          type: number
+          nullable: true
+          # Some DeepSeek controls are documented no-ops; current Kimi models fix
+          # these penalties at zero. Represent them without promising an effect.
+        do_sample:
+          type: boolean
+          nullable: true
+          # Z.AI-specific switch; false is meaningful and must not be omitted.
+        n:
+          type: integer
+          nullable: true
+          format: int64
+          # OpenAI supports multiple choices; current Kimi models require 1.
+          # Decoding multiple choices must not panic even if GAI later rejects
+          # that mode. We do not enforce a universal count here.
+        seed:
+          type: integer
+          nullable: true
+          format: int64
+        stop:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/StopSequences"
+        logit_bias:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: number
+          # Token IDs are provider/tokenizer-specific, not portable vocabulary.
+        logprobs:
+          type: boolean
+          nullable: true
+        top_logprobs:
+          type: integer
+          nullable: true
+          format: int64
+          # Do not copy OpenAI's 0..20 bound or enforce the logprobs dependency.
+        reasoning_effort:
+          type: string
+          nullable: true
+          # Open vocabulary: none/minimal/low/medium/high/xhigh/max vary by model.
+          # Kimi K3 uses this field and rejects the K2.x thinking object.
+          # LIVE: gpt-5.4-nano Chat rejected function tools with effort=low; its
+          # tool conversation worked with none. Never silently downgrade effort.
+        thinking:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ThinkingOptions"
+        reasoning:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/JSONObject"
+          # Compatible gateways may expose their own reasoning configuration.
+          # This is not OpenAI's reasoning_effort and is not a universal alias.
+        tool_stream:
+          type: boolean
+          nullable: true
+          # Z.AI incremental-tool switch. Its vision schema omits this field,
+          # although the GLM-5.3-Flash guide recommends it. LIVE glm-4.7 accepted
+          # true but emitted our small call in one chunk; no fragmentation claim.
+        stream:
+          type: boolean
+          nullable: true
+        stream_options:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/StreamOptions"
+        response_format:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ResponseFormat"
+        modalities:
+          type: array
+          nullable: true
+          items:
+            type: string
+          # OpenAI output modalities; an image INPUT does not imply image OUTPUT.
+        audio:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/AudioOptions"
+        prediction:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Prediction"
+          # Both OpenAI and current Kimi document predicted output, unlike the
+          # DeepSeek/Z.AI references reviewed. No automatic provider broadcast.
+        verbosity:
+          type: string
+          nullable: true
+        web_search_options:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/JSONObject"
+          # OpenAI search context/location options. Z.AI uses tools[].web_search;
+          # Kimi's built-in/Formula tools have yet another execution contract.
+        moderation:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/JSONObject"
+          # OpenAI nested model/policy input/output controls. Keep the complete
+          # object rather than imposing one moderation model's policy schema.
+        prompt_cache_key:
+          type: string
+          nullable: true
+          # OpenAI and Kimi accept this. No ID regex/length restriction. A stable
+          # application session key belongs in request/session data, not a cache
+          # or counter maintained by the generator.
+        prompt_cache_options:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/PromptCacheOptions"
+        prompt_cache_retention:
+          type: string
+          nullable: true
+          # Older OpenAI setting, distinct from prompt_cache_options.ttl. The
+          # former describes a maximum retention policy; ttl a minimum lifetime.
+        safety_identifier:
+          type: string
+          nullable: true
+        user:
+          type: string
+          nullable: true
+          # Legacy OpenAI field retained for compatible endpoints. Not equivalent
+          # to user_id, request_id, cache keys, or x-opencode-session.
+        user_id:
+          type: string
+          nullable: true
+          # DeepSeek documents up to 512 characters; Z.AI documents 6..128.
+          # Deliberately no shared length validation, trimming, or invented ID.
+        request_id:
+          type: string
+          nullable: true
+          # Z.AI caller-supplied ID. Do not enforce its documented 6..64 length.
+        store:
+          type: boolean
+          nullable: true
+          # No default: storing completions is a caller decision. This option
+          # does not make a client/generator maintain conversation history.
+        metadata:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/JSONObject"
+          # OpenAI documents bounded string labels. We retain arbitrary JSON and
+          # let the endpoint reject unsupported values, counts, or lengths.
+        service_tier:
+          type: string
+          nullable: true
+        functions:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/FunctionDefinition"
+          # Deprecated OpenAI interface, retained as a wire-level escape hatch.
+          # GAI's normal conversion should use tools, not emit both interfaces.
+        function_call:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/LegacyFunctionChoice"
+
+    ThinkingOptions:
+      type: object
+      additionalProperties: {}
+      properties:
+        type:
+          type: string
+          # DeepSeek, Z.AI, and Kimi K2.x use enabled/disabled. Some models always
+          # think. Do not make type required or fill it in from a schema default.
+        clear_thinking:
+          type: boolean
+          # Z.AI: false preserves prior reasoning. The standard API and Coding
+          # Plan document different defaults. Sending true by default would
+          # override the caller's service behavior, as the old adapter does.
+        keep:
+          type: string
+          nullable: true
+          # Kimi K2.6: omitted/null ignores earlier turns, "all" preserves them.
+          # K2.7 Code always preserves thinking; its docs disagree about explicit
+          # null. Keeping null representable is NOT a promise it is valid there.
+          # This is not a spelling alias for Z.AI's clear_thinking.
+
+    StreamOptions:
+      type: object
+      additionalProperties: {}
+      properties:
+        include_usage:
+          type: boolean
+          # LIVE: used for OpenAI, Kimi, DeepSeek. Z.AI supplied usage without it.
+          # Do not add true as a default for services that do not document it.
+        include_obfuscation:
+          type: boolean
+          # Native OpenAI padding control; independent of usage reporting.
+
+    StopSequences:
+      # OpenAI allows a scalar or array; Z.AI documents an array. DeepSeek and
+      # Kimi have different array limits, and Kimi also limits each string's
+      # byte length. Z.AI's prose and schema disagree on its limit (1 vs 4).
+      # Keep both JSON forms with no global count/length/default constraints.
+      oneOf:
+        - type: string
+        - type: array
+          items:
+            type: string
+
+    ResponseFormat:
+      type: object
+      additionalProperties: {}
+      properties:
+        type:
+          type: string
+          # text/json_object/json_schema are current values, not a closed enum.
+          # Z.AI documents this only for text models; don't create a separate
+          # vision request schema just to reject it before the provider does.
+        json_schema:
+          $ref: "#/components/schemas/OutputJSONSchema"
+
+    OutputJSONSchema:
+      type: object
+      additionalProperties: {}
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        schema:
+          $ref: "#/components/schemas/JSONObject"
+          # This object IS a user's JSON Schema. additionalProperties preserves
+          # $ref, anyOf, constraints, and future vocabulary without interpreting
+          # those keywords as restrictions on this HTTP client's own Go types.
+        strict:
+          type: boolean
+          # No default even though Kimi documents true. OpenAI and Kimi/MFJS
+          # support different schema subsets; their servers validate them.
+          # strict=false is not an equivalent fallback for strict=true.
+
+    AudioOptions:
+      type: object
+      additionalProperties: {}
+      properties:
+        voice:
+          type: string
+        format:
+          type: string
+          # OpenAI audio names/formats evolve. Do not freeze SDK enums here.
+
+    Prediction:
+      type: object
+      additionalProperties: {}
+      properties:
+        type:
+          type: string
+        content:
+          $ref: "#/components/schemas/MessageContent"
+          # OpenAI/Kimi document text or text parts; sharing the representation
+          # does NOT imply predicted image/audio output is supported.
+
+    PromptCacheOptions:
+      type: object
+      additionalProperties: {}
+      properties:
+        mode:
+          type: string
+        ttl:
+          type: string
+          # Leave values open; do not manufacture mode or lifetime defaults.
+
+    # -------------------------------------------------------------------------
+    # Messages/content: one role-bearing envelope with optional payloads.
+    # No provider/model oneOf, and no split text/vision request family. LIVE
+    # GLM-5.3-Flash accepted the image + assistant reasoning/tool call + tool
+    # result sequence that its published vision-message schema cannot express.
+    # -------------------------------------------------------------------------
+    Message:
+      type: object
+      additionalProperties: {}
+      required: [role]
+      properties:
+        role:
+          type: string
+          # system/developer/user/assistant/tool and legacy function are known
+          # roles. Developer is not documented by every compatible service.
+        content:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/MessageContent"
+          # Optional for tool-only assistant messages and Kimi K3's content-less
+          # system tool declarations. LIVE content:"" worked for tool replay on
+          # all four tested providers; no caller-selectable empty-content mode
+          # was needed. Null remains decodable, not a claim of universal support.
+        name:
+          type: string
+        tool_call_id:
+          type: string
+        tool_calls:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ToolCall"
+        function_call:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ToolCallFunction"
+          # Legacy OpenAI function replay, separate from tools/tool_call_id.
+        reasoning_content:
+          type: string
+          nullable: true
+          # DeepSeek/Z.AI/Kimi message-level reasoning. Keep an explicitly empty
+          # string distinct from omission. Never join this into ordinary content.
+          # LIVE reasoning was replayed unchanged through a tool result and a
+          # subsequent user turn on all three; acceptance does not prove how the
+          # server internally uses it. Do not summarize/reorder replayed text.
+        reasoning:
+          type: string
+          nullable: true
+          # Compatible endpoint spelling. Remember the ORIGINAL field name in
+          # GAI metadata instead of sending both this and reasoning_content.
+        reasoning_details:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ReasoningDetail"
+        refusal:
+          type: string
+          nullable: true
+        audio:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/AudioReference"
+        prefix:
+          type: boolean
+          # DeepSeek beta assistant-prefix continuation. Not Kimi's field.
+        partial:
+          type: boolean
+          # Kimi assistant prefill; belongs on a MESSAGE, not the request root.
+          # Its interaction with JSON output is model-specific; do not downgrade.
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolDefinition"
+          # Kimi K3: system message with tools and NO content, at a particular
+          # history position. Definitions apply to subsequent turns and must be
+          # replayed. Do not lift them all to top-level tools: that changes scope.
+          # Schema support alone does not add this feature to GAI's current dialog
+          # contract (which keeps system instructions outside the dialog).
+
+    MessageContent:
+      oneOf:
+        - type: string
+        - type: array
+          items:
+            $ref: "#/components/schemas/ContentPart"
+      # Shared across roles deliberately. DeepSeek supports images in tool
+      # results; OpenAI Chat's tool-result content is text-only in the reviewed
+      # reference. The remote provider, not a global role/media enum, decides.
+      # Adapter rule: join ordinary text blocks into a scalar only if no per-part
+      # metadata is lost. Mixed media stays ordered; do not move all text first.
+
+    ContentPart:
+      type: object
+      additionalProperties: {}
+      required: [type]
+      # A flat envelope avoids TWO ambiguous `type:file` union branches: OpenAI
+      # and modern Z.AI nest fields in file; DeepSeek puts fields on the part.
+      # It also preserves new content types instead of failing a discriminator.
+      properties:
+        type:
+          type: string
+        text:
+          type: string
+        image_url:
+          $ref: "#/components/schemas/MediaURL"
+        video_url:
+          $ref: "#/components/schemas/MediaURL"
+          # Z.AI/Kimi video parts are not native OpenAI Chat video support.
+        input_audio:
+          $ref: "#/components/schemas/InputAudio"
+        file:
+          $ref: "#/components/schemas/FileContent"
+        file_id:
+          type: string
+          # DeepSeek flat file part. Do not move this into file automatically.
+        file_data:
+          type: string
+        filename:
+          type: string
+        file_url:
+          $ref: "#/components/schemas/MediaURL"
+          # LEGACY Z.AI: {type:file_url,file_url:{url:...}}. Kept for replay; new
+          # Z.AI scenarios should use {type:file,file:{file_url:"..."}} instead.
+        refusal:
+          type: string
+        prompt_cache_breakpoint:
+          $ref: "#/components/schemas/PromptCacheBreakpoint"
+        cache_control:
+          $ref: "#/components/schemas/JSONObject"
+          # Compatible gateways can carry provider-specific content cache data.
+          # Retain it, but do not advertise a universal cache-control contract.
+
+    MediaURL:
+      oneOf:
+        - type: string
+        - $ref: "#/components/schemas/MediaURLObject"
+      # Kimi explicitly accepts a string shorthand as well as {url:...}. Use
+      # object form for common construction; accepting shorthand costs no state.
+
+    MediaURLObject:
+      type: object
+      additionalProperties: {}
+      properties:
+        url:
+          type: string
+          # NO uri/url format validation. This carries https://, data:..., or
+          # Kimi's ms://uploaded-file-id. The vision guide explicitly rejects
+          # remote image URLs for Kimi; accepting this JSON string does not mean
+          # every scheme works. Never silently fetch/upload media to compensate.
+        detail:
+          type: string
+          # DeepSeek documents original as well as low/high/auto. OpenAI docs
+          # list low/high/auto; Z.AI/Kimi do not expose the same setting.
+
+    InputAudio:
+      type: object
+      additionalProperties: {}
+      properties:
+        data:
+          type: string
+          # Base64 stays text, not format:byte: avoid automatic base64 decoding
+          # and re-encoding of already encoded GAI block payloads.
+        format:
+          type: string
+
+    FileContent:
+      type: object
+      additionalProperties: {}
+      properties:
+        file_id:
+          type: string
+        file_url:
+          type: string
+        file_data:
+          type: string
+        filename:
+          type: string
+      # OpenAI uses file_id or inline file_data/filename. Z.AI's new file object
+      # adds file_url; its docs describe a choice of ID, URL, or data, 50 MB files,
+      # model restrictions, and no mixing files with image/video in one request.
+      # Do not apply these limits to other providers or choose one source here.
+      # Kimi does not document these document parts: its document Q&A guide uses
+      # a separate extraction step. Image/video file IDs instead use ms:// URLs.
+
+    PromptCacheBreakpoint:
+      type: object
+      additionalProperties: {}
+      properties:
+        mode:
+          type: string
+          # OpenAI currently documents {mode:explicit}; no injected default.
+          # Dropping this object while joining text would change cache behavior.
+
+    AudioReference:
+      type: object
+      additionalProperties: {}
+      properties:
+        id:
+          type: string
+          # OpenAI previous-output audio reference. Preserve the ID on the
+          # message/block; the generator does not need a lookup table. Server
+          # expiry still applies even when the local generator is stateless.
+
+    # -------------------------------------------------------------------------
+    # Tools: deliberately broader than GAI's executable function abstraction.
+    # Describing a hosted/custom tool does not implement or authorize execution.
+    # -------------------------------------------------------------------------
+    ToolDefinition:
+      type: object
+      additionalProperties: {}
+      required: [type]
+      properties:
+        type:
+          type: string
+          # function, custom, retrieval, web_search, builtin_function. No enum:
+          # Kimi's function-only schema omits its documented built-in search.
+        function:
+          $ref: "#/components/schemas/FunctionDefinition"
+        custom:
+          $ref: "#/components/schemas/CustomToolDefinition"
+        retrieval:
+          $ref: "#/components/schemas/RetrievalOptions"
+        web_search:
+          $ref: "#/components/schemas/WebSearchOptions"
+
+    FunctionDefinition:
+      type: object
+      additionalProperties: {}
+      properties:
+        name:
+          type: string
+          # No regex or length: providers disagree (64 vs 128), and Kimi's
+          # builtin_function uses $web_search, unlike an ordinary function name.
+        description:
+          type: string
+        parameters:
+          $ref: "#/components/schemas/JSONObject"
+          # Optional here: OpenAI/DeepSeek allow omission for parameterless tools,
+          # Kimi built-ins can be name-only, Z.AI documents parameters required.
+        strict:
+          type: boolean
+          # Kimi/MFJS defaults true, OpenAI differs, DeepSeek strict is beta,
+          # Z.AI does not document it. Do not impose one service's default.
+
+    CustomToolDefinition:
+      type: object
+      additionalProperties: {}
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        format:
+          $ref: "#/components/schemas/JSONObject"
+          # OpenAI text or grammar object. Grammar contains syntax/definition;
+          # preserve the object without validating a particular grammar dialect.
+
+    RetrievalOptions:
+      type: object
+      additionalProperties: {}
+      properties:
+        knowledge_id:
+          type: string
+        prompt_template:
+          type: string
+          # Z.AI hosted retrieval. No default prompt expansion on the client.
+
+    WebSearchOptions:
+      type: object
+      additionalProperties: {}
+      properties:
+        enable:
+          type: boolean
+        search_engine:
+          type: string
+        search_query:
+          type: string
+        count:
+          type: integer
+          format: int64
+        search_domain_filter:
+          type: string
+        search_recency_filter:
+          type: string
+        content_size:
+          type: string
+        result_sequence:
+          type: string
+        search_result:
+          type: boolean
+        require_search:
+          type: boolean
+        search_prompt:
+          type: string
+      # Z.AI fields, not an alias for top-level OpenAI web_search_options. Do not
+      # constrain engines, recency strings, result limits, or template content.
+      # Kimi's $web_search is a builtin_function with a different follow-up flow.
+
+    ToolChoice:
+      oneOf:
+        - type: string
+        - $ref: "#/components/schemas/ToolChoiceObject"
+      # Open string includes auto/none/required without a frozen enum. Z.AI
+      # documents auto only; DeepSeek thinking rejects forced choices; Kimi K3
+      # accepts required but K2.x rejects it. These are remote capability checks.
+
+    ToolChoiceObject:
+      type: object
+      additionalProperties: {}
+      properties:
+        type:
+          type: string
+        function:
+          $ref: "#/components/schemas/NamedTool"
+        custom:
+          $ref: "#/components/schemas/NamedTool"
+        allowed_tools:
+          $ref: "#/components/schemas/AllowedTools"
+          # OpenAI's allowed_tools choice is NOT a named-function choice. A
+          # single broad object avoids ambiguous overlapping object unions.
+
+    NamedTool:
+      type: object
+      additionalProperties: {}
+      properties:
+        name:
+          type: string
+
+    AllowedTools:
+      type: object
+      additionalProperties: {}
+      properties:
+        mode:
+          type: string
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolChoiceObject"
+          # These are tool REFERENCES (type plus function/custom name), not full
+          # definitions. Do not substitute the request's top-level tools array.
+
+    LegacyFunctionChoice:
+      oneOf:
+        - type: string
+        - $ref: "#/components/schemas/NamedTool"
+
+    ToolCall:
+      type: object
+      additionalProperties: {}
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        index:
+          type: integer
+          format: int64
+          # Z.AI live non-streaming calls also carried index. Do not discard an
+          # unfamiliar field merely because OpenAI only documents it in deltas.
+        function:
+          $ref: "#/components/schemas/ToolCallFunction"
+        custom:
+          $ref: "#/components/schemas/CustomToolCall"
+      # Response fields are not all required: let the adapter report malformed
+      # calls with context. This does not permit executing a call without an ID,
+      # known tool, or validated arguments.
+
+    ToolCallFunction:
+      type: object
+      additionalProperties: {}
+      properties:
+        name:
+          type: string
+        arguments:
+          $ref: "#/components/schemas/ToolArguments"
+
+    ToolArguments:
+      oneOf:
+        - type: string
+        - $ref: "#/components/schemas/JSONObject"
+      # OpenAI/DeepSeek/Kimi normally return a STRING containing JSON. Z.AI's
+      # response schema says OBJECT, while its assistant request says STRING.
+      # LIVE: glm-4.7 and glm-5.3-flash both returned strings; no object observed.
+      # The object branch is deliberate tolerance of the published shape, NOT a
+      # claim that Z.AI requires a separate response path in practice.
+      # Decode either into GAI's arguments, but serialize the argument object as
+      # a STRING when replaying to these request APIs. Keep original JSON text
+      # where exact numeric values/formatting matter; a float64 map can lose it.
+
+    CustomToolCall:
+      type: object
+      additionalProperties: {}
+      properties:
+        name:
+          type: string
+        input:
+          type: string
+          # OpenAI custom tools may contain non-JSON input. Never feed this into
+          # the function-argument JSON decoder or dispatch it as a normal function.
+
+    # -------------------------------------------------------------------------
+    # Responses: optional fields and retained extensions. A service may omit
+    # object, metadata, or choices on an error. Decoding succeeds; the adapter
+    # still has to reject an unusable completion rather than call it success.
+    # -------------------------------------------------------------------------
+    ChatCompletionResponse:
+      type: object
+      additionalProperties: {}
+      properties:
+        id:
+          type: string
+        request_id:
+          type: string
+          # Z.AI has a distinct request ID; don't overwrite completion ID with it.
+        object:
+          type: string
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        system_fingerprint:
+          type: string
+          nullable: true
+        service_tier:
+          type: string
+          nullable: true
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatChoice"
+        usage:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Usage"
+        cost:
+          type: string
+          # Go sends a STRING; "0" can mean subscription usage. Do not convert
+          # it to a token count or require it to appear before a finish marker.
+        metadata:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/JSONObject"
+        moderation:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/JSONObject"
+        web_search:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+        error:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ErrorValue"
+          # HTTP 200 with an error is still an error, not an empty assistant reply.
+
+    ChatChoice:
+      type: object
+      additionalProperties: {}
+      properties:
+        index:
+          type: integer
+          format: int64
+        message:
+          $ref: "#/components/schemas/ResponseMessage"
+        finish_reason:
+          type: string
+          nullable: true
+          # Open string: stop, length, tool_calls, content_filter, Z.AI sensitive/
+          # network_error/model_context_window_exceeded, DeepSeek aborted and
+          # insufficient_system_resource, plus future reasons. Unknown != success.
+        logprobs:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/LogProbs"
+
+    ResponseMessage:
+      type: object
+      additionalProperties: {}
+      properties:
+        role:
+          type: string
+        content:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/MessageContent"
+        reasoning_content:
+          type: string
+          nullable: true
+        reasoning:
+          type: string
+          nullable: true
+        reasoning_details:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ReasoningDetail"
+        tool_calls:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ToolCall"
+        function_call:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ToolCallFunction"
+        refusal:
+          type: string
+          nullable: true
+        audio:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/OutputAudio"
+        annotations:
+          type: array
+          items:
+            $ref: "#/components/schemas/JSONObject"
+          # OpenAI citation/annotation objects are metadata, not answer text.
+
+    ReasoningDetail:
+      type: object
+      additionalProperties: {}
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+          nullable: true
+        index:
+          type: integer
+          format: int64
+        format:
+          type: string
+          nullable: true
+        text:
+          type: string
+          nullable: true
+        summary:
+          # Keep the whole summary value, including provider-specific structure.
+          # Plaintext display is not sufficient for reconstructing signed items.
+          description: Original reasoning summary JSON, retained without interpretation.
+        data:
+          type: string
+          nullable: true
+        signature:
+          type: string
+          nullable: true
+      # Go/upstream structured reasoning can include signatures/encrypted data
+      # with no display text. Preserve every item and its order, even text-less
+      # chunks. Do not concatenate encrypted data into ordinary thinking text.
+      # State for assembling fragments belongs to the current stream; completed
+      # replay data belongs on GAI's returned message or blocks.
+
+    OutputAudio:
+      type: object
+      additionalProperties: {}
+      properties:
+        id:
+          type: string
+        data:
+          type: string
+        expires_at:
+          type: integer
+          format: int64
+        transcript:
+          type: string
+      # Native OpenAI output. Replay references can expire server-side; storing
+      # the ID does not guarantee indefinite replay or cross-provider portability.
+
+    SearchResult:
+      type: object
+      additionalProperties: {}
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        link:
+          type: string
+        media:
+          type: string
+        icon:
+          type: string
+        refer:
+          type: string
+        publish_date:
+          type: string
+      # Z.AI hosted search metadata, separate from user-visible assistant text.
+
+    # -------------------------------------------------------------------------
+    # Streaming: each JSON event is independently decoded; no required choices.
+    # Typed fields coexist with unknown raw fields so metadata-only/error chunks
+    # can survive until the handwritten stream adapter decides what they mean.
+    # -------------------------------------------------------------------------
+    ChatCompletionChunk:
+      type: object
+      additionalProperties: {}
+      properties:
+        id:
+          type: string
+        request_id:
+          type: string
+        object:
+          type: string
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        system_fingerprint:
+          type: string
+          nullable: true
+        service_tier:
+          type: string
+          nullable: true
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChunkChoice"
+          # LIVE OpenAI/Kimi usage-only chunks had choices:[]. Go trailing cost
+          # or error events may omit it. Never index choices[0] without checking.
+        usage:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Usage"
+        cost:
+          type: string
+        error:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ErrorValue"
+        type:
+          type: string
+        message:
+          type: string
+          nullable: true
+          # Some stream errors use top-level type/message rather than error:{}.
+        obfuscation:
+          type: string
+          # OpenAI stream padding, observed live. Not assistant content/usage.
+        web_search:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+
+    ChunkChoice:
+      type: object
+      additionalProperties: {}
+      properties:
+        index:
+          type: integer
+          format: int64
+        delta:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ChunkDelta"
+        finish_reason:
+          type: string
+          nullable: true
+        usage:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Usage"
+          # LIVE Kimi placed usage here AND repeated it at event top level in a
+          # final choices:[] event. Do not sum duplicate totals as separate usage.
+        logprobs:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/LogProbs"
+
+    ChunkDelta:
+      type: object
+      additionalProperties: {}
+      properties:
+        role:
+          type: string
+        content:
+          type: string
+          nullable: true
+        reasoning_content:
+          type: string
+          nullable: true
+          # Missing from Kimi's published delta schema but observed live. Keep
+          # all fragments in order and preserve explicit empty versus absent.
+        reasoning:
+          type: string
+          nullable: true
+        reasoning_details:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ReasoningDetail"
+        tool_calls:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ToolCallDelta"
+        function_call:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ToolCallFunctionDelta"
+        refusal:
+          type: string
+          nullable: true
+        audio:
+          $ref: "#/components/schemas/JSONObject"
+        annotations:
+          type: array
+          items:
+            $ref: "#/components/schemas/JSONObject"
+
+    ToolCallDelta:
+      type: object
+      additionalProperties: {}
+      properties:
+        index:
+          type: integer
+          format: int64
+          # Essential for correlating parallel calls. Kimi's published delta
+          # omits it; its streaming guide and LIVE chunks include it. Keep it
+          # optional for decoding diagnostics, but never guess when ambiguous.
+        id:
+          type: string
+          nullable: true
+        type:
+          type: string
+          nullable: true
+        function:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ToolCallFunctionDelta"
+        custom:
+          $ref: "#/components/schemas/CustomToolCall"
+      # LIVE OpenAI/Kimi/DeepSeek supplied id/type/name on the first fragment and
+      # only index plus arguments later. A response ToolCall's full requirements
+      # would incorrectly reject those later fragments. Handle EVERY array item.
+
+    ToolCallFunctionDelta:
+      type: object
+      additionalProperties: {}
+      properties:
+        name:
+          type: string
+          nullable: true
+        arguments:
+          type: string
+          nullable: true
+          # This is a JSON STRING FRAGMENT, not a complete argument object. Do
+          # not parse each piece as JSON or overwrite the previous piece. The
+          # non-streaming ToolArguments object tolerance does not apply here.
+
+    # -------------------------------------------------------------------------
+    # Usage: optional counters from each provider, not independently additive
+    # categories. The adapter normalizes them once and preserves unknown detail.
+    # -------------------------------------------------------------------------
+    Usage:
+      type: object
+      additionalProperties: {}
+      properties:
+        prompt_tokens:
+          type: integer
+          format: int64
+        completion_tokens:
+          type: integer
+          format: int64
+        total_tokens:
+          type: integer
+          format: int64
+        cached_tokens:
+          type: integer
+          format: int64
+          # Kimi's documented flat spelling. LIVE token probes also returned
+          # prompt_tokens_details.cached_tokens with the same count.
+        prompt_cache_hit_tokens:
+          type: integer
+          format: int64
+        prompt_cache_miss_tokens:
+          type: integer
+          format: int64
+          # DeepSeek-specific split. Hits and nested cached_tokens can describe
+          # the same input tokens; do not add both cache-hit counters together.
+        prompt_tokens_details:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/PromptTokensDetails"
+        completion_tokens_details:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/CompletionTokensDetails"
+      # No minimum/maximum: decoding a questionable count is preferable to losing
+      # the whole response. The adapter can flag it without hiding server data.
+
+    PromptTokensDetails:
+      type: object
+      additionalProperties: {}
+      properties:
+        cached_tokens:
+          type: integer
+          format: int64
+        cache_write_tokens:
+          type: integer
+          format: int64
+        cache_creation_input_tokens:
+          type: integer
+          format: int64
+        text_tokens:
+          type: integer
+          format: int64
+        image_tokens:
+          type: integer
+          format: int64
+        audio_tokens:
+          type: integer
+          format: int64
+
+    CompletionTokensDetails:
+      type: object
+      additionalProperties: {}
+      properties:
+        reasoning_tokens:
+          type: integer
+          format: int64
+          # LIVE Z.AI returned this despite omitting it from the reviewed schema.
+          # Reasoning tokens are INCLUDED in completion_tokens, not additional.
+        text_tokens:
+          type: integer
+          format: int64
+        audio_tokens:
+          type: integer
+          format: int64
+        accepted_prediction_tokens:
+          type: integer
+          format: int64
+        rejected_prediction_tokens:
+          type: integer
+          format: int64
+
+    LogProbs:
+      type: object
+      additionalProperties: {}
+      properties:
+        content:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/TokenLogProb"
+        refusal:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/TokenLogProb"
+        reasoning_content:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/TokenLogProb"
+          # Current DeepSeek documents probabilities for reasoning text too.
+
+    TokenLogProb:
+      type: object
+      additionalProperties: {}
+      properties:
+        token:
+          type: string
+        logprob:
+          type: number
+        bytes:
+          type: array
+          nullable: true
+          items:
+            type: integer
+        top_logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenAlternative"
+
+    TokenAlternative:
+      type: object
+      additionalProperties: {}
+      properties:
+        token:
+          type: string
+        logprob:
+          type: number
+        bytes:
+          type: array
+          nullable: true
+          items:
+            type: integer
+
+    # -------------------------------------------------------------------------
+    # Errors: preserve the provider's fields before classifying them. In
+    # particular, HTTP 429 does not always mean "retry soon": Z.AI and Kimi use
+    # it for quota/balance/subscription failures as well as transient limits.
+    # -------------------------------------------------------------------------
+    ErrorResponse:
+      type: object
+      additionalProperties: {}
+      properties:
+        error:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ErrorValue"
+        type:
+          type: string
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        code:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ErrorCode"
+        request_id:
+          type: string
+        metadata:
+          $ref: "#/components/schemas/JSONObject"
+
+    ErrorValue:
+      oneOf:
+        - type: string
+        - $ref: "#/components/schemas/ErrorDetail"
+      # Most native APIs wrap an object; compatible proxies may use a string.
+      # Preserve either without inventing a synthetic provider error code.
+
+    ErrorDetail:
+      type: object
+      additionalProperties: {}
+      properties:
+        type:
+          type: string
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        code:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ErrorCode"
+          # Z.AI documents numeric codes; OpenAI-style APIs use strings or null.
+          # Do not coerce numeric-looking strings and lose their original value.
+        param:
+          type: string
+          nullable: true
+        metadata:
+          $ref: "#/components/schemas/JSONObject"
+          # Gateways can nest upstream errors here. Retain them, do not relabel
+          # away the reason a fallback/retry policy needs to inspect.
+
+    ErrorCode:
+      oneOf:
+        - type: string
+        - type: integer
+          format: int64
+
+    JSONObject:
+      type: object
+      additionalProperties: {}
+      # The overlay retains each arbitrary property as raw JSON. This is intentional for
+      # JSON Schemas, provider policy objects, and metadata: do not turn it into
+      # map[string]string or run it through a lossy float64 normalization step.

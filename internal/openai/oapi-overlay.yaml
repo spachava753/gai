@@ -1,0 +1,15 @@
+overlay: 1.0.0
+info:
+  title: GAI lossless Chat Completions Go types
+  version: 1.0.0
+actions:
+  # json is already imported by the generated client/codecs.
+  - target: $..additionalProperties
+    update:
+      x-go-type: json.RawMessage
+  # Unconstrained JSON already permits null. Make that explicit so generated
+  # codecs distinguish omitted summary from an explicit null summary.
+  - target: $.components.schemas.ReasoningDetail.properties.summary
+    update:
+      x-go-type: json.RawMessage
+      nullable: true

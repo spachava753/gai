@@ -8,7 +8,8 @@ GAI is a Go library for interacting with LLM providers, including OpenAI, OpenCo
 
 - Root Go module (go.mod) with all library code colocated for ease of import
   - Provider clients: `openai.go`, `opencode.go`, `anthropic.go`, `gemini.go`, `cerebras.go`, `openrouter.go`, `responses.go`, `zai.go`, `deepseek.go`
-  - Generated OpenAPI clients: `internal/cerebras/`, `internal/deepseek/`, `internal/opencode/`, `internal/openrouter/`, `internal/zai/`
+  - Generated OpenAPI clients: `internal/openai/` uses oapi-codegen; `internal/cerebras/`, `internal/deepseek/`, `internal/opencode/`, `internal/openrouter/`, and `internal/zai/` still use OGEN.
+  - Shared Chat Completions client: `internal/openai/api.yaml`, `config.yaml`, and `oapi-overlay.yaml` generate the checked-in `client.gen.go` with lossless opaque JSON, nullable values, and float64 numbers. Run `go generate ./internal/openai`; generation paths are package-relative. `go test ./internal/openai` checks regeneration and local codec/HTTP contracts. This client is not wired into `OpenAiGenerator` yet.
   - Generation pipeline and composition: `generate.go`, `retry_generator.go`, `fallback_generator.go`, `preprocessing_generator.go`
   - Streaming primitives: `streaming.go`
   - Shared domain types and helpers: `message.go`, `tool.go`, `errors.go`, `metrics.go`, `callback.go`
@@ -16,7 +17,7 @@ GAI is a Go library for interacting with LLM providers, including OpenAI, OpenCo
 - Public agent packages: `agent/` contains the reusable agent loop and `agent/agenttest/` contains deterministic test fixtures; `agent/design.md` documents behavior and rationale
 - Tests: colocated `*_test.go` for each area, plus provider-specific tests
 - Samples: `sample.jpg`, `sample.pdf`, `sample.wav` for multimodal tests/examples
-- Tracked hooks: `.githooks/pre-commit` runs LAAS against hand-written packages and excludes generated OGEN clients
+- Tracked hooks: `.githooks/pre-commit` runs LAAS against hand-written packages and excludes generated client packages
 - Public documentation: `doc.go` contains the package API map, `README.md` contains the repository guide, and `*_example_test.go` contains compiled examples
 - `design.md` records the generator interfaces, shared types, state ownership, and rationale implemented by the current release
 - `agent/design.md` records the implemented agent-loop API, run flow, state responsibilities, and rationale
@@ -32,7 +33,7 @@ Requirements: Go 1.26.6+.
 
 Common commands
 - Install deps: `go mod download`
-- Lint: `go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|opencode|openrouter|zai)$' ./...`
+- Lint: `go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|openai|opencode|openrouter|zai)$' ./...`
 - Lint with golangci-lint if installed: `golangci-lint run` (optional)
 - Run tests (all, live API tests skipped): `go test ./...`
 - Run live API tests only when explicitly requested by the user: `LIVE_TESTS=1 go test ./...` (also requires the relevant provider API keys)

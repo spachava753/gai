@@ -1,0 +1,14 @@
+# Run `go generate ./internal/openai` from the repository root.
+# Paths are relative to internal/openai, where go generate runs the tool.
+package: openai
+generate:
+  models: true
+  client: true
+output-options:
+  nullable-type: true
+  type-mapping:
+    number:
+      default:
+        type: float64
+  overlay:
+    path: oapi-overlay.yaml

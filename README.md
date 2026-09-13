@@ -235,8 +235,16 @@ Use `GetMetric` with provider-specific metric constants for native cost, timing,
 go test ./...
 go vet ./...
 go test -race ./...
-go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|opencode|openrouter|zai)$' ./...
+go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|openai|opencode|openrouter|zai)$' ./...
 ```
+
+The shared Chat Completions wire client in `internal/openai` uses oapi-codegen. Regenerate it after changing its schema, configuration, or lossless-JSON overlay:
+
+```bash
+go generate ./internal/openai
+```
+
+Its tests check that the generated file is current and exercise JSON round trips and local HTTP behavior. This client is not yet connected to `OpenAiGenerator`; the other generated provider packages still use OGEN.
 
 The tracked pre-commit hook runs LAAS against hand-written packages. Activate it after cloning:
 
