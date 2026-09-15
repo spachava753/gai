@@ -169,6 +169,72 @@ func testOpenAIStreamReturnsContentPolicyErrorForRefusal(t *testing.T) {
 }
 
 func testOpenAIHTTPClient(t *testing.T) {
+	t.Run("native options", func(t *testing.T) {
+		request := GenerationRequest{Model: "m", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}}
+		for _, options := range []GenerationOptions{
+			NewGenerationOptions(WithOpenAIExtraBody(map[string]json.RawMessage{"messages": json.RawMessage(`[]`)})),
+			NewGenerationOptions(WithOpenAIExtraBody(map[string]json.RawMessage{"thinking": json.RawMessage(`{`)})),
+			{OpenAIGenerationOptionExtraBody: "wrong type"},
+			{OpenAIGenerationOptionStreamUsage: "wrong type"},
+		} {
+			request.Options = options
+			if _, _, err := openAIRequest(request, true); err == nil {
+				t.Fatalf("accepted invalid native options: %v", options)
+			}
+		}
+		fields := map[string]json.RawMessage{"thinking": json.RawMessage(`{"type":"enabled"}`), "response_format": json.RawMessage(`null`)}
+		request.Options = NewGenerationOptions(WithOpenAIExtraBody(fields), WithOpenAIStreamUsage(false))
+		params, _, err := openAIRequest(request, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if params.StreamOptions.IsSpecified() || !strings.Contains(string(encoded), `"response_format":null`) {
+			t.Fatalf("lost explicit native configuration: %s", encoded)
+		}
+		fields["thinking"][0] = '!'
+		if _, err := json.Marshal(params); err != nil {
+			t.Fatalf("request aliases caller JSON bytes: %v", err)
+		}
+		request.Options = nil
+		next, _, err := openAIRequest(request, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(next.AdditionalProperties) != 0 || !next.StreamOptions.IsSpecified() {
+			t.Fatal("native options leaked into next request")
+		}
+	})
+	t.Run("tool choice controls", func(t *testing.T) {
+		for _, choice := range []string{"auto", "required", "none"} {
+			t.Run(choice, func(t *testing.T) {
+				request := GenerationRequest{Model: "m", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("Use a tool if allowed.")}}}, Options: NewGenerationOptions(WithToolChoice(choice))}
+				for _, stream := range []bool{false, true} {
+					params, _, err := openAIRequest(request, stream)
+					if err != nil {
+						t.Fatal(err)
+					}
+					data, err := json.Marshal(params)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var body map[string]json.RawMessage
+					if err := json.Unmarshal(data, &body); err != nil {
+						t.Fatal(err)
+					}
+					if string(body["tool_choice"]) != `"`+choice+`"` {
+						t.Fatalf("tool choice encoded as %s", body["tool_choice"])
+					}
+				}
+				if _, err := convertToolsToOpenAI([]Tool{{Name: choice}}); err == nil {
+					t.Fatal("accepted reserved tool name")
+				}
+			})
+		}
+	})
 	t.Run("tool arguments replay as strings", func(t *testing.T) {
 		for _, test := range []struct {
 			name, arguments string

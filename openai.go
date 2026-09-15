@@ -113,9 +113,18 @@ const (
 	// OpenAIResponseExtraFieldWireFields holds response-level map[string]json.RawMessage
 	// metadata in Response.ExtraFields, excluding choices and usage.
 	OpenAIResponseExtraFieldWireFields = "openai_wire_fields"
+	// OpenAIResponseExtraFieldUsage retains the complete provider usage object
+	// as map[string]json.RawMessage in Response.ExtraFields, including token
+	// breakdowns not represented by the common UsageMetadata metrics.
+	OpenAIResponseExtraFieldUsage = "openai_usage"
 	// OpenAIGenerationOptionTokenLimitField selects the wire field for
 	// WithMaxGenerationTokens. See WithOpenAITokenLimitField.
 	OpenAIGenerationOptionTokenLimitField = "openai_token_limit_field"
+	// OpenAIGenerationOptionExtraBody is the map[string]json.RawMessage request
+	// field map set by [WithOpenAIExtraBody].
+	OpenAIGenerationOptionExtraBody = "openai_extra_body"
+	// OpenAIGenerationOptionStreamUsage is the bool set by [WithOpenAIStreamUsage].
+	OpenAIGenerationOptionStreamUsage = "openai_stream_usage"
 )
 
 // WithOpenAITokenLimitField selects "max_tokens" or "max_completion_tokens" for
@@ -125,13 +134,34 @@ func WithOpenAITokenLimitField(field string) GenerationOption {
 	return func(options GenerationOptions) { options[OpenAIGenerationOptionTokenLimitField] = field }
 }
 
+// WithOpenAIExtraBody supplies native JSON request fields such as thinking,
+// tool_stream, or response_format. Values override corresponding common options;
+// explicit JSON null is preserved. Model, messages, tools, and stream remain
+// owned by the generation request and cannot be overridden here. The map is
+// borrowed until generation; each call copies it without mutating caller data.
+// No provider-specific defaults or capability decisions are inferred.
+func WithOpenAIExtraBody(fields map[string]json.RawMessage) GenerationOption {
+	return func(options GenerationOptions) { options[OpenAIGenerationOptionExtraBody] = fields }
+}
+
+// WithOpenAIStreamUsage controls whether Stream sends stream_options.include_usage.
+// The default is true. False omits stream_options for APIs that report usage
+// without this switch; it does not discard usage received from the provider.
+// WithOpenAIExtraBody can supply an explicit stream_options object instead.
+func WithOpenAIStreamUsage(enabled bool) GenerationOption {
+	return func(options GenerationOptions) { options[OpenAIGenerationOptionStreamUsage] = enabled }
+}
+
 // OpenAiGenerator adapts Chat Completions to Generator, StreamingGenerator, and
 // TokenCounter. It borrows only a client; model, history, tools, and options are
 // supplied on each call. It supports text, image/PDF and audio input, text/audio
 // output, function tools, and reasoning replay. Provider fields are retained at
 // message/block scope under OpenAIExtraFieldWireFields.
 //
-// Common generation options are supported. WithMaxGenerationTokens uses
+// Common generation options are supported. [WithOpenAIExtraBody] supplies
+// explicit native fields; [WithOpenAIStreamUsage] controls the usage request
+// switch. Full provider usage is retained under [OpenAIResponseExtraFieldUsage].
+// WithMaxGenerationTokens uses
 // max_completion_tokens unless WithOpenAITokenLimitField selects max_tokens.
 // Stream parses SSE without reconnecting; callers should supply a context
 // deadline. It consumes through EOF to retain metadata after [DONE].
@@ -188,7 +218,7 @@ func convertToolsToOpenAI(tools []Tool) ([]wire.ToolDefinition, error) {
 	converted := make([]wire.ToolDefinition, 0, len(tools))
 	seen := map[string]bool{}
 	for _, tool := range tools {
-		if tool.Name == "" || tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired || seen[tool.Name] {
+		if tool.Name == "" || tool.Name == "none" || tool.Name == ToolChoiceAuto || tool.Name == ToolChoiceToolsRequired || seen[tool.Name] {
 			return nil, &InvalidToolErr{Tool: tool.Name, Cause: fmt.Errorf("tool name must be nonempty, unique, and not reserved")}
 		}
 		seen[tool.Name] = true
@@ -479,7 +509,7 @@ func openAIRequest(request GenerationRequest, stream bool) (wire.ChatCompletionR
 	}
 	if options.ToolChoice != "" {
 		var choice wire.ToolChoice
-		if options.ToolChoice == ToolChoiceAuto || options.ToolChoice == ToolChoiceToolsRequired {
+		if options.ToolChoice == "none" || options.ToolChoice == ToolChoiceAuto || options.ToolChoice == ToolChoiceToolsRequired {
 			_ = choice.FromToolChoice0(options.ToolChoice)
 		} else {
 			functionType := "function"
@@ -509,10 +539,31 @@ func openAIRequest(request GenerationRequest, stream bool) (wire.ChatCompletionR
 	if len(modalities) > 0 {
 		params.Modalities = nullable.NewNullableWithValue(modalities)
 	}
+	include, specified, err := generationOption[bool](request.Options, OpenAIGenerationOptionStreamUsage)
+	if err != nil {
+		return params, nil, err
+	}
 	if stream {
-		include := true
 		params.Stream = nullable.NewNullableWithValue(true)
-		params.StreamOptions = nullable.NewNullableWithValue(wire.StreamOptions{IncludeUsage: &include})
+		if !specified || include {
+			include = true
+			params.StreamOptions = nullable.NewNullableWithValue(wire.StreamOptions{IncludeUsage: &include})
+		}
+	}
+	fields, _, err := generationOption[map[string]json.RawMessage](request.Options, OpenAIGenerationOptionExtraBody)
+	if err != nil {
+		return params, nil, err
+	}
+	params.AdditionalProperties = make(map[string]json.RawMessage, len(fields))
+	for name, value := range fields {
+		switch name {
+		case "model", "messages", "tools", "stream":
+			return params, nil, InvalidParameterErr{Parameter: OpenAIGenerationOptionExtraBody, Reason: "cannot override " + name}
+		}
+		if !json.Valid(value) {
+			return params, nil, InvalidParameterErr{Parameter: OpenAIGenerationOptionExtraBody, Reason: "invalid JSON for " + name}
+		}
+		params.AdditionalProperties[name] = bytes.Clone(value)
 	}
 	return params, options, nil
 }
@@ -668,10 +719,23 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationReques
 		return Response{}, fmt.Errorf("decode openai response: %w", err)
 	}
 	if completion.Error.IsSpecified() && !completion.Error.IsNull() {
-		return Response{}, &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindUnknown, StatusCode: response.StatusCode, Message: parseAPIErrorMessage(string(data)), RawBody: string(data)}
+		return Response{}, &ApiErr{
+			Provider:   ProviderOpenAI,
+			Kind:       APIErrorKindUnknown,
+			StatusCode: response.StatusCode,
+			Message:    parseAPIErrorMessage(string(data)),
+			RawBody:    string(data),
+		}
 	}
 	usage, _ := completion.Usage.Get()
-	result := Response{UsageMetadata: openAIUsage(usage), ExtraFields: map[string]interface{}{OpenAIResponseExtraFieldHeaders: response.Header.Clone(), OpenAIResponseExtraFieldWireFields: openAIRawFields(completion, "choices", "usage")}}
+	result := Response{
+		UsageMetadata: openAIUsage(usage),
+		ExtraFields: map[string]interface{}{
+			OpenAIResponseExtraFieldHeaders:    response.Header.Clone(),
+			OpenAIResponseExtraFieldUsage:      openAIRawFields(usage),
+			OpenAIResponseExtraFieldWireFields: openAIRawFields(completion, "choices", "usage"),
+		},
+	}
 	if completion.Choices == nil {
 		return result, fmt.Errorf("openai response missing choices")
 	}

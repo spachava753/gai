@@ -98,6 +98,8 @@ Provider type documentation lists supported content, common options, native opti
 
 `OpenAiGenerator` takes an HTTP client, a base URL (including any API prefix), and an explicit API key. It no longer accepts an OpenAI SDK completion service. An empty base URL selects OpenAI; a custom endpoint does not change option behavior. `WithMaxGenerationTokens` uses `max_completion_tokens` by default; add `WithOpenAITokenLimitField("max_tokens")` for endpoints that require that field. There are no automatic request retries or model-name capability rules.
 
+`WithOpenAIExtraBody` supplies explicit native JSON fields such as `thinking` without adding model-name rules to the generator. `WithOpenAIStreamUsage(false)` omits the streamed-usage request switch for APIs that do not need it. Images use data URLs, including images in tool results and history. Complete provider usage breakdowns are retained under `OpenAIResponseExtraFieldUsage`, in addition to common usage metrics.
+
 Chat Completions streaming consumes through EOF to retain metadata after `[DONE]`; use a context deadline. Parallel tool calls are assembled by index and emitted as complete calls at stream completion. Replay metadata stays in message/block `ExtraFields` under the documented OpenAI keys, not on the generator. If serializing arbitrary metadata through untyped JSON maps, use `json.Decoder.UseNumber` to avoid rounding large integers.
 
 `OpenCodeGenerator` uses the OpenCode Go subscription Chat Completions endpoint. It passes model IDs and `WithThinkingBudget` effort labels through to OpenCode, preserves both `reasoning_content` and structured `reasoning_details` for tool-call replay, and sends supported `ImageBlock` values as `image_url` data URLs. Reuse one `WithOpenCodeSessionID` value across a dialog so OpenCode keeps multi-turn tool reasoning on the same upstream provider. OpenCode or the selected model rejects unsupported capabilities.
@@ -249,6 +251,8 @@ go generate ./internal/openai
 ```
 
 Its tests check that the generated file is current and exercise JSON round trips and local HTTP behavior. `OpenAiGenerator` uses this client; the other generated provider packages still use OGEN.
+
+The OpenAI adapter has [SDK request contract tests](testdata/openai_sdk/README.md). An explicit scenario matrix drives public GAI APIs against conversations recorded through the OpenAI Python SDK for OpenAI, Z.AI, Kimi, and DeepSeek. Captures store only request/response body pairs; options are declared once in the matrix and translated into public GAI options by the tests. Each named provider/mode/step case checks JSON-equivalent outgoing HTTP bodies, with later history built from GAI output. Replay also checks successful completion, usable function calls, and known scenario arguments or JSON results—not exact generated prose. New captures come from a small SDK conversation script running through mitmproxy. Building the corpus requires explicit approval for live calls; ordinary tests never refresh it.
 
 The tracked pre-commit hook runs LAAS against hand-written packages. Activate it after cloning:
 

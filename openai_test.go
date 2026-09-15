@@ -45,6 +45,19 @@ func ExampleNewOpenAiGenerator() {
 	// Output: true max_tokens
 }
 
+func ExampleWithOpenAIExtraBody() {
+	options := NewGenerationOptions(
+		WithOpenAIExtraBody(map[string]json.RawMessage{"thinking": json.RawMessage(`{"type":"enabled","clear_thinking":false}`)}),
+		WithOpenAIStreamUsage(false),
+	)
+	fields := options[OpenAIGenerationOptionExtraBody].(map[string]json.RawMessage)
+	fmt.Println(string(fields["thinking"]))
+	fmt.Println(options[OpenAIGenerationOptionStreamUsage])
+	// Output:
+	// {"type":"enabled","clear_thinking":false}
+	// false
+}
+
 func TestToOpenAIMessage(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -1,0 +1,2167 @@
+{
+  "version": 1,
+  "scenarios": {
+    "multi_turn_price_lookup": {
+      "instructions": "Use lookup_price for each requested product. After tool results, give the total in cents in one short sentence. Keep reasoning brief. Never invent prices.",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup_price",
+            "description": "Return the price in cents for one synthetic product code.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "product_code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "product_code"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "prices": {
+        "ABC123": 1999,
+        "XYZ789": 2999,
+        "NEW456": 499
+      },
+      "steps": [
+        {
+          "name": "parallel_lookup",
+          "input": "user",
+          "text": "Look up ABC123 and XYZ789, calling lookup_price once for each product, then give their total price in cents.",
+          "expected_tool_calls": 2
+        },
+        {
+          "name": "parallel_tool_results",
+          "input": "tool_results",
+          "expected_tool_calls": 0
+        },
+        {
+          "name": "followup_lookup",
+          "input": "user",
+          "text": "Now look up NEW456 using lookup_price and add its price to the previous total. Give the new total in cents.",
+          "expected_tool_calls": 1
+        },
+        {
+          "name": "followup_tool_result",
+          "input": "tool_results",
+          "expected_tool_calls": 0
+        }
+      ]
+    },
+    "user_images": {
+      "instructions": "Describe only what is visible. Keep answers to one short sentence.",
+      "tools": [],
+      "steps": [
+        {
+          "name": "single_image",
+          "input": "user",
+          "text": "Describe this image.",
+          "images": [
+            "sample.jpg"
+          ],
+          "expected_tool_calls": 0
+        },
+        {
+          "name": "multiple_images",
+          "input": "user",
+          "text": "Compare these two images, in the order shown, with the earlier image.",
+          "images": [
+            "sample.jpg",
+            "testdata/openai_sdk/shapes.png"
+          ],
+          "expected_tool_calls": 0
+        }
+      ]
+    },
+    "tool_images": {
+      "instructions": "Call get_image once when asked to retrieve an image. Describe the returned image briefly. Do not call the tool again on follow-up questions.",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_image",
+            "description": "Return a fixed synthetic image for visual inspection.",
+            "parameters": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "steps": [
+        {
+          "name": "request_image",
+          "input": "user",
+          "text": "Use get_image to retrieve an image and describe it.",
+          "expected_tool_calls": 1
+        },
+        {
+          "name": "image_tool_result",
+          "input": "tool_results",
+          "text": "Here is the requested image.",
+          "images": [
+            "testdata/openai_sdk/shapes.png"
+          ],
+          "expected_tool_calls": 0
+        },
+        {
+          "name": "tool_image_history",
+          "input": "user",
+          "text": "What color was the shape in the tool image? Do not call the tool again.",
+          "expected_tool_calls": 0
+        }
+      ]
+    },
+    "rich_tools": {
+      "instructions": "Use exactly the requested tools and arguments. Keep reasoning brief. After receiving both tool results, summarize briefly without calling more tools.",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "quote_order",
+            "description": "Quote a synthetic order. Echo the supplied fields; do not add optional fields unless requested.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "customer": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "address": {
+                      "type": "object",
+                      "properties": {
+                        "city": {
+                          "type": "string"
+                        },
+                        "postal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "city",
+                        "postal_code"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "address"
+                  ],
+                  "additionalProperties": false
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "sku": {
+                        "type": "string"
+                      },
+                      "quantity": {
+                        "type": "integer"
+                      },
+                      "unit_price": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "sku",
+                      "quantity",
+                      "unit_price"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "expedited": {
+                  "type": "boolean"
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "coupon": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "customer",
+                "items",
+                "expedited",
+                "tags",
+                "coupon"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup_shipping",
+            "description": "Get the shipping fee for a synthetic region.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "type": "string",
+                  "enum": [
+                    "EU",
+                    "US"
+                  ]
+                }
+              },
+              "required": [
+                "region"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "steps": [
+        {
+          "name": "nested_arguments",
+          "input": "user",
+          "text": "Call quote_order once with these exact arguments, omitting note: {\"customer\": {\"name\": \"Asha ☕\", \"address\": {\"city\": \"Paris\", \"postal_code\": \"75001\"}}, \"items\": [{\"sku\": \"ABC123\", \"quantity\": 2, \"unit_price\": 12.5}, {\"sku\": \"XYZ789\", \"quantity\": 0, \"unit_price\": 0}], \"expedited\": false, \"tags\": [\"gift\", \"fragile\"], \"coupon\": null}. Also call lookup_shipping once for region EU. Make both calls before answering.",
+          "expected_tool_calls": 2,
+          "expected_arguments": {
+            "quote_order": {
+              "customer": {
+                "name": "Asha ☕",
+                "address": {
+                  "city": "Paris",
+                  "postal_code": "75001"
+                }
+              },
+              "items": [
+                {
+                  "sku": "ABC123",
+                  "quantity": 2,
+                  "unit_price": 12.5
+                },
+                {
+                  "sku": "XYZ789",
+                  "quantity": 0,
+                  "unit_price": 0
+                }
+              ],
+              "expedited": false,
+              "tags": [
+                "gift",
+                "fragile"
+              ],
+              "coupon": null
+            },
+            "lookup_shipping": {
+              "region": "EU"
+            }
+          }
+        },
+        {
+          "name": "distinct_tool_results",
+          "input": "tool_results",
+          "expected_tool_calls": 0
+        }
+      ]
+    },
+    "controlled_tool": {
+      "instructions": "Keep reasoning brief. If a tool is available, use lookup_price once for the requested product. After its result, answer briefly without further calls.",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup_price",
+            "description": "Return the price in cents for one synthetic product code.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "product_code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "product_code"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup_shipping",
+            "description": "Get the shipping fee for a synthetic region.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "type": "string",
+                  "enum": [
+                    "EU",
+                    "US"
+                  ]
+                }
+              },
+              "required": [
+                "region"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "prices": {
+        "ABC123": 1999,
+        "XYZ789": 2999,
+        "NEW456": 499
+      },
+      "steps": [
+        {
+          "name": "selected_call",
+          "input": "user",
+          "text": "Get the price of ABC123 using lookup_price.",
+          "expected_tool_calls": 1,
+          "expected_arguments": {
+            "lookup_price": {
+              "product_code": "ABC123"
+            }
+          }
+        },
+        {
+          "name": "return_to_auto",
+          "input": "tool_results",
+          "expected_tool_calls": 0,
+          "sdk_options": {
+            "tool_choice": "auto"
+          }
+        }
+      ]
+    },
+    "forbidden_tools": {
+      "instructions": "Answer briefly. Do not invent a price if tools cannot be used.",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup_price",
+            "description": "Return the price in cents for one synthetic product code.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "product_code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "product_code"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "prices": {
+        "ABC123": 1999,
+        "XYZ789": 2999,
+        "NEW456": 499
+      },
+      "steps": [
+        {
+          "name": "no_call",
+          "input": "user",
+          "text": "Please call lookup_price to get the price of ABC123.",
+          "expected_tool_calls": 0
+        }
+      ]
+    },
+    "tool_recovery": {
+      "instructions": "Keep reasoning brief. Try the requested product once. If the tool returns an unknown_product error, retry once with its suggested_product_code. After a successful result answer briefly without more calls.",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup_price",
+            "description": "Return the price in cents for one synthetic product code.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "product_code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "product_code"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "prices": {
+        "ABC123": 1999,
+        "XYZ789": 2999,
+        "NEW456": 499
+      },
+      "steps": [
+        {
+          "name": "unavailable_product",
+          "input": "user",
+          "text": "Use lookup_price for MISSING. If it is unknown, use the product suggested by the tool instead.",
+          "expected_tool_calls": 1,
+          "expected_arguments": {
+            "lookup_price": {
+              "product_code": "MISSING"
+            }
+          }
+        },
+        {
+          "name": "error_then_retry",
+          "input": "tool_results",
+          "expected_tool_calls": 1,
+          "expected_arguments": {
+            "lookup_price": {
+              "product_code": "ABC123"
+            }
+          }
+        },
+        {
+          "name": "successful_result",
+          "input": "tool_results",
+          "expected_tool_calls": 0
+        }
+      ]
+    },
+    "structured_output": {
+      "instructions": "Return only a JSON object with name, count, price, available, tags, and note. Preserve field types and array order. No Markdown.",
+      "tools": [],
+      "steps": [
+        {
+          "name": "typed_json",
+          "input": "user",
+          "text": "Tea: count 2, price 3.5, available false, tags hot then sale, note null. Return JSON.",
+          "expected_tool_calls": 0,
+          "expected_json": {
+            "name": "Tea",
+            "count": 2,
+            "price": 3.5,
+            "available": false,
+            "tags": [
+              "hot",
+              "sale"
+            ],
+            "note": null
+          }
+        },
+        {
+          "name": "json_history",
+          "input": "user",
+          "text": "Change count to 3 and available to true; keep every other value. Return the full JSON object.",
+          "expected_tool_calls": 0,
+          "expected_json": {
+            "name": "Tea",
+            "count": 3,
+            "price": 3.5,
+            "available": true,
+            "tags": [
+              "hot",
+              "sale"
+            ],
+            "note": null
+          }
+        }
+      ]
+    },
+    "pdf_inputs": {
+      "instructions": "Read the supplied invoice PDF. Reply only with the requested JSON object, with no Markdown. Preserve document facts.",
+      "tools": [],
+      "steps": [
+        {
+          "name": "read_pdf",
+          "input": "user",
+          "text": "Return invoice (the invoice ID), total (a number), and currency from this PDF.",
+          "expected_tool_calls": 0,
+          "pdfs": [
+            "testdata/openai_sdk/invoice.pdf"
+          ],
+          "expected_json": {
+            "invoice": "REF-42",
+            "total": 37.5,
+            "currency": "USD"
+          }
+        },
+        {
+          "name": "pdf_history",
+          "input": "user",
+          "text": "Using the same PDF, return only vendor.",
+          "expected_tool_calls": 0,
+          "expected_text": [
+            "Acme Lab"
+          ]
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "deepseek/json",
+      "capture": "deepseek_json.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        }
+      },
+      "scenario": "multi_turn_price_lookup"
+    },
+    {
+      "name": "deepseek/stream",
+      "capture": "deepseek_stream.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        }
+      },
+      "scenario": "multi_turn_price_lookup"
+    },
+    {
+      "name": "openai/json",
+      "capture": "openai_json.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        }
+      },
+      "scenario": "multi_turn_price_lookup"
+    },
+    {
+      "name": "openai/stream",
+      "capture": "openai_stream.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        }
+      },
+      "scenario": "multi_turn_price_lookup"
+    },
+    {
+      "name": "deepseek/json/user_images",
+      "capture": "deepseek_json_user_images.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        }
+      },
+      "scenario": "user_images"
+    },
+    {
+      "name": "deepseek/stream/user_images",
+      "capture": "deepseek_stream_user_images.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        }
+      },
+      "scenario": "user_images"
+    },
+    {
+      "name": "openai/json/user_images",
+      "capture": "openai_json_user_images.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        }
+      },
+      "scenario": "user_images"
+    },
+    {
+      "name": "openai/stream/user_images",
+      "capture": "openai_stream_user_images.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        }
+      },
+      "scenario": "user_images"
+    },
+    {
+      "name": "openai/json/rich_tools",
+      "capture": "openai_json_rich_tools.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        },
+        "tool_choice": "auto"
+      },
+      "scenario": "rich_tools"
+    },
+    {
+      "name": "openai/json/reasoning_off",
+      "capture": "openai_json_reasoning_off.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.1",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "none"
+        },
+        "tool_choice": "auto"
+      },
+      "scenario": "rich_tools"
+    },
+    {
+      "name": "openai/json/tool_required",
+      "capture": "openai_json_tool_required.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.1",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "none"
+        },
+        "tool_choice": "required"
+      },
+      "scenario": "controlled_tool"
+    },
+    {
+      "name": "openai/json/tool_named",
+      "capture": "openai_json_tool_named.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.1",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "none"
+        },
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "lookup_price"
+          }
+        }
+      },
+      "scenario": "controlled_tool"
+    },
+    {
+      "name": "openai/json/tool_none",
+      "capture": "openai_json_tool_none.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.1",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "none"
+        },
+        "tool_choice": "none"
+      },
+      "scenario": "forbidden_tools"
+    },
+    {
+      "name": "openai/json/tool_recovery",
+      "capture": "openai_json_tool_recovery.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        }
+      },
+      "scenario": "tool_recovery"
+    },
+    {
+      "name": "openai/json/json_mode",
+      "capture": "openai_json_json_mode.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        },
+        "response_format": {
+          "type": "json_object"
+        }
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "openai/json/json_schema",
+      "capture": "openai_json_json_schema.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        },
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "product",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "price": {
+                  "type": "number"
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "note": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "count",
+                "price",
+                "available",
+                "tags",
+                "note"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "openai/json/pdf_inputs",
+      "capture": "openai_json_pdf_inputs.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        }
+      },
+      "scenario": "pdf_inputs"
+    },
+    {
+      "name": "openai/stream/rich_tools",
+      "capture": "openai_stream_rich_tools.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        },
+        "tool_choice": "auto"
+      },
+      "scenario": "rich_tools"
+    },
+    {
+      "name": "openai/stream/reasoning_off",
+      "capture": "openai_stream_reasoning_off.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.1",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "none"
+        },
+        "tool_choice": "auto"
+      },
+      "scenario": "rich_tools"
+    },
+    {
+      "name": "openai/stream/tool_required",
+      "capture": "openai_stream_tool_required.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.1",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "none"
+        },
+        "tool_choice": "required"
+      },
+      "scenario": "controlled_tool"
+    },
+    {
+      "name": "openai/stream/tool_named",
+      "capture": "openai_stream_tool_named.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.1",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "none"
+        },
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "lookup_price"
+          }
+        }
+      },
+      "scenario": "controlled_tool"
+    },
+    {
+      "name": "openai/stream/tool_none",
+      "capture": "openai_stream_tool_none.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.1",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "none"
+        },
+        "tool_choice": "none"
+      },
+      "scenario": "forbidden_tools"
+    },
+    {
+      "name": "openai/stream/tool_recovery",
+      "capture": "openai_stream_tool_recovery.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        }
+      },
+      "scenario": "tool_recovery"
+    },
+    {
+      "name": "openai/stream/json_mode",
+      "capture": "openai_stream_json_mode.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        },
+        "response_format": {
+          "type": "json_object"
+        }
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "openai/stream/json_schema",
+      "capture": "openai_stream_json_schema.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        },
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "product",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "price": {
+                  "type": "number"
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "note": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "count",
+                "price",
+                "available",
+                "tags",
+                "note"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "openai/stream/pdf_inputs",
+      "capture": "openai_stream_pdf_inputs.json",
+      "provider": "openai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "key_env": "OPENAI_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "reasoning_effort": "minimal"
+        }
+      },
+      "scenario": "pdf_inputs"
+    },
+    {
+      "name": "kimi/json",
+      "capture": "kimi_json.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "reasoning_effort": "low"
+      },
+      "scenario": "multi_turn_price_lookup"
+    },
+    {
+      "name": "kimi/stream",
+      "capture": "kimi_stream.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "multi_turn_price_lookup"
+    },
+    {
+      "name": "zai/json",
+      "capture": "zai_json.json",
+      "provider": "zai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "key_env": "Z_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled",
+            "clear_thinking": false
+          }
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "multi_turn_price_lookup"
+    },
+    {
+      "name": "zai/stream",
+      "capture": "zai_stream.json",
+      "provider": "zai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "key_env": "Z_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled",
+            "clear_thinking": false
+          },
+          "tool_stream": true
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "multi_turn_price_lookup"
+    },
+    {
+      "name": "kimi/json/user_images",
+      "capture": "kimi_json_user_images.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "reasoning_effort": "low"
+      },
+      "scenario": "user_images"
+    },
+    {
+      "name": "kimi/json/tool_images",
+      "capture": "kimi_json_tool_images.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "reasoning_effort": "low"
+      },
+      "scenario": "tool_images"
+    },
+    {
+      "name": "kimi/stream/user_images",
+      "capture": "kimi_stream_user_images.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "user_images"
+    },
+    {
+      "name": "kimi/stream/tool_images",
+      "capture": "kimi_stream_tool_images.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "tool_images"
+    },
+    {
+      "name": "zai/json/user_images",
+      "capture": "zai_json_user_images.json",
+      "provider": "zai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "key_env": "Z_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled",
+            "clear_thinking": false
+          }
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "user_images"
+    },
+    {
+      "name": "zai/json/tool_images",
+      "capture": "zai_json_tool_images.json",
+      "provider": "zai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "key_env": "Z_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled",
+            "clear_thinking": false
+          }
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "tool_images"
+    },
+    {
+      "name": "zai/stream/user_images",
+      "capture": "zai_stream_user_images.json",
+      "provider": "zai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "key_env": "Z_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled",
+            "clear_thinking": false
+          },
+          "tool_stream": true
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "user_images"
+    },
+    {
+      "name": "zai/stream/tool_images",
+      "capture": "zai_stream_tool_images.json",
+      "provider": "zai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "key_env": "Z_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled",
+            "clear_thinking": false
+          },
+          "tool_stream": true
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "tool_images"
+    },
+    {
+      "name": "kimi/json/rich_tools",
+      "capture": "kimi_json_rich_tools.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "tool_choice": "auto",
+        "reasoning_effort": "low"
+      },
+      "scenario": "rich_tools"
+    },
+    {
+      "name": "kimi/json/tool_required",
+      "capture": "kimi_json_tool_required.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "tool_choice": "required",
+        "reasoning_effort": "low"
+      },
+      "scenario": "controlled_tool"
+    },
+    {
+      "name": "kimi/json/tool_recovery",
+      "capture": "kimi_json_tool_recovery.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "reasoning_effort": "low"
+      },
+      "scenario": "tool_recovery"
+    },
+    {
+      "name": "kimi/json/json_mode",
+      "capture": "kimi_json_json_mode.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "response_format": {
+          "type": "json_object"
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "kimi/json/json_schema",
+      "capture": "kimi_json_json_schema.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "product",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "price": {
+                  "type": "number"
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "note": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "count",
+                "price",
+                "available",
+                "tags",
+                "note"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "kimi/stream/rich_tools",
+      "capture": "kimi_stream_rich_tools.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "tool_choice": "auto",
+        "reasoning_effort": "low"
+      },
+      "scenario": "rich_tools"
+    },
+    {
+      "name": "kimi/stream/tool_required",
+      "capture": "kimi_stream_tool_required.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "tool_choice": "required",
+        "reasoning_effort": "low"
+      },
+      "scenario": "controlled_tool"
+    },
+    {
+      "name": "kimi/stream/tool_none",
+      "capture": "kimi_stream_tool_none.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "tool_choice": "none",
+        "reasoning_effort": "low"
+      },
+      "scenario": "forbidden_tools"
+    },
+    {
+      "name": "kimi/stream/tool_recovery",
+      "capture": "kimi_stream_tool_recovery.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "tool_recovery"
+    },
+    {
+      "name": "kimi/stream/json_mode",
+      "capture": "kimi_stream_json_mode.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "response_format": {
+          "type": "json_object"
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "kimi/stream/json_schema",
+      "capture": "kimi_stream_json_schema.json",
+      "provider": "kimi",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3",
+      "key_env": "MOONSHOT_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_completion_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "product",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "price": {
+                  "type": "number"
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "note": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "count",
+                "price",
+                "available",
+                "tags",
+                "note"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "zai/json/tool_recovery",
+      "capture": "zai_json_tool_recovery.json",
+      "provider": "zai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "key_env": "Z_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled",
+            "clear_thinking": false
+          }
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "tool_recovery"
+    },
+    {
+      "name": "zai/json/json_mode",
+      "capture": "zai_json_json_mode.json",
+      "provider": "zai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "key_env": "Z_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "response_format": {
+          "type": "json_object"
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "enabled",
+            "clear_thinking": false
+          }
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "zai/stream/tool_recovery",
+      "capture": "zai_stream_tool_recovery.json",
+      "provider": "zai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "key_env": "Z_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled",
+            "clear_thinking": false
+          },
+          "tool_stream": true
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "tool_recovery"
+    },
+    {
+      "name": "zai/stream/json_mode",
+      "capture": "zai_stream_json_mode.json",
+      "provider": "zai",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "key_env": "Z_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "response_format": {
+          "type": "json_object"
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "enabled",
+            "clear_thinking": false
+          },
+          "tool_stream": true
+        },
+        "reasoning_effort": "low"
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "deepseek/json/rich_tools",
+      "capture": "deepseek_json_rich_tools.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        },
+        "tool_choice": "auto"
+      },
+      "scenario": "rich_tools"
+    },
+    {
+      "name": "deepseek/json/reasoning_off",
+      "capture": "deepseek_json_reasoning_off.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "tool_choice": "auto"
+      },
+      "scenario": "rich_tools"
+    },
+    {
+      "name": "deepseek/json/tool_required",
+      "capture": "deepseek_json_tool_required.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "tool_choice": "required"
+      },
+      "scenario": "controlled_tool"
+    },
+    {
+      "name": "deepseek/json/tool_named",
+      "capture": "deepseek_json_tool_named.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "lookup_price"
+          }
+        }
+      },
+      "scenario": "controlled_tool"
+    },
+    {
+      "name": "deepseek/json/tool_none",
+      "capture": "deepseek_json_tool_none.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "tool_choice": "none"
+      },
+      "scenario": "forbidden_tools"
+    },
+    {
+      "name": "deepseek/json/tool_recovery",
+      "capture": "deepseek_json_tool_recovery.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        }
+      },
+      "scenario": "tool_recovery"
+    },
+    {
+      "name": "deepseek/json/json_mode",
+      "capture": "deepseek_json_json_mode.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": false,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        },
+        "response_format": {
+          "type": "json_object"
+        }
+      },
+      "scenario": "structured_output"
+    },
+    {
+      "name": "deepseek/stream/rich_tools",
+      "capture": "deepseek_stream_rich_tools.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        },
+        "tool_choice": "auto"
+      },
+      "scenario": "rich_tools"
+    },
+    {
+      "name": "deepseek/stream/reasoning_off",
+      "capture": "deepseek_stream_reasoning_off.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "tool_choice": "auto"
+      },
+      "scenario": "rich_tools"
+    },
+    {
+      "name": "deepseek/stream/tool_required",
+      "capture": "deepseek_stream_tool_required.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "tool_choice": "required"
+      },
+      "scenario": "controlled_tool"
+    },
+    {
+      "name": "deepseek/stream/tool_named",
+      "capture": "deepseek_stream_tool_named.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "lookup_price"
+          }
+        }
+      },
+      "scenario": "controlled_tool"
+    },
+    {
+      "name": "deepseek/stream/tool_none",
+      "capture": "deepseek_stream_tool_none.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "tool_choice": "none"
+      },
+      "scenario": "forbidden_tools"
+    },
+    {
+      "name": "deepseek/stream/tool_recovery",
+      "capture": "deepseek_stream_tool_recovery.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        }
+      },
+      "scenario": "tool_recovery"
+    },
+    {
+      "name": "deepseek/stream/json_mode",
+      "capture": "deepseek_stream_json_mode.json",
+      "provider": "deepseek",
+      "sdk": "openai",
+      "sdk_version": "3.13.0",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "key_env": "DEEPSEEK_API_KEY",
+      "stream": true,
+      "sdk_options": {
+        "max_tokens": 1024,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        },
+        "response_format": {
+          "type": "json_object"
+        }
+      },
+      "scenario": "structured_output"
+    }
+  ]
+}

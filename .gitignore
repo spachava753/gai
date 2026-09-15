@@ -26,6 +26,15 @@
 !sample.wav
 !sample.jpg
 
+# Reproducible Python SDK recordings used by offline differential tests.
+!/testdata/openai_sdk/conversation.py
+!/testdata/openai_sdk/conversation.py.lock
+!/testdata/openai_sdk/capture.py
+!/testdata/openai_sdk/invoice.pdf
+!/testdata/openai_sdk/shapes.png
+!/testdata/openai_sdk/matrix.json
+!/testdata/openai_sdk/captures/*.json
+
 # !Makefile
 
 # ...even if they are in subdirectories

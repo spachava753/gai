@@ -74,7 +74,7 @@ func openAIMergeStreamFields(target map[string]json.RawMessage, update map[strin
 			continue
 		}
 		switch key {
-		case "reasoning", "reasoning_content", "data", "transcript":
+		case "reasoning", "reasoning_content", "refusal", "data", "transcript":
 			var a, b string
 			if json.Unmarshal(previous, &a) != nil || json.Unmarshal(value, &b) != nil {
 				return fmt.Errorf("invalid string delta for %s", key)
@@ -246,7 +246,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				}
 				candidate := candidates[index]
 				if candidate == nil {
-					candidate = &openAIStreamCandidate{tools: map[int64]*openAIStreamTool{}, fields: map[string]json.RawMessage{}}
+					candidate = &openAIStreamCandidate{tools: map[int64]*openAIStreamTool{}, fields: map[string]json.RawMessage{"content": json.RawMessage(`""`)}}
 					candidates[index] = candidate
 				}
 				if value, err := choice.Usage.Get(); err == nil {
@@ -263,6 +263,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 					candidate.refused += refusal
 				}
 				if text, err := delta.Content.Get(); err == nil && text != "" {
+					delete(candidate.fields, "content")
 					if !yield(StreamChunk{Block: TextBlock(text), CandidatesIndex: int(index)}) {
 						return
 					}
@@ -276,7 +277,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				}
 				// Delta fields can repeat or grow. Publish only their assembled value at
 				// completion rather than conflicting snapshots on successive chunks.
-				if err := openAIMergeStreamFields(candidate.fields, openAIRawFields(delta, "role", "content", "tool_calls", "refusal")); err != nil {
+				if err := openAIMergeStreamFields(candidate.fields, openAIRawFields(delta, "role", "content", "tool_calls")); err != nil {
 					yield(StreamChunk{Err: err})
 					return
 				}
@@ -388,6 +389,6 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 			yield(StreamChunk{Err: io.ErrUnexpectedEOF})
 			return
 		}
-		yield(StreamChunk{Block: MetadataBlock(openAIUsage(usage)), ResponseExtraFields: map[string]interface{}{OpenAIResponseExtraFieldHeaders: response.Header.Clone(), OpenAIResponseExtraFieldWireFields: fields}})
+		yield(StreamChunk{Block: MetadataBlock(openAIUsage(usage)), ResponseExtraFields: map[string]interface{}{OpenAIResponseExtraFieldHeaders: response.Header.Clone(), OpenAIResponseExtraFieldUsage: openAIRawFields(usage), OpenAIResponseExtraFieldWireFields: fields}})
 	}
 }
