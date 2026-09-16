@@ -221,7 +221,7 @@ type geminiGenerationOptions struct {
 	MaxGenerationTokens *int
 	ToolChoice          string
 	StopSequences       []string
-	ThinkingBudget      string
+	ReasoningEffort     string
 }
 
 // parseGeminiGenerationOptions validates common option values and records the typed Gemini configuration.
@@ -269,7 +269,7 @@ func parseGeminiGenerationOptions(values GenerationOptions) (*geminiGenerationOp
 	if options.StopSequences, _, err = generationOption[[]string](values, GenerationOptionStopSequences); err != nil {
 		return nil, err
 	}
-	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+	if options.ReasoningEffort, _, err = generationOption[string](values, GenerationOptionReasoningEffort); err != nil {
 		return nil, err
 	}
 	return options, nil
@@ -281,8 +281,11 @@ func parseGeminiGenerationOptions(values GenerationOptions) (*geminiGenerationOp
 //
 // Gemini consumes [WithTemperature], [WithTopP], [WithTopK],
 // [WithCandidateCount], [WithMaxGenerationTokens], [WithToolChoice],
-// [WithStopSequences], and [WithThinkingBudget]. Thinking blocks preserve
+// [WithStopSequences], and [WithReasoningEffort]. Thinking blocks preserve
 // [GeminiExtraFieldThoughtSignature] in [Block.ExtraFields] for replay.
+// SafetyIdentifier and PromptCacheKey are ignored: generateContent has no
+// equivalent fields. They are not mapped to safety settings or cachedContent,
+// which identifies a separately managed server-side cache resource.
 //
 // Tool schemas support anyOf only for a nullable pair consisting of one type and
 // null; other anyOf unions return [InvalidToolErr].
@@ -383,12 +386,12 @@ func (g *GeminiGenerator) Generate(ctx context.Context, request GenerationReques
 		if options.TopK != nil {
 			genContentConfig.TopK = genai.Ptr(float32(*options.TopK))
 		}
-		if options.ThinkingBudget != "" {
-			switch options.ThinkingBudget {
+		if options.ReasoningEffort != "" {
+			switch options.ReasoningEffort {
 			case "low", "medium", "high":
-				genContentConfig.ThinkingConfig.ThinkingLevel = genai.ThinkingLevel(options.ThinkingBudget)
+				genContentConfig.ThinkingConfig.ThinkingLevel = genai.ThinkingLevel(options.ReasoningEffort)
 			default:
-				return Response{}, InvalidParameterErr{Parameter: "thinking budget", Reason: fmt.Sprintf("invalid thinking budget: %s", options.ThinkingBudget)}
+				return Response{}, InvalidParameterErr{Parameter: "reasoning effort", Reason: fmt.Sprintf("invalid reasoning effort: %s", options.ReasoningEffort)}
 			}
 		}
 	}
@@ -630,12 +633,12 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 			if options.TopK != nil {
 				genContentConfig.TopK = genai.Ptr(float32(*options.TopK))
 			}
-			if options.ThinkingBudget != "" {
-				switch options.ThinkingBudget {
+			if options.ReasoningEffort != "" {
+				switch options.ReasoningEffort {
 				case "low", "medium", "high":
-					genContentConfig.ThinkingConfig.ThinkingLevel = genai.ThinkingLevel(options.ThinkingBudget)
+					genContentConfig.ThinkingConfig.ThinkingLevel = genai.ThinkingLevel(options.ReasoningEffort)
 				default:
-					yield(StreamChunk{Err: InvalidParameterErr{Parameter: "thinking budget", Reason: fmt.Sprintf("invalid thinking budget: %s", options.ThinkingBudget)}})
+					yield(StreamChunk{Err: InvalidParameterErr{Parameter: "reasoning effort", Reason: fmt.Sprintf("invalid reasoning effort: %s", options.ReasoningEffort)}})
 					return
 				}
 			}

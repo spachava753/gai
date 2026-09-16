@@ -327,12 +327,17 @@ A provider generator keeps only what it needs to send a request:
 | `OpenRouterGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 | `OpenCodeGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 | `ResponsesGenerator` | Responses service | `Generator`, `StreamingGenerator` |
-| `ZaiGenerator` | private generated client | `Generator`, `StreamingGenerator`, `TokenCounter` |
-| `DeepSeekGenerator` | private generated client | `Generator`, `StreamingGenerator` |
+| `ZaiGenerator` | private `*OpenAiGenerator` and native counting HTTP client | `Generator`, `StreamingGenerator`, `TokenCounter` |
+| `DeepSeekGenerator` | private `*OpenAiGenerator` | `Generator`, `StreamingGenerator` |
+| `MoonshotGenerator` | private `*OpenAiGenerator` and native counting HTTP client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 
-Constructors set up those connections. Generated clients under `internal/` never appear in public constructor parameters or return types. The generated-client adapters accept a standard `*http.Client`, base URL, and API key, then construct their private client internally. An empty base URL selects an exported provider default that aliases the `DefaultServer` constant generated from the OpenAPI spec. The API key must be non-empty; constructors do not read credentials from environment variables or other global state. Constructors return client setup errors instead of retaining an invalid client.
+Constructors set up those connections. Generated clients under `internal/` never appear in public constructor parameters or return types. The generated-client adapters accept a standard `*http.Client`, base URL, and API key, then construct their private client internally. An empty base URL selects the exported provider default, including its API prefix. The API key must be non-empty; constructors do not read credentials from environment variables or other global state. Constructors return client setup errors instead of retaining an invalid client.
 
 Constructors do not choose a model, install tools, or store instructions. Every call gets that data from `GenerationRequest`.
+
+The Z.AI, DeepSeek, and Moonshot adapters hold private `*OpenAiGenerator` fields, not embedded generic wrappers. Each provider's own file implements request translation and Generate/Stream delegation, copying request option maps to apply its defaults and preserve explicit native overrides. Native counting endpoints, payloads, response schemas, and limitations also belong to the corresponding provider. Only error relabeling and authenticated JSON HTTP mechanics are shared in `compatible.go`; that file does not dispatch on provider identity. This shares wire conversion and stream assembly without accidentally exposing OpenAI's local token counting. Z.AI and Moonshot have native counters; Moonshot rejects tool-bearing count requests rather than claiming undocumented accounting.
+
+`GenerationRequest.SafetyIdentifier` and `PromptCacheKey` are independent semantic inputs. Adapters only map them where the provider documents an equivalent; neither is injected into prompts or used to synthesize the other. Cache policy and server cache resource IDs remain separate. `WithReasoningEffort(string)` and `WithThinkingBudget(int)` distinguish qualitative effort from actual thinking-token budgets. Anthropic and OpenRouter reject supplying both.
 
 `ResponsesGenerator` also sets the upstream `store` option to false. The OpenAI service does not retain the conversation, and the Go generator does not retain request state.
 

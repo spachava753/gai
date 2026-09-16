@@ -34,6 +34,57 @@ Assistant: Nvidia
 </example>
 `
 
+func TestChatCompletionRequestControls(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		request := GenerationRequest{Model: "model", SafetyIdentifier: "opaque-user", PromptCacheKey: "prefix", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(WithThinkingBudget(2048), WithOpenAIPromptCacheRetention("24h"), WithOpenAIPromptCacheOptions(json.RawMessage(`{"mode":"implicit","ttl":"30m"}`)), WithOpenAIResponseFormat(json.RawMessage(`{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object"}}}`)))}
+		params, _, err := openAIRequest(request, stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(data, &body); err != nil {
+			t.Fatal(err)
+		}
+		if body["safety_identifier"] != "opaque-user" || body["prompt_cache_key"] != "prefix" || body["prompt_cache_retention"] != "24h" || body["prompt_cache_options"].(map[string]any)["ttl"] != "30m" || body["response_format"].(map[string]any)["type"] != "json_schema" {
+			t.Fatalf("body: %s", data)
+		}
+		if body["reasoning_effort"] != nil || body["thinking_budget"] != nil {
+			t.Fatal("numeric thinking budget treated as effort")
+		}
+		request.SafetyIdentifier = ""
+		request.PromptCacheKey = ""
+		request.Options = nil
+		params, _, err = openAIRequest(request, stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ = json.Marshal(params)
+		body = nil
+		_ = json.Unmarshal(data, &body)
+		if _, ok := body["safety_identifier"]; ok {
+			t.Fatal("empty safety identifier sent")
+		}
+		if _, ok := body["prompt_cache_key"]; ok {
+			t.Fatal("empty cache key sent")
+		}
+	}
+	raw := json.RawMessage(`{"type":"json_object"}`)
+	fields := map[string]json.RawMessage{"other": json.RawMessage(`true`)}
+	opts := NewGenerationOptions(WithOpenAIExtraBody(fields), WithOpenAIResponseFormat(raw), WithOpenAILogprobs(true))
+	raw[0] = 'x'
+	if len(fields) != 1 || string(opts[OpenAIGenerationOptionExtraBody].(map[string]json.RawMessage)["response_format"]) != `{"type":"json_object"}` {
+		t.Fatal("option mutated or retained mutable input")
+	}
+	request := GenerationRequest{Model: "model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(WithOpenAIResponseFormat(json.RawMessage(`invalid`)))}
+	if _, _, err := openAIRequest(request, false); err == nil {
+		t.Fatal("invalid raw format accepted")
+	}
+}
+
 func ExampleNewOpenAiGenerator() {
 	generator, err := NewOpenAiGenerator(nil, "https://api.openai.com/v1", "application-supplied-key")
 	if err != nil {
@@ -687,7 +738,7 @@ func TestOpenAIAdapterScenarios(t *testing.T) {
 			Dialog:       dialog,
 			Options: NewGenerationOptions(
 				WithMaxGenerationTokens(4096),
-				WithThinkingBudget("low"),
+				WithReasoningEffort("low"),
 				WithTemperature(1.0),
 			),
 		}

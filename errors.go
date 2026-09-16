@@ -112,6 +112,8 @@ const (
 	ProviderDeepSeek Provider = "deepseek"
 	// ProviderGemini identifies Google Gemini failures.
 	ProviderGemini Provider = "gemini"
+	// ProviderMoonshot identifies Moonshot (Kimi) API failures.
+	ProviderMoonshot Provider = "moonshot"
 	// ProviderOpenAI identifies OpenAI Chat Completions failures.
 	ProviderOpenAI Provider = "openai"
 	// ProviderOpenCode identifies OpenCode Chat Completions failures.

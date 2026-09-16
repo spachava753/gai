@@ -116,7 +116,11 @@ func TestOpenAISDKRequestBodies(t *testing.T) {
 			for target, step := range scenario.Steps {
 				t.Run(step.Name, func(t *testing.T) {
 					t.Parallel()
-					runSDKRequestCase(t, scenario, test, exchanges, target)
+					for _, wrapper := range []bool{false, true} {
+						t.Run(fmt.Sprintf("wrapper=%t", wrapper), func(t *testing.T) {
+							runSDKRequestCase(t, scenario, test, exchanges, target, wrapper)
+						})
+					}
 				})
 			}
 		})
@@ -126,13 +130,34 @@ func TestOpenAISDKRequestBodies(t *testing.T) {
 // runSDKRequestCase drives the conversation up to one target send. Request
 // mismatches take precedence over response errors. Every response, including
 // the target, must complete successfully and satisfy the scenario's behavior.
-func runSDKRequestCase(t *testing.T, scenario sdkConversation, test sdkRequestCase, exchanges []sdkHTTPExchange, target int) {
+func runSDKRequestCase(t *testing.T, scenario sdkConversation, test sdkRequestCase, exchanges []sdkHTTPExchange, target int, wrapper bool) {
 	t.Helper()
 	transport := &sdkReplayTransport{stream: test.Stream}
 	for _, exchange := range exchanges[:target+1] {
 		transport.responses = append(transport.responses, exchange.Response)
 	}
-	generator, err := gai.NewOpenAiGenerator(&http.Client{Transport: transport}, test.BaseURL, "offline-fixture-key")
+	var generator interface {
+		gai.Generator
+		gai.StreamingGenerator
+	}
+	var err error
+	client := &http.Client{Transport: transport}
+	if wrapper {
+		switch test.Provider {
+		case "zai":
+			generator, err = gai.NewZaiGenerator(client, test.BaseURL, "offline-fixture-key")
+		case "deepseek":
+			generator, err = gai.NewDeepSeekGenerator(client, test.BaseURL, "offline-fixture-key")
+		case "kimi":
+			generator, err = gai.NewMoonshotGenerator(client, test.BaseURL, "offline-fixture-key")
+		case "openai":
+			generator, err = gai.NewOpenAiGenerator(client, test.BaseURL, "offline-fixture-key")
+		default:
+			t.Fatalf("unknown provider %s", test.Provider)
+		}
+	} else {
+		generator, err = gai.NewOpenAiGenerator(client, test.BaseURL, "offline-fixture-key")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +221,7 @@ func (s sdkConversation) generationRequest(t *testing.T, test sdkRequestCase, st
 		case "reasoning_effort":
 			var effort string
 			decode(raw, &effort)
-			gai.WithThinkingBudget(effort)(options)
+			gai.WithReasoningEffort(effort)(options)
 		case "stream":
 			var stream bool
 			decode(raw, &stream)
@@ -434,7 +459,7 @@ func (s sdkConversation) checkResponse(t *testing.T, step sdkConversationStep, r
 		Type string `json:"type"`
 	}
 	_ = json.Unmarshal(extra["thinking"], &thinking)
-	effort, _ := options[gai.GenerationOptionThinkingBudget].(string)
+	effort, _ := options[gai.GenerationOptionReasoningEffort].(string)
 	if raw, ok := extra["reasoning_effort"]; ok {
 		_ = json.Unmarshal(raw, &effort)
 	}
@@ -774,7 +799,7 @@ func TestSDKRequestHarness(t *testing.T) {
 				request := (sdkConversation{}).generationRequest(t, sdkRequestCase{
 					SDKOptions: map[string]json.RawMessage{"reasoning_effort": raw},
 				}, sdkConversationStep{})
-				if got := request.Options[gai.GenerationOptionThinkingBudget]; got != effort {
+				if got := request.Options[gai.GenerationOptionReasoningEffort]; got != effort {
 					t.Fatalf("thinking budget = %v, want %s", got, effort)
 				}
 			})

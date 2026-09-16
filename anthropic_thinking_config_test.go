@@ -1,11 +1,57 @@
 package gai
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
 	a "github.com/anthropics/anthropic-sdk-go"
 )
+
+func TestAnthropicRequestControls(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, budget := range []bool{false, true} {
+			service := &mockAnthropicSvc{response: &a.Message{StopReason: a.StopReasonEndTurn}}
+			generator := NewAnthropicGenerator(service)
+			option := WithReasoningEffort("high")
+			if budget {
+				option = WithThinkingBudget(2048)
+			}
+			request := GenerationRequest{Model: "model", SafetyIdentifier: "opaque-user", PromptCacheKey: "ignored", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(option)}
+			if stream {
+				for chunk := range generator.Stream(t.Context(), request) {
+					if chunk.Err != nil {
+						t.Fatal(chunk.Err)
+					}
+				}
+			} else {
+				if _, err := generator.Generate(t.Context(), request); err != nil {
+					t.Fatal(err)
+				}
+			}
+			data, err := json.Marshal(service.lastParams)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(data, &body); err != nil {
+				t.Fatal(err)
+			}
+			metadata := body["metadata"].(map[string]any)
+			if metadata["user_id"] != "opaque-user" || body["prompt_cache_key"] != nil || body["safety_identifier"] != nil {
+				t.Fatalf("metadata: %s", data)
+			}
+			thinking := body["thinking"].(map[string]any)
+			if budget {
+				if thinking["budget_tokens"] != float64(2048) || thinking["type"] != "enabled" {
+					t.Fatalf("budget: %s", data)
+				}
+			} else if thinking["type"] != "adaptive" || body["output_config"].(map[string]any)["effort"] != "high" {
+				t.Fatalf("effort: %s", data)
+			}
+		}
+	}
+}
 
 func TestApplyAnthropicThinkingConfig(t *testing.T) {
 	tests := []struct {

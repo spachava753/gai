@@ -270,6 +270,9 @@ const OpenRouterDefaultBaseURL = string(openrouter.DefaultServer)
 // tool-choice, stop, output-modality, and thinking helpers. Native controls
 // include [WithOpenRouterFallbackModels], [WithOpenRouterProviderPreferences],
 // [WithOpenRouterResponseFormat], and [WithOpenRouterServiceTier].
+// [WithReasoningEffort] sets reasoning.effort; [WithThinkingBudget] sets the
+// positive integer reasoning.max_tokens. The two cannot be combined.
+// SafetyIdentifier and PromptCacheKey are ignored.
 //
 // Reasoning metadata uses the OpenRouterExtraField constants in
 // [Block.ExtraFields]. Invocation data uses the OpenRouterResponseExtraField
@@ -523,7 +526,7 @@ func parseOpenRouterGenerationOptions(values GenerationOptions) (*openRouterGene
 	if options.StopSequences, _, err = generationOption[[]string](values, GenerationOptionStopSequences); err != nil {
 		return nil, err
 	}
-	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+	if options.ThinkingBudget, err = thinkingSetting(values); err != nil {
 		return nil, err
 	}
 	return options, nil
@@ -976,7 +979,7 @@ func openRouterReasoningConfig(value string) (openrouter.ReasoningConfig, error)
 	maxTokens, err := strconv.Atoi(value)
 	if err != nil || maxTokens < 1 {
 		return openrouter.ReasoningConfig{}, &InvalidParameterErr{
-			Parameter: GenerationOptionThinkingBudget,
+			Parameter: GenerationOptionReasoningEffort,
 			Reason:    "must be a supported effort or a positive integer token budget",
 		}
 	}

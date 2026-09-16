@@ -65,10 +65,14 @@ func mapAnthropicError(err error) *ApiErr {
 //
 // Anthropic consumes [WithTemperature], [WithTopP],
 // [WithMaxGenerationTokens], [WithToolChoice], [WithStopSequences],
-// [WithOutputModalities], and [WithThinkingBudget]. Thinking blocks preserve
+// [WithOutputModalities], [WithReasoningEffort], and [WithThinkingBudget].
+// Effort selects adaptive thinking; a numeric budget selects enabled thinking.
+// The two controls cannot be combined. Thinking blocks preserve
 // [AnthropicExtraFieldThinkingSignature] in [Block.ExtraFields] for replay.
 // Use [NewAnthropicServiceWrapper] to add request modifiers such as
-// [EnableSystemCaching] and [EnableMultiTurnCaching].
+// [EnableSystemCaching] and [EnableMultiTurnCaching]. SafetyIdentifier maps to
+// metadata.user_id (an opaque UUID/hash, at most 512 characters, used for abuse
+// detection). PromptCacheKey is ignored; it does not become cache_control.
 type AnthropicGenerator struct {
 	client AnthropicSvc
 }
@@ -148,7 +152,7 @@ func parseAnthropicGenerationOptions(values GenerationOptions) (*anthropicGenera
 	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
 		return nil, err
 	}
-	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+	if options.ThinkingBudget, err = thinkingSetting(values); err != nil {
 		return nil, err
 	}
 	return options, nil
@@ -453,6 +457,9 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationReq
 		Model:    a.Model(request.Model),
 		Messages: messages,
 	}
+	if request.SafetyIdentifier != "" {
+		params.Metadata = a.MetadataParam{UserID: a.String(request.SafetyIdentifier)}
+	}
 
 	if len(instructions) > 0 {
 		params.System = make([]a.TextBlockParam, 0, len(instructions))
@@ -692,6 +699,9 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 		params := a.MessageNewParams{
 			Model:    a.Model(request.Model),
 			Messages: messages,
+		}
+		if request.SafetyIdentifier != "" {
+			params.Metadata = a.MetadataParam{UserID: a.String(request.SafetyIdentifier)}
 		}
 
 		if len(instructions) > 0 {

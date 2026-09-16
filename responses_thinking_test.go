@@ -73,7 +73,7 @@ Find who drinks water and who owns the zebra. Keep the final visible answer conc
 	}}
 
 	options := NewGenerationOptions(
-		WithThinkingBudget("medium"),
+		WithReasoningEffort("medium"),
 		WithMaxGenerationTokens(12000),
 		WithTemperature(1.0),
 	)
@@ -188,7 +188,7 @@ func testResponsesGenerator_Generate_Thinking_Logging(t *testing.T) {
 	}}
 
 	options := NewGenerationOptions(
-		WithThinkingBudget("medium"),
+		WithReasoningEffort("medium"),
 		WithTemperature(1.0),
 	)
 	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
@@ -256,7 +256,7 @@ func testResponsesGenerator_Stream_Thinking_Logging(t *testing.T) {
 		Blocks: []Block{TextBlock("What is the capital of France? Think about it briefly.")},
 	}}
 
-	options := NewGenerationOptions(WithThinkingBudget("medium"))
+	options := NewGenerationOptions(WithReasoningEffort("medium"))
 	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
 
 	var allBlocks []Block
@@ -340,7 +340,7 @@ func testResponsesGenerator_StatelessToolCallWithReasoning(t *testing.T) {
 		Blocks: []Block{TextBlock("What is the current price of Apple stock?")},
 	}}
 
-	options := NewGenerationOptions(WithThinkingBudget("low"))
+	options := NewGenerationOptions(WithReasoningEffort("low"))
 	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
 	request := GenerationRequest{
 		Model:        openai.ChatModelGPT5Mini,
@@ -465,7 +465,7 @@ func testResponsesGenerator_StreamingToolCallWithReasoning(t *testing.T) {
 		Blocks: []Block{TextBlock("What is the current price of Apple stock?")},
 	}}
 
-	options := NewGenerationOptions(WithThinkingBudget("low"))
+	options := NewGenerationOptions(WithReasoningEffort("low"))
 	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
 	request := GenerationRequest{
 		Model:        openai.ChatModelGPT5Mini,
@@ -602,7 +602,7 @@ func testResponsesGenerator_ReasoningTokenPreservation_Generate(t *testing.T) {
 		Blocks: []Block{TextBlock("Look up the population of Tokyo and the population of New York City, then tell me which is larger.")},
 	}}
 
-	options := NewGenerationOptions(WithThinkingBudget("low"))
+	options := NewGenerationOptions(WithReasoningEffort("low"))
 	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
 	request := GenerationRequest{
 		Model:        openai.ChatModelGPT5Mini,
@@ -847,7 +847,7 @@ func testResponsesGenerator_ReasoningTokenPreservation_Stream(t *testing.T) {
 		Blocks: []Block{TextBlock("Look up the population of Tokyo and the population of New York City, then tell me which is larger.")},
 	}}
 
-	options := NewGenerationOptions(WithThinkingBudget("low"))
+	options := NewGenerationOptions(WithReasoningEffort("low"))
 	options[ResponsesThoughtSummaryDetailParam] = responses.ReasoningSummaryDetailed
 	request := GenerationRequest{
 		Model:        openai.ChatModelGPT5Mini,

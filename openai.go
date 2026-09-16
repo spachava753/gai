@@ -436,6 +436,12 @@ func toOpenAIMessage(msg Message) (wire.Message, error) {
 // rather than the adapter inferring provider capabilities from a model name.
 func openAIRequest(request GenerationRequest, stream bool) (wire.ChatCompletionRequest, *openAIGenerationOptions, error) {
 	params := wire.ChatCompletionRequest{Model: request.Model}
+	if request.SafetyIdentifier != "" {
+		params.SafetyIdentifier = nullable.NewNullableWithValue(request.SafetyIdentifier)
+	}
+	if request.PromptCacheKey != "" {
+		params.PromptCacheKey = nullable.NewNullableWithValue(request.PromptCacheKey)
+	}
 	if len(request.Dialog) == 0 {
 		return params, nil, ErrEmptyDialog
 	}
@@ -517,8 +523,8 @@ func openAIRequest(request GenerationRequest, stream bool) (wire.ChatCompletionR
 		}
 		params.ToolChoice = nullable.NewNullableWithValue(choice)
 	}
-	if options.ThinkingBudget != "" {
-		params.ReasoningEffort = nullable.NewNullableWithValue(options.ThinkingBudget)
+	if options.ReasoningEffort != "" {
+		params.ReasoningEffort = nullable.NewNullableWithValue(options.ReasoningEffort)
 	}
 	var modalities []string
 	for _, modality := range options.OutputModalities {
@@ -684,10 +690,14 @@ func openAIFinish(reason, refusal string, tools bool) (FinishReason, error) {
 		return EndTurn, nil
 	case "tool_calls":
 		return ToolUse, nil
-	case "length":
+	case "length", "model_context_window_exceeded":
 		return MaxGenerationLimit, ErrMaxGenerationLimit
-	case "content_filter":
+	case "content_filter", "sensitive":
 		return ContentPolicyViolation, ContentPolicyErr("content policy violation detected")
+	case "network_error", "insufficient_system_resource":
+		// Compatible providers use these terminal reasons instead of an HTTP
+		// error. Wrappers replace Provider while preserving retry classification.
+		return Unknown, &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServiceUnavailable, Message: "generation stopped: " + reason}
 	default:
 		return Unknown, nil
 	}
@@ -774,7 +784,7 @@ type openAIGenerationOptions struct {
 	StopSequences       []string
 	OutputModalities    []Modality
 	AudioConfig         AudioConfig
-	ThinkingBudget      string
+	ReasoningEffort     string
 }
 
 // parseOpenAIGenerationOptions validates common option values and records the typed Chat Completions configuration.
@@ -835,7 +845,7 @@ func parseOpenAIGenerationOptions(values GenerationOptions) (*openAIGenerationOp
 	if options.AudioConfig, _, err = generationOption[AudioConfig](values, GenerationOptionAudioConfig); err != nil {
 		return nil, err
 	}
-	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+	if options.ReasoningEffort, _, err = generationOption[string](values, GenerationOptionReasoningEffort); err != nil {
 		return nil, err
 	}
 	return options, nil

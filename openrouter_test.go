@@ -103,7 +103,7 @@ func TestRouterAdapterScenarios(t *testing.T) {
 				{Role: Assistant, Blocks: []Block{thinking, TextBlock("Checking."), toolCall}},
 				ToolResultMessage("call_1", TextBlock("sunny")),
 			},
-			Options: NewGenerationOptions(WithThinkingBudget("high")),
+			Options: NewGenerationOptions(WithReasoningEffort("high")),
 		})
 		if err != nil {
 			t.Fatalf("build request: %v", err)
@@ -286,7 +286,7 @@ func TestRouterAdapterScenarios(t *testing.T) {
 				WithMaxGenerationTokens(64),
 				WithStopSequences("END", "STOP"),
 				WithToolChoice("get_weather"),
-				WithThinkingBudget("2048"),
+				WithThinkingBudget(2048),
 			),
 		})
 		if err != nil {
@@ -639,7 +639,7 @@ func TestRouterAdapterScenarios(t *testing.T) {
 			Model:        "z-ai/glm-4.6:exacto",
 			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
 			Dialog:       dialog,
-			Options:      NewGenerationOptions(WithThinkingBudget("low")),
+			Options:      NewGenerationOptions(WithReasoningEffort("low")),
 		}
 		// Generate response - reasoning models may return thinking blocks automatically
 		resp, err := gen.Generate(context.Background(), request)

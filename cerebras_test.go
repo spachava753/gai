@@ -309,7 +309,7 @@ func TestCerebrasAdapterScenarios(t *testing.T) {
 				WithMaxGenerationTokens(64),
 				WithStopSequences("END", "STOP"),
 				WithToolChoice("get_weather"),
-				WithThinkingBudget("medium"),
+				WithReasoningEffort("medium"),
 			),
 		})
 		if err != nil {
@@ -531,7 +531,7 @@ func TestCerebrasAdapterScenarios(t *testing.T) {
 			Model:        "gemma-4-31b",
 			Instructions: SystemMessage(TextBlock("You are a helpful assistant that explains your reasoning step by step.")),
 			Dialog:       dialog,
-			Options:      NewGenerationOptions(WithThinkingBudget("medium")),
+			Options:      NewGenerationOptions(WithReasoningEffort("medium")),
 		}
 		// Generate a response with reasoning enabled.
 		resp, err := gen.Generate(context.Background(), request)
@@ -616,7 +616,7 @@ func TestCerebrasAdapterScenarios(t *testing.T) {
 			Model:        "gpt-oss-120b",
 			Instructions: SystemMessage(TextBlock("You are a helpful assistant that explains your reasoning step by step.")),
 			Dialog:       dialog,
-			Options:      NewGenerationOptions(WithThinkingBudget("medium")),
+			Options:      NewGenerationOptions(WithReasoningEffort("medium")),
 		}
 		// Generate response with reasoning enabled (medium effort)
 		resp, err := gen.Generate(context.Background(), request)

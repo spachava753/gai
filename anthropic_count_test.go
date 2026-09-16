@@ -16,6 +16,7 @@ import (
 
 // mockAnthropicSvc is a mock implementation of AnthropicSvc for testing.
 type mockAnthropicSvc struct {
+	lastParams        a.MessageNewParams
 	countTokensCalled bool
 	lastToolsCount    int
 	lastSystemPresent bool
@@ -26,10 +27,12 @@ type mockAnthropicSvc struct {
 }
 
 func (m *mockAnthropicSvc) New(ctx context.Context, body a.MessageNewParams, opts ...option.RequestOption) (res *a.Message, err error) {
+	m.lastParams = body
 	return m.response, nil
 }
 
 func (m *mockAnthropicSvc) NewStreaming(ctx context.Context, params a.MessageNewParams, opts ...option.RequestOption) (stream *ssestream.Stream[a.MessageStreamEventUnion]) {
+	m.lastParams = params
 	m.streamCalls++
 	if m.streamFactory != nil {
 		return m.streamFactory()

@@ -1,6 +1,6 @@
 # SDK request corpus
 
-[`matrix.json`](matrix.json) supplies the conversation and SDK options once. The Go tests translate these inputs into public GAI options and compare the resulting HTTP request bodies with captured SDK requests. Later requests use GAI's actual responses and tool calls, not copied expected messages.
+[`matrix.json`](matrix.json) supplies the conversation and SDK options once. The Go tests translate these inputs into public GAI options and compare the resulting HTTP request bodies with captured SDK requests. Each scenario runs through both `OpenAiGenerator` and the corresponding Z.AI, DeepSeek, or Moonshot wrapper (OpenAI cases use the OpenAI adapter in both modes). Explicit SDK options remain authoritative, including historical `max_tokens` usage on Moonshot. Separate local tests check wrapper defaults. Later requests use GAI's actual responses and tool calls, not copied expected messages.
 
 Each `captures/*.json` file is an ordered array containing only `request` and `response` body strings. JSON and SSE bodies are preserved without parsing/reserializing them. HTTP compression is decoded; replay supplies HTTP 200 and the appropriate content type. No headers, decoded SDK outputs, tool results, or capture metadata are saved.
 
@@ -16,7 +16,7 @@ The approved latest-model batch attempted **102 calls**, below its 106-call limi
 | Kimi | `kimi-k3` | 17 | 41 | 1 |
 | DeepSeek | `deepseek-flash` | 14 | 28 | 0 |
 
-GLM-5.3-Flash and Kimi K3 always reason, so their old reasoning-off profiles are excluded. Both use top-level `reasoning_effort: low`, mapped through GAI's `WithThinkingBudget`. GLM preserves thinking with `clear_thinking: false`; K3 omits the legacy `thinking` parameter. K3 named-function forcing is excluded because it is incompatible with thinking. DeepSeek's four earlier cases already use `deepseek-flash`; all fourteen previously failed conversations now have passing recordings. OpenAI captures are unchanged.
+GLM-5.3-Flash and Kimi K3 always reason, so their old reasoning-off profiles are excluded. Both use top-level `reasoning_effort: low`, mapped through GAI's `WithReasoningEffort`. GLM preserves thinking with `clear_thinking: false`; K3 omits the legacy `thinking` parameter. K3 named-function forcing is excluded because it is incompatible with thinking. DeepSeek's four earlier cases already use `deepseek-flash`; all fourteen previously failed conversations now have passing recordings. OpenAI captures are unchanged.
 
 The active matrix contains no older Kimi or GLM profiles. Existing captures were replaced only with newly recorded body pairs, never relabeled. The previous corpus is backed up in `.plan/pre-latest-sdk-corpus`; synthetic smoke responses and failed conversations remain outside the active corpus.
 

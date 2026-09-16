@@ -244,7 +244,7 @@ func TestClaudeAdapterScenarios(t *testing.T) {
 		options := NewGenerationOptions(
 			WithTemperature(1.0),
 			WithMaxGenerationTokens(9000),
-			WithThinkingBudget("5000"),
+			WithThinkingBudget(5000),
 		)
 		request := GenerationRequest{
 			Model:        string(a.ModelClaudeSonnet4_6),
@@ -399,7 +399,7 @@ Only output the price, like
 			Tools:        []Tool{tickerTool},
 			Options: NewGenerationOptions(
 				WithMaxGenerationTokens(8096),
-				WithThinkingBudget("4000"),
+				WithThinkingBudget(4000),
 			),
 		}
 		// Generate a response
@@ -516,7 +516,7 @@ Only output the price, like
 			Tools:        []Tool{tickerTool},
 			Options: NewGenerationOptions(
 				WithMaxGenerationTokens(32000),
-				WithThinkingBudget("10000"),
+				WithThinkingBudget(10000),
 			),
 		}
 		// Stream a response

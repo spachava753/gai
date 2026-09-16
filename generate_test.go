@@ -26,7 +26,7 @@ func testNewGenerationOptions(t *testing.T) {
 		WithStopSequences(stops...),
 		WithOutputModalities(modalities...),
 		WithAudioConfig(audio),
-		WithThinkingBudget("medium"),
+		WithReasoningEffort("medium"),
 	)
 
 	want := GenerationOptions{
@@ -41,7 +41,7 @@ func testNewGenerationOptions(t *testing.T) {
 		GenerationOptionStopSequences:       []string{"END", "STOP"},
 		GenerationOptionOutputModalities:    []Modality{Text, Audio},
 		GenerationOptionAudioConfig:         audio,
-		GenerationOptionThinkingBudget:      "medium",
+		GenerationOptionReasoningEffort:     "medium",
 	}
 	if !reflect.DeepEqual(options, want) {
 		t.Fatalf("NewGenerationOptions() = %#v, want %#v", options, want)
@@ -228,7 +228,10 @@ func TestProviderOptionParsersIgnoreUnknownOptions(t *testing.T) {
 		{name: "Cerebras", parse: func(options GenerationOptions) error { _, err := parseCerebrasGenerationOptions(options); return err }},
 		{name: "OpenRouter", parse: func(options GenerationOptions) error { _, err := parseOpenRouterGenerationOptions(options); return err }},
 		{name: "Responses", parse: func(options GenerationOptions) error { _, err := parseResponsesGenerationOptions(options); return err }},
-		{name: "ZAI", parse: func(options GenerationOptions) error { _, err := parseZaiGenerationOptions(options); return err }},
+		{name: "ZAI", parse: func(options GenerationOptions) error {
+			_, err := (&ZaiGenerator{}).prepareRequest(GenerationRequest{Options: options})
+			return err
+		}},
 	}
 
 	for _, tt := range parsers {

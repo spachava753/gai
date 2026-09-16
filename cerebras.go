@@ -197,7 +197,7 @@ const CerebrasDefaultBaseURL = string(cerebras.DefaultServer)
 //
 // Cerebras consumes [WithTemperature], [WithTopP], [WithFrequencyPenalty],
 // [WithPresencePenalty], [WithMaxGenerationTokens], [WithToolChoice],
-// [WithStopSequences], [WithOutputModalities], and [WithThinkingBudget]. Native
+// [WithStopSequences], [WithOutputModalities], and [WithReasoningEffort]. Native
 // controls include [WithCerebrasLogprobs], [WithCerebrasResponseFormat], and
 // [WithCerebrasServiceTier].
 //
@@ -312,7 +312,7 @@ type cerebrasGenerationOptions struct {
 	ToolChoice          string
 	StopSequences       []string
 	OutputModalities    []Modality
-	ThinkingBudget      string
+	ReasoningEffort     string
 }
 
 // parseCerebrasGenerationOptions validates common and native option types before request construction.
@@ -413,7 +413,7 @@ func parseCerebrasGenerationOptions(values GenerationOptions) (*cerebrasGenerati
 	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
 		return nil, err
 	}
-	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+	if options.ReasoningEffort, _, err = generationOption[string](values, GenerationOptionReasoningEffort); err != nil {
 		return nil, err
 	}
 	return options, nil
@@ -686,10 +686,10 @@ func (g *CerebrasGenerator) buildRequest(request GenerationRequest) (*cerebras.C
 	} else if len(options.StopSequences) > 1 {
 		providerRequest.Stop = cerebras.NewOptStop(cerebras.NewStringArrayStop(options.StopSequences))
 	}
-	if options.ThinkingBudget != "" {
-		effort := cerebras.ReasoningEffort(options.ThinkingBudget)
+	if options.ReasoningEffort != "" {
+		effort := cerebras.ReasoningEffort(options.ReasoningEffort)
 		if err := effort.Validate(); err != nil {
-			return nil, &InvalidParameterErr{Parameter: GenerationOptionThinkingBudget, Reason: err.Error()}
+			return nil, &InvalidParameterErr{Parameter: GenerationOptionReasoningEffort, Reason: err.Error()}
 		}
 		providerRequest.ReasoningEffort = cerebras.NewOptReasoningEffort(effort)
 	}

@@ -66,7 +66,7 @@ func WithOpenCodeSessionID(value string) GenerationOption {
 //
 // OpenCode consumes [WithTemperature], [WithTopP], [WithFrequencyPenalty],
 // [WithPresencePenalty], [WithMaxGenerationTokens], [WithToolChoice],
-// [WithStopSequences], [WithOutputModalities], [WithThinkingBudget], and
+// [WithStopSequences], [WithOutputModalities], [WithReasoningEffort], and
 // [WithOpenCodeSessionID]. The thinking budget is passed through as the
 // model-specific reasoning_effort string. Reuse one OpenCode session ID across
 // a dialog so OpenCode keeps its requests on the same upstream provider.
@@ -169,7 +169,7 @@ func parseOpenCodeGenerationOptions(values GenerationOptions) (*openCodeGenerati
 	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
 		return nil, err
 	}
-	if options.ReasoningEffort, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+	if options.ReasoningEffort, _, err = generationOption[string](values, GenerationOptionReasoningEffort); err != nil {
 		return nil, err
 	}
 	if options.SessionID, _, err = generationOption[string](values, OpenCodeGenerationOptionSessionID); err != nil {

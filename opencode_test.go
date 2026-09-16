@@ -105,7 +105,7 @@ func TestJSONClientOpenCode(t *testing.T) {
 		},
 		Tools: []Tool{{Name: "weather", Description: "Get weather by city.", InputSchema: schema}},
 		Options: NewGenerationOptions(
-			WithThinkingBudget("xhigh"),
+			WithReasoningEffort("xhigh"),
 			WithMaxGenerationTokens(321),
 			WithToolChoice("weather"),
 			WithOpenCodeSessionID("session_1"),
@@ -364,7 +364,7 @@ func TestLiveOpenCode(t *testing.T) {
 			Dialog: dialog,
 			Tools:  []Tool{tool},
 			Options: NewGenerationOptions(
-				WithThinkingBudget("high"),
+				WithReasoningEffort("high"),
 				WithMaxGenerationTokens(1024),
 				WithToolChoice("submit_result"),
 				WithOpenCodeSessionID(sessionID),
@@ -409,7 +409,7 @@ func TestLiveOpenCode(t *testing.T) {
 			Dialog: dialog,
 			Tools:  []Tool{tool},
 			Options: NewGenerationOptions(
-				WithThinkingBudget("high"),
+				WithReasoningEffort("high"),
 				WithMaxGenerationTokens(1024),
 				WithToolChoice("none"),
 				WithOpenCodeSessionID(sessionID),
@@ -469,7 +469,7 @@ func TestLiveOpenCode(t *testing.T) {
 			Dialog: dialog,
 			Tools:  []Tool{tool},
 			Options: NewGenerationOptions(
-				WithThinkingBudget("high"),
+				WithReasoningEffort("high"),
 				WithMaxGenerationTokens(256),
 				WithToolChoice("none"),
 				WithOpenCodeSessionID(fmt.Sprintf("gai-live-reuse-%d", time.Now().UnixNano())),
@@ -499,7 +499,7 @@ func TestLiveOpenCode(t *testing.T) {
 			Model:  "glm-5.3-flash",
 			Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("Compute 92837 * 61429. Think carefully, then give the exact product.")}}},
 			Options: NewGenerationOptions(
-				WithThinkingBudget("high"),
+				WithReasoningEffort("high"),
 				WithMaxGenerationTokens(1024),
 			),
 		}) {
@@ -526,7 +526,7 @@ func TestLiveOpenCode(t *testing.T) {
 			Model:  "minimax-m2.5",
 			Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("What is 23 multiplied by 7? Answer briefly.")}}},
 			Options: NewGenerationOptions(
-				WithThinkingBudget("high"),
+				WithReasoningEffort("high"),
 				WithMaxGenerationTokens(1024),
 			),
 		})

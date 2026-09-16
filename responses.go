@@ -118,11 +118,6 @@ func mapResponsesStreamError(err error) *ApiErr {
 // "concise", and "detailed".
 const ResponsesThoughtSummaryDetailParam = "responses_thought_summary_detail"
 
-// ResponsesPromptCacheKeyParam is the string [GenerationOptions] key set by
-// [WithResponsesPromptCacheKey]. Reuse a key for requests with the same long
-// static prefix to improve provider cache routing.
-const ResponsesPromptCacheKeyParam = "responses_prompt_cache_key"
-
 // ResponsesServiceTierParam is the string [GenerationOptions] key set by
 // [WithResponsesServiceTier]. Accepted values are "auto", "default", "flex",
 // "scale", "priority", "fast", and "ultrafast".
@@ -133,14 +128,6 @@ const ResponsesServiceTierParam = "responses_service_tier"
 func WithResponsesThoughtSummaryDetail(value string) GenerationOption {
 	return func(options GenerationOptions) {
 		options[ResponsesThoughtSummaryDetailParam] = value
-	}
-}
-
-// WithResponsesPromptCacheKey returns a [GenerationOption] that stores value
-// under [ResponsesPromptCacheKeyParam].
-func WithResponsesPromptCacheKey(value string) GenerationOption {
-	return func(options GenerationOptions) {
-		options[ResponsesPromptCacheKeyParam] = value
 	}
 }
 
@@ -204,8 +191,9 @@ type ResponsesService interface {
 //
 // Responses consumes [WithTemperature], [WithTopP],
 // [WithMaxGenerationTokens], [WithToolChoice], [WithOutputModalities], and
-// [WithThinkingBudget], plus [WithResponsesThoughtSummaryDetail],
-// [WithResponsesPromptCacheKey], and [WithResponsesServiceTier].
+// [WithReasoningEffort], plus [WithResponsesThoughtSummaryDetail],
+// [WithResponsesServiceTier]. SafetyIdentifier and PromptCacheKey are passed
+// directly from [GenerationRequest].
 type ResponsesGenerator struct {
 	client ResponsesService
 }
@@ -308,9 +296,8 @@ type responsesGenerationOptions struct {
 	TopP                *float64
 	MaxGenerationTokens *int
 	ToolChoice          string
-	ThinkingBudget      string
+	ReasoningEffort     string
 	OutputModalities    []Modality
-	PromptCacheKey      string
 	ServiceTier         *responses.ResponseNewParamsServiceTier
 	ThoughtSummary      *responses.ReasoningSummary
 }
@@ -343,20 +330,13 @@ func parseResponsesGenerationOptions(values GenerationOptions) (*responsesGenera
 	if options.ToolChoice, _, err = generationOption[string](values, GenerationOptionToolChoice); err != nil {
 		return nil, err
 	}
-	if options.ThinkingBudget, _, err = generationOption[string](values, GenerationOptionThinkingBudget); err != nil {
+	if options.ReasoningEffort, _, err = generationOption[string](values, GenerationOptionReasoningEffort); err != nil {
 		return nil, err
 	}
 	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
 		return nil, err
 	}
 
-	if value, exists := values[ResponsesPromptCacheKeyParam]; exists {
-		key, ok := value.(string)
-		if !ok {
-			return nil, &InvalidParameterErr{Parameter: ResponsesPromptCacheKeyParam, Reason: fmt.Sprintf("must be a string, got %T", value)}
-		}
-		options.PromptCacheKey = key
-	}
 	if value, exists := values[ResponsesServiceTierParam]; exists {
 		var tier responses.ResponseNewParamsServiceTier
 		switch value := value.(type) {
@@ -670,8 +650,11 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 	if options.MaxGenerationTokens != nil {
 		params.MaxOutputTokens = openai.Opt(int64(*options.MaxGenerationTokens))
 	}
-	if options.PromptCacheKey != "" {
-		params.PromptCacheKey = openai.Opt(options.PromptCacheKey)
+	if request.PromptCacheKey != "" {
+		params.PromptCacheKey = openai.Opt(request.PromptCacheKey)
+	}
+	if request.SafetyIdentifier != "" {
+		params.SafetyIdentifier = openai.Opt(request.SafetyIdentifier)
 	}
 	if options.ServiceTier != nil {
 		params.ServiceTier = *options.ServiceTier
@@ -686,8 +669,8 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 			params.ToolChoice.OfFunctionTool = &responses.ToolChoiceFunctionParam{Name: options.ToolChoice}
 		}
 	}
-	if options.ThinkingBudget != "" {
-		params.Reasoning = responses.ReasoningParam{Effort: responses.ReasoningEffort(options.ThinkingBudget)}
+	if options.ReasoningEffort != "" {
+		params.Reasoning = responses.ReasoningParam{Effort: responses.ReasoningEffort(options.ReasoningEffort)}
 		if options.ThoughtSummary != nil {
 			params.Reasoning.Summary = *options.ThoughtSummary
 		}

@@ -93,6 +93,7 @@ A response contains generated candidate messages, a normalized finish reason, us
 | OpenRouter | `NewOpenRouterGenerator` | `StreamingGenerator` |
 | DeepSeek | `NewDeepSeekGenerator` | `StreamingGenerator` |
 | Z.AI | `NewZaiGenerator` | `StreamingGenerator`, `TokenCounter` |
+| Moonshot (Kimi) | `NewMoonshotGenerator` | `StreamingGenerator`, `TokenCounter` |
 
 Provider type documentation lists supported content, common options, native options, response metadata, and replay requirements. See the [package documentation](https://pkg.go.dev/github.com/spachava753/gai).
 
@@ -102,7 +103,15 @@ Provider type documentation lists supported content, common options, native opti
 
 Chat Completions streaming consumes through EOF to retain metadata after `[DONE]`; use a context deadline. Parallel tool calls are assembled by index and emitted as complete calls at stream completion. Replay metadata stays in message/block `ExtraFields` under the documented OpenAI keys, not on the generator. If serializing arbitrary metadata through untyped JSON maps, use `json.Decoder.UseNumber` to avoid rounding large integers.
 
-`OpenCodeGenerator` uses the OpenCode Go subscription Chat Completions endpoint. It passes model IDs and `WithThinkingBudget` effort labels through to OpenCode, preserves both `reasoning_content` and structured `reasoning_details` for tool-call replay, and sends supported `ImageBlock` values as `image_url` data URLs. Reuse one `WithOpenCodeSessionID` value across a dialog so OpenCode keeps multi-turn tool reasoning on the same upstream provider. OpenCode or the selected model rejects unsupported capabilities.
+`OpenCodeGenerator` uses the OpenCode Go subscription Chat Completions endpoint. It passes model IDs and `WithReasoningEffort` effort labels through to OpenCode, preserves both `reasoning_content` and structured `reasoning_details` for tool-call replay, and sends supported `ImageBlock` values as `image_url` data URLs. Reuse one `WithOpenCodeSessionID` value across a dialog so OpenCode keeps multi-turn tool reasoning on the same upstream provider. OpenCode or the selected model rejects unsupported capabilities.
+
+`ZaiGenerator`, `DeepSeekGenerator`, and `MoonshotGenerator` delegate to a private `OpenAiGenerator`, sharing its multimodal conversion, streaming assembly, tool validation, reasoning replay, and OpenAI-named metadata keys. They do not embed a generic wrapper or inherit its optional capabilities. Z.AI and DeepSeek default to `max_tokens`; Moonshot keeps `max_completion_tokens`. Z.AI omits `stream_options` by default; Moonshot and DeepSeek request usage. Explicit options override these defaults. Z.AI's default URL is `https://api.z.ai/api/paas/v4`; pass the Coding Plan base URL explicitly when needed.
+
+Thinking controls are provider-specific: `WithZaiThinking`, `WithZaiClearThinking`, `WithMoonshotThinking`, `WithMoonshotKeepThinking`, and `WithDeepSeekThinking`. Omitting them preserves server defaults; none removes caller history. Kimi K3 should use `WithReasoningEffort` without the older `thinking` controls. Always-thinking models, fixed sampling settings, and tool-choice restrictions remain the caller's responsibility. `WithZaiDoSample` and `WithZaiToolStream` expose Z.AI's separate sampling and tool-stream switches.
+
+Z.AI counting calls `/tokenizer` with model, messages, and tools. Moonshot counting calls `/tokenizers/estimate-token-count` and rejects tool-bearing requests because the endpoint does not document tool accounting. DeepSeek does **not** implement `TokenCounter`; it has no native counting endpoint. Counters honor cancellation and do not retry or fall back to an OpenAI tokenizer.
+
+The shared adapters send image data URLs and inline PDF bodies where the backend accepts them. The former Z.AI-only remote image/video/PDF URL conversion and provider-specific response metadata constants have been removed. Use the shared OpenAI metadata keys for returned native fields. PDF acceptance on Z.AI remains backend-dependent; no upload, extraction, or preprocessing workaround is added.
 
 ## Options
 
@@ -129,7 +138,20 @@ options := gai.NewGenerationOptions(
 )
 ```
 
-Providers ignore unknown option keys. Recognized values with an invalid type, range, or combination return `InvalidParameterErr`.
+`WithReasoningEffort("high")` sets a qualitative effort label. `WithThinkingBudget(4096)` sets an actual thinking-token budget on Anthropic or OpenRouter; those providers reject combining it with effort. Other adapters ignore numeric thinking budgets rather than serializing them as effort. Anthropic also accepts `"adaptive"` and `"disabled"` through the effort control.
+
+Chat Completions adapters share `WithOpenAIResponseFormat` (native JSON-object/schema configuration), `WithOpenAILogprobs`, `WithOpenAITopLogprobs`, and `WithOpenAIStreamUsage`. OpenAI cache policies use `WithOpenAIPromptCacheRetention` or `WithOpenAIPromptCacheOptions`; the server validates model support. These helpers compose with `WithOpenAIExtraBody` in option order. Explicit extra-body fields override corresponding common and provider-specific settings when building the request.
+
+`GenerationRequest` has two independent optional fields:
+
+| Field | Mapping and meaning |
+| --- | --- |
+| `SafetyIdentifier` | An opaque stable end-user identity, preferably a hash or UUID—not personal data. OpenAI Chat Completions/Responses and Moonshot send `safety_identifier`; Anthropic sends `metadata.user_id`; Z.AI and DeepSeek send `user_id`. DeepSeek also uses it for cache and scheduling isolation. |
+| `PromptCacheKey` | A cache grouping/routing hint sent as `prompt_cache_key` by OpenAI Chat Completions/Responses and Moonshot. It does not enable caching, set a TTL, or name a stored cache resource. |
+
+Unsupported providers ignore these fields. Native Gemini ignores both; neither is translated to safety settings, labels, or `cachedContent`. Anthropic's prompt cache controls remain separate from end-user identity. Values are never derived from each other or inserted into prompt content. The former `WithResponsesPromptCacheKey` option is replaced by the request field.
+
+Providers ignore unknown option keys. Recognized values with an invalid type, range, or combination return `InvalidParameterErr`; native fields and model-dependent constraints may instead be rejected by the provider.
 
 ## Streaming
 

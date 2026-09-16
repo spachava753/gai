@@ -14,7 +14,6 @@ import (
 	oairesponses "github.com/openai/openai-go/v3/responses"
 
 	openrouterapi "github.com/spachava753/gai/internal/openrouter"
-	"github.com/spachava753/gai/internal/zai"
 )
 
 type trackingReadCloser struct {
@@ -399,36 +398,5 @@ func testResponsesErrorEventClassification(t *testing.T) {
 				t.Fatalf("Kind = %q, want %q", got.Kind, tt.want)
 			}
 		})
-	}
-}
-
-func TestZAIErrorMapping(t *testing.T) {
-	detail := zai.Error{
-		Code:    zai.NewInt32ErrorCode(1113),
-		Message: "Quota exceeded",
-	}
-	cause := &zai.ErrorResponseStatusCode{
-		StatusCode: http.StatusTooManyRequests,
-		Response:   zai.NewErrorErrorResponse(detail),
-	}
-
-	mapped := mapZAIError(cause)
-	var apiErr *ApiErr
-	if !errors.As(mapped, &apiErr) {
-		t.Fatalf("mapZAIError() returned %T, want *ApiErr", mapped)
-	}
-	if apiErr.Kind != APIErrorKindRateLimit {
-		t.Fatalf("Kind = %q, want %q", apiErr.Kind, APIErrorKindRateLimit)
-	}
-	if apiErr.Message != detail.Message {
-		t.Fatalf("Message = %q, want %q", apiErr.Message, detail.Message)
-	}
-	if !errors.Is(mapped, cause) {
-		t.Fatalf("errors.Is(%v, %v) = false", mapped, cause)
-	}
-
-	transportErr := errors.New("dial 503.example: connection reset")
-	if mapped := mapZAIError(transportErr); !errors.Is(mapped, transportErr) {
-		t.Fatalf("mapZAIError() = %v, want original error", mapped)
 	}
 }

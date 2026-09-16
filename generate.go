@@ -52,8 +52,10 @@ const (
 	// [WithAudioConfig]. OpenAI Chat Completions consumes this option when audio
 	// output is requested.
 	GenerationOptionAudioConfig = "audio_config"
-	// GenerationOptionThinkingBudget is the string reasoning-effort or token-budget
-	// key set by [WithThinkingBudget]. Accepted values differ by provider.
+	// GenerationOptionReasoningEffort is the string effort key set by [WithReasoningEffort].
+	GenerationOptionReasoningEffort = "reasoning_effort"
+	// GenerationOptionThinkingBudget is the positive int thinking-token budget
+	// set by [WithThinkingBudget], supported by Anthropic and OpenRouter.
 	GenerationOptionThinkingBudget = "thinking_budget"
 )
 
@@ -161,10 +163,18 @@ func WithAudioConfig(value AudioConfig) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionAudioConfig] = value }
 }
 
-// WithThinkingBudget stores a provider-specific effort label or decimal token
-// budget under [GenerationOptionThinkingBudget]. Provider adapters document and
-// validate their accepted values.
-func WithThinkingBudget(value string) GenerationOption {
+// WithReasoningEffort stores a qualitative effort label under
+// [GenerationOptionReasoningEffort]. Accepted labels depend on the provider.
+// Anthropic also accepts "adaptive" and "disabled". Numeric token budgets use
+// [WithThinkingBudget] instead.
+func WithReasoningEffort(value string) GenerationOption {
+	return func(options GenerationOptions) { options[GenerationOptionReasoningEffort] = value }
+}
+
+// WithThinkingBudget sets a positive number of thinking tokens for Anthropic
+// or OpenRouter. It cannot be combined with [WithReasoningEffort]. Other
+// providers ignore it; it is not an output-token limit.
+func WithThinkingBudget(value int) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionThinkingBudget] = value }
 }
 
@@ -174,6 +184,15 @@ func WithThinkingBudget(value string) GenerationOption {
 type GenerationRequest struct {
 	// Model is the provider model identifier for this invocation.
 	Model string `json:"model" yaml:"model"`
+	// SafetyIdentifier is an opaque stable end-user identity, not personal data.
+	// OpenAI and Moonshot send safety_identifier; Anthropic sends metadata.user_id;
+	// Z.AI and DeepSeek send user_id. DeepSeek also uses it for cache and scheduling
+	// isolation. Unsupported providers, including native Gemini, ignore it.
+	SafetyIdentifier string `json:"safety_identifier,omitempty" yaml:"safety_identifier,omitempty"`
+	// PromptCacheKey groups requests for cache routing on OpenAI and Moonshot.
+	// It does not enable caching, specify retention, or identify a stored cache
+	// resource. Other providers ignore it. It is never derived from SafetyIdentifier.
+	PromptCacheKey string `json:"prompt_cache_key,omitempty" yaml:"prompt_cache_key,omitempty"`
 	// Instructions contains optional [System]-role content outside [Dialog]. The
 	// zero Message means absent; any populated value must use [System]. Use
 	// [SystemMessage] to construct explicit instructions, including an empty one.
@@ -186,6 +205,28 @@ type GenerationRequest struct {
 	// Options contains common and provider-specific controls. Providers ignore
 	// keys they do not recognize.
 	Options GenerationOptions `json:"options,omitempty" yaml:"options,omitempty"`
+}
+
+// thinkingSetting separates typed public controls before adapting to native SDKs.
+func thinkingSetting(options GenerationOptions) (string, error) {
+	effort, hasEffort, err := generationOption[string](options, GenerationOptionReasoningEffort)
+	if err != nil {
+		return "", err
+	}
+	budget, hasBudget, err := generationOption[int](options, GenerationOptionThinkingBudget)
+	if err != nil {
+		return "", err
+	}
+	if hasBudget {
+		if hasEffort || budget <= 0 {
+			return "", &InvalidParameterErr{Parameter: GenerationOptionThinkingBudget, Reason: "must be positive and cannot be combined with reasoning effort"}
+		}
+		return fmt.Sprint(budget), nil
+	}
+	if strings.ContainsAny(effort, "0123456789") {
+		return "", &InvalidParameterErr{Parameter: GenerationOptionReasoningEffort, Reason: "use WithThinkingBudget for numeric token budgets"}
+	}
+	return effort, nil
 }
 
 func generationOption[T any](options GenerationOptions, key string) (T, bool, error) {
@@ -335,7 +376,9 @@ type Generator interface {
 // [Generator.Generate].
 //
 // [OpenAiGenerator] counts locally with tiktoken. [AnthropicGenerator],
-// [GeminiGenerator], and [ZaiGenerator] call provider token-counting endpoints.
+// [GeminiGenerator], [ZaiGenerator], and [MoonshotGenerator] call native endpoints.
+// Moonshot rejects tool-bearing requests because its endpoint does not document
+// tool counting. [DeepSeekGenerator] does not implement this interface.
 type TokenCounter interface {
 	// Count returns the provider's input-token count for request. The context can
 	// cancel implementations that perform a remote call.

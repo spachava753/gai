@@ -133,7 +133,7 @@ func TestEventAPIAdapterScenarios(t *testing.T) {
 			Dialog:       dialog,
 			Options: NewGenerationOptions(
 				WithMaxGenerationTokens(512),
-				WithThinkingBudget("high"),
+				WithReasoningEffort("high"),
 			),
 		})
 		if err != nil {
@@ -177,7 +177,7 @@ func TestEventAPIAdapterScenarios(t *testing.T) {
 			Model:        openai.ChatModelGPT5Mini,
 			Instructions: SystemMessage(TextBlock("You are a helpful assistant.")),
 			Dialog:       dialog,
-			Options:      NewGenerationOptions(WithThinkingBudget("low")),
+			Options:      NewGenerationOptions(WithReasoningEffort("low")),
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -198,16 +198,16 @@ func TestEventAPIAdapterScenarios(t *testing.T) {
 		gen := NewResponsesGenerator(&client.Responses)
 		dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("Are LLMs conscious? Think it through and give a comprehensive answer")}}}
 		options := NewGenerationOptions(
-			WithThinkingBudget("medium"),
+			WithReasoningEffort("medium"),
 			WithTemperature(1.0),
 			WithResponsesThoughtSummaryDetail("detailed"),
-			WithResponsesPromptCacheKey("responses-thinking-example:v1"),
 		)
 		request := GenerationRequest{
-			Model:        openai.ChatModelGPT5,
-			Instructions: SystemMessage(TextBlock("You are a helpful assistant")),
-			Dialog:       dialog,
-			Options:      options,
+			Model:          openai.ChatModelGPT5,
+			PromptCacheKey: "responses-thinking-example:v1",
+			Instructions:   SystemMessage(TextBlock("You are a helpful assistant")),
+			Dialog:         dialog,
+			Options:        options,
 		}
 		resp, err := gen.Generate(context.Background(), request)
 		if err != nil {
@@ -312,7 +312,7 @@ func TestEventAPIAdapterScenarios(t *testing.T) {
 			Instructions: SystemMessage(TextBlock(openAIStockComparisonInstructions)),
 			Dialog:       dialog,
 			Tools:        []Tool{tickerTool},
-			Options:      NewGenerationOptions(WithThinkingBudget("medium")),
+			Options:      NewGenerationOptions(WithReasoningEffort("medium")),
 		}
 		resp, err := gen.Generate(context.Background(), request)
 		if err != nil {
@@ -359,7 +359,7 @@ func TestEventAPIAdapterScenarios(t *testing.T) {
 		gen := NewResponsesGenerator(&client.Responses)
 		dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("What is the capital of France? Reply with just the city name.")}}}
 		options := NewGenerationOptions(
-			WithThinkingBudget("low"),
+			WithReasoningEffort("low"),
 			WithResponsesThoughtSummaryDetail("detailed"),
 		)
 		request := GenerationRequest{
@@ -411,11 +411,12 @@ func TestEventAPIAdapterScenarios(t *testing.T) {
 	t.Run("ResponsesProviderOptionHelpers", func(t *testing.T) {
 		generator := NewResponsesGenerator(nil)
 		params, err := generator.buildParams(nil, GenerationRequest{
-			Model: "gpt-5",
+			Model:            "gpt-5",
+			PromptCacheKey:   "cache-key",
+			SafetyIdentifier: "opaque-user",
 			Options: NewGenerationOptions(
-				WithThinkingBudget("low"),
+				WithReasoningEffort("low"),
 				WithResponsesThoughtSummaryDetail("detailed"),
-				WithResponsesPromptCacheKey("cache-key"),
 				WithResponsesServiceTier("fast"),
 			),
 		})
@@ -434,7 +435,7 @@ func TestEventAPIAdapterScenarios(t *testing.T) {
 		if !ok || reasoning["effort"] != "low" || reasoning["summary"] != "detailed" {
 			t.Fatalf("reasoning = %#v", wire["reasoning"])
 		}
-		if wire["prompt_cache_key"] != "cache-key" || wire["service_tier"] != "fast" {
+		if wire["prompt_cache_key"] != "cache-key" || wire["safety_identifier"] != "opaque-user" || wire["service_tier"] != "fast" {
 			t.Fatalf("provider options = %#v", wire)
 		}
 

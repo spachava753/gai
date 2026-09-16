@@ -72,6 +72,7 @@
 //   - Cerebras: [NewCerebrasGenerator]
 //   - OpenRouter: [NewOpenRouterGenerator]
 //   - DeepSeek: [NewDeepSeekGenerator]
+//   - Moonshot (Kimi): [NewMoonshotGenerator]
 //   - Z.AI: [NewZaiGenerator]
 //
 // Each provider type documents supported content, common options,
