@@ -110,7 +110,7 @@ func (g *ZaiGenerator) Count(ctx context.Context, request GenerationRequest) (ui
 			TotalTokens *uint `json:"total_tokens"`
 		} `json:"usage"`
 	}
-	err = compatiblePostJSON(ctx, g.httpClient, strings.TrimRight(g.baseURL, "/")+"/tokenizer", g.apiKey, ProviderZAI, body, &result)
+	err = compatiblePostJSON(ctx, g.httpClient, strings.TrimRight(g.baseURL, "/")+"/tokenizer", g.apiKey, ProviderZAI, request.Headers, body, &result)
 	if err != nil {
 		return 0, err
 	}

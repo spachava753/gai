@@ -185,7 +185,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 			yield(StreamChunk{Err: err})
 			return
 		}
-		response, err := g.client.CreateChatCompletion(ctx, nil, params)
+		response, err := g.client.CreateChatCompletion(ctx, nil, params, requestHeaderEditor(request.Headers))
 		if err != nil {
 			yield(StreamChunk{Err: fmt.Errorf("openai stream: %w", err)})
 			return

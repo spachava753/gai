@@ -66,7 +66,6 @@
 //
 //   - OpenAI Chat Completions: [NewOpenAiGenerator]
 //   - OpenAI Responses: [NewResponsesGenerator]
-//   - OpenCode: [NewOpenCodeGenerator]
 //   - Anthropic: [NewAnthropicGenerator]
 //   - Google Gemini: [NewGeminiGenerator]
 //   - Cerebras: [NewCerebrasGenerator]

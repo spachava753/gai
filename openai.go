@@ -712,7 +712,7 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationReques
 	if err != nil {
 		return Response{}, err
 	}
-	response, err := g.client.CreateChatCompletion(ctx, nil, params)
+	response, err := g.client.CreateChatCompletion(ctx, nil, params, requestHeaderEditor(request.Headers))
 	if err != nil {
 		return Response{}, fmt.Errorf("openai request: %w", err)
 	}

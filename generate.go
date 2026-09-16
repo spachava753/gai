@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -182,6 +183,14 @@ func WithThinkingBudget(value int) GenerationOption {
 // invocation. It is safe to reuse a generator concurrently with different
 // requests when the underlying provider client is concurrency-safe.
 type GenerationRequest struct {
+	// Headers supplies per-request HTTP headers for generation, streaming, and
+	// remote token counting. Values replace matching ordinary provider/client
+	// headers; multiple values are preserved. SDK-managed authentication
+	// may take precedence (Gemini's X-Goog-Api-Key). Callers
+	// must not mutate this map or its slices during an invocation. Headers are
+	// not sent in the JSON body and do not change shared client configuration.
+	// Use ordinary HTTP headers, not transport fields such as Host or Content-Length.
+	Headers http.Header `json:"headers,omitempty" yaml:"headers,omitempty"`
 	// Model is the provider model identifier for this invocation.
 	Model string `json:"model" yaml:"model"`
 	// SafetyIdentifier is an opaque stable end-user identity, not personal data.

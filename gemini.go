@@ -401,6 +401,7 @@ func (g *GeminiGenerator) Generate(ctx context.Context, request GenerationReques
 		return Response{}, err
 	}
 
+	genContentConfig.HTTPOptions = &genai.HTTPOptions{Headers: request.Headers.Clone()}
 	resp, err := g.client.Models.GenerateContent(ctx, request.Model, allContents, genContentConfig)
 	if err != nil {
 		if mapped := mapGeminiError(err); mapped != nil {
@@ -653,6 +654,7 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 		// Track cumulative usage
 		var totalInputTokens, totalOutputTokens, totalCacheReadTokens int32
 
+		genContentConfig.HTTPOptions = &genai.HTTPOptions{Headers: request.Headers.Clone()}
 		for resp, err := range g.client.Models.GenerateContentStream(ctx, request.Model, allContents, genContentConfig) {
 			if err != nil {
 				if mapped := mapGeminiError(err); mapped != nil {
@@ -971,7 +973,7 @@ func (g *GeminiGenerator) Count(ctx context.Context, request GenerationRequest) 
 		return 0, fmt.Errorf("failed to prepare gemini chat history for token counting: %w", err)
 	}
 
-	var countTokenConfig genai.CountTokensConfig
+	countTokenConfig := genai.CountTokensConfig{HTTPOptions: &genai.HTTPOptions{Headers: request.Headers.Clone()}}
 
 	if len(instructions) > 0 {
 		parts := make([]*genai.Part, 0, len(instructions))

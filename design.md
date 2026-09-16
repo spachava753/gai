@@ -41,6 +41,9 @@ The model and instructions appear in the request because they describe this call
 
 ```go
 type GenerationRequest struct {
+    Headers      http.Header
+    SafetyIdentifier string
+    PromptCacheKey string
     Model        string
     Instructions Message
     Dialog       Dialog
@@ -53,6 +56,9 @@ The fields have the following meanings:
 
 | Field | Meaning |
 | --- | --- |
+| `Headers` | Per-invocation HTTP header overrides, not provider JSON fields. |
+| `SafetyIdentifier` | Provider end-user identity where supported. |
+| `PromptCacheKey` | Cache routing hint where supported. |
 | `Model` | Provider model name for this call. |
 | `Instructions` | Optional system message. |
 | `Dialog` | Complete conversation presented to the model. |
@@ -63,7 +69,7 @@ A retry can repeat the same request, and middleware can inspect or replace any p
 
 `context.Context` remains a separate argument because it controls the execution of the call, not the model's behavior. It carries cancellation and deadlines.
 
-Generators treat a request as read-only. Copying `GenerationRequest` is shallow because its messages, tools, and options contain slices or maps. The caller must not modify those values while a call is in progress, and a generator must not retain them after the call returns.
+Generators treat a request as read-only. Copying `GenerationRequest` is shallow because its headers, messages, tools, and options contain slices or maps. The caller must not modify those values while a call is in progress, and a generator must not retain them after the call returns.
 
 Data created while handling a request stays local to that call. Examples include converted provider messages, tool-call ID maps, retry counters, and stream assembly buffers.
 
@@ -325,7 +331,6 @@ A provider generator keeps only what it needs to send a request:
 | `GeminiGenerator` | Gemini client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `CerebrasGenerator` | private `OpenAiGenerator` delegate | `Generator`, `StreamingGenerator` |
 | `OpenRouterGenerator` | private generated client | `Generator`, `StreamingGenerator` |
-| `OpenCodeGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 | `ResponsesGenerator` | Responses service | `Generator`, `StreamingGenerator` |
 | `ZaiGenerator` | private `*OpenAiGenerator` and native counting HTTP client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `DeepSeekGenerator` | private `*OpenAiGenerator` | `Generator`, `StreamingGenerator` |

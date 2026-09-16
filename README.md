@@ -86,7 +86,6 @@ A response contains generated candidate messages, a normalized finish reason, us
 | --- | --- | --- |
 | OpenAI Chat Completions | `NewOpenAiGenerator` | `StreamingGenerator`, `TokenCounter` |
 | OpenAI Responses | `NewResponsesGenerator` | `StreamingGenerator` |
-| OpenCode | `NewOpenCodeGenerator` | `StreamingGenerator` |
 | Anthropic | `NewAnthropicGenerator` | `StreamingGenerator`, `TokenCounter` |
 | Google Gemini | `NewGeminiGenerator` | `StreamingGenerator`, `TokenCounter` |
 | Cerebras | `NewCerebrasGenerator` | `StreamingGenerator` |
@@ -103,7 +102,7 @@ Provider type documentation lists supported content, common options, native opti
 
 Chat Completions streaming consumes through EOF to retain metadata after `[DONE]`; use a context deadline. Parallel tool calls are assembled by index and emitted as complete calls at stream completion. Replay metadata stays in message/block `ExtraFields` under the documented OpenAI keys, not on the generator. If serializing arbitrary metadata through untyped JSON maps, use `json.Decoder.UseNumber` to avoid rounding large integers.
 
-`OpenCodeGenerator` uses the OpenCode Go subscription Chat Completions endpoint. It passes model IDs and `WithReasoningEffort` effort labels through to OpenCode, preserves both `reasoning_content` and structured `reasoning_details` for tool-call replay, and sends supported `ImageBlock` values as `image_url` data URLs. Reuse one `WithOpenCodeSessionID` value across a dialog so OpenCode keeps multi-turn tool reasoning on the same upstream provider. OpenCode or the selected model rejects unsupported capabilities.
+For OpenCode Go, use the protocol generator required by the model: `OpenAiGenerator` for Chat Completions, `ResponsesGenerator` for Responses, or `AnthropicGenerator` for Messages. There is no separate OpenCode adapter. Configure the Chat Completions/Responses base URL as `https://opencode.ai/zen/go/v1`; configure the Anthropic SDK base URL as `https://opencode.ai/zen/go/`. Pass an OpenCode API key explicitly. Set `GenerationRequest.Headers` to `http.Header{"X-Opencode-Session": {sessionID}}` and reuse the session ID across tool follow-ups and retries. Response metadata and errors use the selected protocol adapter's keys and provider label.
 
 `ZaiGenerator`, `DeepSeekGenerator`, and `MoonshotGenerator` delegate to a private `OpenAiGenerator`, sharing its multimodal conversion, streaming assembly, tool validation, reasoning replay, and OpenAI-named metadata keys. They do not embed a generic wrapper or inherit its optional capabilities. Z.AI and DeepSeek default to `max_tokens`; Moonshot keeps `max_completion_tokens`. Z.AI omits `stream_options` by default; Moonshot and DeepSeek request usage. Explicit options override these defaults. Z.AI's default URL is `https://api.z.ai/api/paas/v4`; pass the Coding Plan base URL explicitly when needed.
 
@@ -114,6 +113,8 @@ Thinking controls are provider-specific: `WithZaiThinking`, `WithZaiClearThinkin
 Z.AI counting calls `/tokenizer` with model, messages, and tools. Moonshot counting calls `/tokenizers/estimate-token-count` and rejects tool-bearing requests because the endpoint does not document tool accounting. DeepSeek does **not** implement `TokenCounter`; it has no native counting endpoint. Counters honor cancellation and do not retry or fall back to an OpenAI tokenizer.
 
 The shared adapters send image data URLs and inline PDF bodies where the backend accepts them. The former Z.AI-only remote image/video/PDF URL conversion and provider-specific response metadata constants have been removed. Use the shared OpenAI metadata keys for returned native fields. PDF acceptance on Z.AI remains backend-dependent; no upload, extraction, or preprocessing workaround is added.
+
+`GenerationRequest.Headers` adds per-invocation HTTP headers to generation, streaming, and remote token-count requests. Supplied values replace matching ordinary client/provider headers without modifying shared clients. SDK-managed authentication can take precedence: Gemini sets `X-Goog-Api-Key` from its client credentials. Multiple values are preserved. Do not mutate the map or its slices while the invocation is running, and avoid storing secrets in serialized requests. The field is HTTP metadata, not part of the provider JSON body.
 
 ## Options
 
@@ -265,7 +266,7 @@ Use `GetMetric` with provider-specific metric constants for native cost, timing,
 go test ./...
 go vet ./...
 go test -race ./...
-go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|openai|opencode|openrouter|zai)$' ./...
+go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(cerebras|deepseek|openai|openrouter|zai)$' ./...
 ```
 
 The shared Chat Completions wire client in `internal/openai` uses oapi-codegen. Regenerate it after changing its schema, configuration, or lossless-JSON overlay:

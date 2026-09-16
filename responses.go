@@ -801,7 +801,7 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, request GenerationReq
 		return Response{}, err
 	}
 
-	res, err := r.client.New(ctx, params)
+	res, err := r.client.New(ctx, params, openAIRequestHeaders(request.Headers)...)
 	if err != nil {
 		if mapped := mapOpenAISDKError(ProviderResponses, err); mapped != nil {
 			return Response{}, mapped
@@ -891,7 +891,7 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, request GenerationReque
 		}
 
 		// Start the stream
-		stream := r.client.NewStreaming(ctx, params)
+		stream := r.client.NewStreaming(ctx, params, openAIRequestHeaders(request.Headers)...)
 		defer stream.Close()
 
 		for stream.Next() {

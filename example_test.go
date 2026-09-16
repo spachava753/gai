@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
 
 	"github.com/spachava753/gai"
 )
@@ -38,6 +39,17 @@ func ExampleGenerator() {
 
 	fmt.Println(response.Candidates[0].Blocks[0].Content)
 	// Output: Echo: Hello
+}
+
+func ExampleGenerationRequest_headers() {
+	request := gai.GenerationRequest{
+		Model:   "model-id",
+		Headers: http.Header{"X-Opencode-Session": {"conversation-123"}},
+		Dialog:  gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Hello")}}},
+	}
+	// Reuse the session header when appending tool results or continuing the dialog.
+	fmt.Println(request.Headers.Get("X-Opencode-Session"))
+	// Output: conversation-123
 }
 
 func ExampleNewGenerationOptions() {

@@ -116,8 +116,6 @@ const (
 	ProviderMoonshot Provider = "moonshot"
 	// ProviderOpenAI identifies OpenAI Chat Completions failures.
 	ProviderOpenAI Provider = "openai"
-	// ProviderOpenCode identifies OpenCode Chat Completions failures.
-	ProviderOpenCode Provider = "opencode"
 	// ProviderOpenRouter identifies OpenRouter failures.
 	ProviderOpenRouter Provider = "openrouter"
 	// ProviderResponses identifies OpenAI Responses API failures.

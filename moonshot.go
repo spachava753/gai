@@ -107,7 +107,7 @@ func (g *MoonshotGenerator) Count(ctx context.Context, request GenerationRequest
 			TotalTokens *uint `json:"total_tokens"`
 		} `json:"data"`
 	}
-	err = compatiblePostJSON(ctx, g.httpClient, strings.TrimRight(g.baseURL, "/")+"/tokenizers/estimate-token-count", g.apiKey, ProviderMoonshot, body, &result)
+	err = compatiblePostJSON(ctx, g.httpClient, strings.TrimRight(g.baseURL, "/")+"/tokenizers/estimate-token-count", g.apiKey, ProviderMoonshot, request.Headers, body, &result)
 	if err != nil {
 		return 0, err
 	}

@@ -543,7 +543,7 @@ func NewOpenRouterGenerator(httpClient *http.Client, baseURL, apiKey string) (*O
 	if apiKey == "" {
 		return nil, fmt.Errorf("openrouter: %w", ErrMissingAPIKey)
 	}
-	options := make([]openrouter.ClientOption, 0, 1)
+	options := []openrouter.ClientOption{openrouter.WithRequestEditor(editContextRequestHeaders)}
 	if httpClient != nil {
 		options = append(options, openrouter.WithClient(httpClient))
 	}
@@ -1066,7 +1066,7 @@ func (g *OpenRouterGenerator) Generate(ctx context.Context, request GenerationRe
 	if err != nil {
 		return Response{}, err
 	}
-	rawResponse, err := g.client.CreateChatCompletion(ctx, providerRequest)
+	rawResponse, err := g.client.CreateChatCompletion(context.WithValue(ctx, requestHeadersContextKey{}, request.Headers.Clone()), providerRequest)
 	if err != nil {
 		return Response{}, mapOpenRouterTransportError(err)
 	}
@@ -1183,7 +1183,7 @@ func (g *OpenRouterGenerator) Stream(ctx context.Context, generationRequest Gene
 		}
 		request.Stream = openrouter.NewOptBool(true)
 
-		rawResponse, err := g.client.CreateChatCompletion(ctx, request)
+		rawResponse, err := g.client.CreateChatCompletion(context.WithValue(ctx, requestHeadersContextKey{}, generationRequest.Headers.Clone()), request)
 		if err != nil {
 			yield(StreamChunk{Err: mapOpenRouterTransportError(err)})
 			return

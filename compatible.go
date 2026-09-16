@@ -21,7 +21,7 @@ func compatibleError(provider Provider, err error) error {
 // compatiblePostJSON sends a single authenticated JSON request and decodes the
 // response into result. Endpoint selection, payloads, and validation belong to
 // the calling provider. It does not retry or interpret provider response fields.
-func compatiblePostJSON(ctx context.Context, client *http.Client, endpoint, apiKey string, provider Provider, body, result any) error {
+func compatiblePostJSON(ctx context.Context, client *http.Client, endpoint, apiKey string, provider Provider, headers http.Header, body, result any) error {
 	if client == nil {
 		return fmt.Errorf("%s: uninitialized generator", provider)
 	}
@@ -35,6 +35,7 @@ func compatiblePostJSON(ctx context.Context, client *http.Client, endpoint, apiK
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	setRequestHeaders(req, headers)
 	response, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("%s: request: %w", provider, err)

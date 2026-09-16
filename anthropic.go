@@ -540,7 +540,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationReq
 	// Use message streaming, as the anthropic sdk *forces* us to use streaming for large models,
 	// even if we _want_ to just the standard http request. As such, we will simply use streaming
 	// for all models to keep things simple
-	resp, err := g.client.New(ctx, params)
+	resp, err := g.client.New(ctx, params, anthropicRequestHeaders(request.Headers)...)
 	if err != nil {
 		if mapped := mapAnthropicError(err); mapped != nil {
 			return Response{}, mapped
@@ -778,7 +778,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 		}
 
 		// Start the stream
-		stream := g.client.NewStreaming(ctx, params)
+		stream := g.client.NewStreaming(ctx, params, anthropicRequestHeaders(request.Headers)...)
 		defer stream.Close()
 
 		// Track cumulative usage throughout the stream
@@ -1034,7 +1034,7 @@ func (g *AnthropicGenerator) Count(ctx context.Context, request GenerationReques
 		})
 	}
 
-	resp, err := g.client.CountTokens(ctx, params)
+	resp, err := g.client.CountTokens(ctx, params, anthropicRequestHeaders(request.Headers)...)
 	if err != nil {
 		if mapped := mapAnthropicError(err); mapped != nil {
 			return 0, mapped
