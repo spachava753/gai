@@ -225,9 +225,6 @@ func testResponsesGenerator_Generate_Thinking_Logging(t *testing.T) {
 			// Log extra fields if present
 			if block.ExtraFields != nil {
 				t.Logf("Extra fields: %+v", block.ExtraFields)
-				if gen, ok := block.ExtraFields[ThinkingExtraFieldGeneratorKey]; ok {
-					t.Logf("Generator: %v", gen)
-				}
 			}
 		} else if block.BlockType == Content {
 			t.Log("=== CONTENT BLOCK ===")

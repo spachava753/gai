@@ -85,7 +85,6 @@ func TestRouterAdapterScenarios(t *testing.T) {
 			ModalityType: Text,
 			Content:      Str("private reasoning"),
 			ExtraFields: map[string]interface{}{
-				ThinkingExtraFieldGeneratorKey:         ThinkingGeneratorOpenRouter,
 				OpenRouterExtraFieldReasoningType:      "reasoning.text",
 				OpenRouterExtraFieldReasoningFormat:    "anthropic-claude-v1",
 				OpenRouterExtraFieldReasoningIndex:     3,

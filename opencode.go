@@ -775,7 +775,6 @@ func openCodeReasoningFieldBlock(content, field string) Block {
 		MimeType:     "text/plain",
 		Content:      Str(content),
 		ExtraFields: map[string]interface{}{
-			ThinkingExtraFieldGeneratorKey:   ThinkingGeneratorOpenCode,
 			OpenCodeExtraFieldReasoningField: field,
 		},
 	}
@@ -811,7 +810,6 @@ func openCodeReasoningDetailBlock(detail opencode.ReasoningDetail) (Block, bool,
 		MimeType:     "text/plain",
 		Content:      Str(content),
 		ExtraFields: map[string]interface{}{
-			ThinkingExtraFieldGeneratorKey:    ThinkingGeneratorOpenCode,
 			OpenCodeExtraFieldReasoningField:  "reasoning_details",
 			OpenCodeExtraFieldReasoningDetail: replayDetail,
 		},

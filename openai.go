@@ -630,7 +630,7 @@ func openAIResponseMessage(message wire.ResponseMessage, audioFormat string) (Me
 	}
 	for _, value := range []nullable.Nullable[string]{message.ReasoningContent, message.Reasoning} {
 		if text, err := value.Get(); err == nil && text != "" {
-			result.Blocks = append(result.Blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(text), ExtraFields: map[string]interface{}{ThinkingExtraFieldGeneratorKey: "openai"}})
+			result.Blocks = append(result.Blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(text)})
 		}
 	}
 	if audio, err := message.Audio.Get(); err == nil && audio.Id != nil && *audio.Id != "" {

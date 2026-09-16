@@ -323,7 +323,7 @@ A provider generator keeps only what it needs to send a request:
 | `OpenAiGenerator` | generated Chat Completions HTTP client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `AnthropicGenerator` | message service | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `GeminiGenerator` | Gemini client | `Generator`, `StreamingGenerator`, `TokenCounter` |
-| `CerebrasGenerator` | private generated client | `Generator`, `StreamingGenerator` |
+| `CerebrasGenerator` | private `OpenAiGenerator` delegate | `Generator`, `StreamingGenerator` |
 | `OpenRouterGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 | `OpenCodeGenerator` | private generated client | `Generator`, `StreamingGenerator` |
 | `ResponsesGenerator` | Responses service | `Generator`, `StreamingGenerator` |

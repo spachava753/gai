@@ -86,8 +86,8 @@ const (
 	// Content is the [Block.BlockType] for ordinary text or media content.
 	Content = "content"
 
-	// Thinking is the [Block.BlockType] for model reasoning. Thinking blocks set
-	// [ThinkingExtraFieldGeneratorKey] and can carry provider replay metadata in
+	// Thinking is the [Block.BlockType] for model reasoning. Thinking blocks
+	// can carry provider replay metadata in
 	// [Block.ExtraFields].
 	Thinking = "thinking"
 
@@ -102,43 +102,6 @@ const (
 	// Separator is the internal [Block.BlockType] used to preserve logical stream
 	// boundaries. [StreamingAdapter] consumes and removes separator blocks.
 	Separator = "separator"
-
-	// ThinkingExtraFieldGeneratorKey is the [Block.ExtraFields] key that identifies
-	// the provider adapter that produced a [Thinking] block. Its string value is
-	// one of the ThinkingGenerator constants below.
-	ThinkingExtraFieldGeneratorKey = "thinking_generator"
-
-	// ThinkingGeneratorAnthropic is the [ThinkingExtraFieldGeneratorKey] value for
-	// [AnthropicGenerator]. See [AnthropicExtraFieldThinkingSignature].
-	ThinkingGeneratorAnthropic = "anthropic"
-
-	// ThinkingGeneratorCerebras is the [ThinkingExtraFieldGeneratorKey] value for
-	// [CerebrasGenerator].
-	ThinkingGeneratorCerebras = "cerebras"
-
-	// ThinkingGeneratorDeepSeek is the [ThinkingExtraFieldGeneratorKey] value for
-	// [DeepSeekGenerator].
-	ThinkingGeneratorDeepSeek = "deepseek"
-
-	// ThinkingGeneratorGemini is the [ThinkingExtraFieldGeneratorKey] value for
-	// [GeminiGenerator]. See [GeminiExtraFieldThoughtSignature].
-	ThinkingGeneratorGemini = "gemini"
-
-	// ThinkingGeneratorOpenCode is the [ThinkingExtraFieldGeneratorKey] value for
-	// [OpenCodeGenerator].
-	ThinkingGeneratorOpenCode = "opencode"
-
-	// ThinkingGeneratorOpenRouter is the [ThinkingExtraFieldGeneratorKey] value
-	// for [OpenRouterGenerator]. See [OpenRouterExtraFieldReasoningType].
-	ThinkingGeneratorOpenRouter = "openrouter"
-
-	// ThinkingGeneratorResponses is the [ThinkingExtraFieldGeneratorKey] value
-	// for [ResponsesGenerator].
-	ThinkingGeneratorResponses = "responses"
-
-	// ThinkingGeneratorZai is the [ThinkingExtraFieldGeneratorKey] value for
-	// [ZaiGenerator].
-	ThinkingGeneratorZai = "zai"
 )
 
 // Block is one ordered unit of message content. A block can contain ordinary
@@ -168,8 +131,8 @@ type Block struct {
 	Content fmt.Stringer `json:"content,omitempty" yaml:"content,omitempty"`
 
 	// ExtraFields carries provider or block-specific data at the narrowest replay
-	// scope. Examples include [ThinkingExtraFieldGeneratorKey],
-	// [AnthropicExtraFieldThinkingSignature], [GeminiExtraFieldThoughtSignature],
+	// scope. Examples include [AnthropicExtraFieldThinkingSignature],
+	// [GeminiExtraFieldThoughtSignature],
 	// [ResponsesExtraFieldReasoningID], and [BlockFieldFilenameKey].
 	ExtraFields map[string]interface{} `json:"extra_fields,omitempty" yaml:"extra_fields,omitempty"`
 }

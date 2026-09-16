@@ -1370,7 +1370,6 @@ func openRouterReasoningBlock(detail openrouter.ReasoningDetail) (Block, bool) {
 		return Block{}, false
 	}
 	extraFields := map[string]interface{}{
-		ThinkingExtraFieldGeneratorKey:      ThinkingGeneratorOpenRouter,
 		OpenRouterExtraFieldReasoningType:   detail.Type,
 		OpenRouterExtraFieldReasoningFormat: detail.Format.Or(""),
 		OpenRouterExtraFieldReasoningIndex:  detail.Index.Or(0),

@@ -186,10 +186,10 @@ type GenerationRequest struct {
 	Model string `json:"model" yaml:"model"`
 	// SafetyIdentifier is an opaque stable end-user identity, not personal data.
 	// OpenAI and Moonshot send safety_identifier; Anthropic sends metadata.user_id;
-	// Z.AI and DeepSeek send user_id. DeepSeek also uses it for cache and scheduling
-	// isolation. Unsupported providers, including native Gemini, ignore it.
+	// Z.AI and DeepSeek send user_id; Cerebras sends user. DeepSeek also uses it for
+	// cache and scheduling isolation. Unsupported providers, including native Gemini, ignore it.
 	SafetyIdentifier string `json:"safety_identifier,omitempty" yaml:"safety_identifier,omitempty"`
-	// PromptCacheKey groups requests for cache routing on OpenAI and Moonshot.
+	// PromptCacheKey groups requests for cache routing on OpenAI, Moonshot, and Cerebras.
 	// It does not enable caching, specify retention, or identify a stored cache
 	// resource. Other providers ignore it. It is never derived from SafetyIdentifier.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty" yaml:"prompt_cache_key,omitempty"`

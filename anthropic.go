@@ -609,7 +609,6 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationReq
 				ModalityType: Text,
 				Content:      Str(contentPart.Thinking),
 				ExtraFields: map[string]interface{}{
-					ThinkingExtraFieldGeneratorKey:       ThinkingGeneratorAnthropic,
 					AnthropicExtraFieldThinkingSignature: contentPart.Signature,
 				},
 			})
@@ -857,9 +856,6 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 							ModalityType: Text,
 							MimeType:     "text/plain",
 							Content:      Str(delta.Thinking),
-							ExtraFields: map[string]interface{}{
-								ThinkingExtraFieldGeneratorKey: ThinkingGeneratorAnthropic,
-							},
 						},
 					}) {
 						return
@@ -875,7 +871,6 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 							MimeType:     "text/plain",
 							Content:      Str(""),
 							ExtraFields: map[string]interface{}{
-								ThinkingExtraFieldGeneratorKey:       ThinkingGeneratorAnthropic,
 								AnthropicExtraFieldThinkingSignature: delta.Signature,
 							},
 						},

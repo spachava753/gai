@@ -168,9 +168,6 @@ func TestJSONClientOpenCode(t *testing.T) {
 	if len(blocks) != 3 || blocks[0].BlockType != Thinking || blocks[0].Content.String() != "new reasoning" || blocks[1].Content.String() != "answer" || blocks[2].BlockType != ToolCall {
 		t.Fatalf("response blocks = %#v", blocks)
 	}
-	if blocks[0].ExtraFields[ThinkingExtraFieldGeneratorKey] != ThinkingGeneratorOpenCode {
-		t.Fatalf("thinking provenance = %#v", blocks[0].ExtraFields)
-	}
 	var toolInput ToolCallInput
 	if err := json.Unmarshal([]byte(blocks[2].Content.String()), &toolInput); err != nil {
 		t.Fatalf("decode tool call: %v", err)
@@ -255,7 +252,7 @@ func TestSSEClientOpenCode(t *testing.T) {
 			t.Fatalf("chunk %d error: %v", i, chunk.Err)
 		}
 	}
-	if chunks[0].Block.BlockType != Thinking || chunks[0].Block.Content.String() != "plan " || chunks[0].Block.ExtraFields[ThinkingExtraFieldGeneratorKey] != ThinkingGeneratorOpenCode {
+	if chunks[0].Block.BlockType != Thinking || chunks[0].Block.Content.String() != "plan " {
 		t.Fatalf("reasoning chunk = %#v", chunks[0])
 	}
 	if chunks[0].Block.ExtraFields[OpenCodeExtraFieldReasoningField] != "reasoning_details" {

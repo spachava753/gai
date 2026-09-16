@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -31,463 +33,134 @@ func newLiveCerebrasGenerator(t *testing.T, apiKey string) *CerebrasGenerator {
 }
 
 func TestCerebrasAdapterScenarios(t *testing.T) {
-	t.Run("CerebrasBuildRequestRejectsInvalidProviderOptions", func(t *testing.T) {
-		tests := []struct {
-			name    string
-			options GenerationOptions
-			want    string
-		}{
-			{
-				name:    "top logprobs without logprobs",
-				options: NewGenerationOptions(WithCerebrasTopLogprobs(3)),
-				want:    CerebrasGenerationOptionTopLogprobs,
-			},
-			{
-				name:    "invalid service tier",
-				options: NewGenerationOptions(WithCerebrasServiceTier("fast")),
-				want:    CerebrasGenerationOptionServiceTier,
-			},
-			{
-				name:    "invalid response format",
-				options: NewGenerationOptions(WithCerebrasResponseFormat(map[string]any{"type": "xml"})),
-				want:    CerebrasGenerationOptionResponseFormat,
-			},
-			{
-				name:    "invalid logit bias",
-				options: NewGenerationOptions(WithCerebrasLogitBias(map[string]float64{"42": 101})),
-				want:    CerebrasGenerationOptionLogitBias,
-			},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				_, err := (&CerebrasGenerator{}).buildRequest(GenerationRequest{
-					Model:   "gpt-oss-120b",
-					Dialog:  Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
-					Options: tt.options,
-				})
-				if err == nil || !strings.Contains(err.Error(), tt.want) {
-					t.Fatalf("buildRequest() error = %v, want parameter %q", err, tt.want)
+	t.Run("SharedClient", func(t *testing.T) {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/chat/completions" || r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer test-key" {
+						t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					}
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+						return
+					}
+					for key, want := range map[string]any{"model": "test-model", "max_completion_tokens": float64(128), "user": "native-user", "prompt_cache_key": "native-cache", "reasoning_effort": "high", "parallel_tool_calls": false, "logprobs": true, "top_logprobs": float64(3), "seed": float64(7), "service_tier": "flex"} {
+						if !reflect.DeepEqual(body[key], want) {
+							t.Errorf("%s = %#v, want %#v", key, body[key], want)
+						}
+					}
+					if _, ok := body["safety_identifier"]; ok {
+						t.Error("sent OpenAI safety identifier")
+					}
+					if !reflect.DeepEqual(body["prediction"], map[string]any{"type": "content", "content": "known"}) {
+						t.Errorf("prediction = %v", body["prediction"])
+					}
+					if !reflect.DeepEqual(body["response_format"], map[string]any{"type": "json_object"}) {
+						t.Errorf("response_format = %v", body["response_format"])
+					}
+					if !reflect.DeepEqual(body["logit_bias"], map[string]any{"42": -1.5}) {
+						t.Errorf("logit_bias = %v", body["logit_bias"])
+					}
+					if got, _ := body["stream"].(bool); got != stream {
+						t.Errorf("stream = %v, want %v", body["stream"], stream)
+					}
+					if stream {
+						if !reflect.DeepEqual(body["stream_options"], map[string]any{"include_usage": true}) {
+							t.Errorf("stream_options = %v", body["stream_options"])
+						}
+						w.Header().Set("Content-Type", "text/event-stream")
+						fmt.Fprint(w, "data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning\":\"think\",\"content\":\"answer\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"image_tokens\":1},\"time_info\":{\"queue_time\":0.1}}\n\ndata: [DONE]\n\n")
+					} else {
+						w.Header().Set("Content-Type", "application/json")
+						fmt.Fprint(w, `{"id":"c1","choices":[{"index":0,"message":{"role":"assistant","reasoning":"think","content":"answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"image_tokens":1},"time_info":{"queue_time":0.1}}`)
+					}
+				}))
+				defer server.Close()
+				g := newCerebrasTestGenerator(t, server)
+				if _, ok := any(g).(TokenCounter); ok {
+					t.Fatal("exposes OpenAI counter")
+				}
+				request := GenerationRequest{Model: "test-model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, SafetyIdentifier: "native-user", PromptCacheKey: "native-cache", Options: NewGenerationOptions(
+					WithMaxGenerationTokens(128), WithReasoningEffort("high"), WithCerebrasPrediction("known"), WithCerebrasLogitBias(map[string]float64{"42": -1.5}), WithCerebrasLogprobs(true), WithCerebrasTopLogprobs(3), WithCerebrasParallelToolCalls(false), WithCerebrasSeed(7), WithCerebrasServiceTier(CerebrasServiceTierFlex), WithCerebrasResponseFormat(map[string]any{"type": "json_object"}),
+				)}
+				var response Response
+				var err error
+				if stream {
+					response, err = (&StreamingAdapter{S: g}).Generate(t.Context(), request)
+				} else {
+					response, err = g.Generate(t.Context(), request)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				requireContentContaining(t, response, "answer")
+				requireBlockType(t, response, Thinking)
+				if response.UsageMetadata[UsageMetricInputTokens] != 3 {
+					t.Errorf("usage = %v", response.UsageMetadata)
+				}
+				raw, _ := json.Marshal(response.ExtraFields)
+				if !strings.Contains(string(raw), `"image_tokens":1`) || !strings.Contains(string(raw), `"queue_time":0.1`) {
+					t.Errorf("lost native metadata: %s", raw)
 				}
 			})
 		}
 	})
-	t.Run("CerebrasBuildRequestRejectsUnsupportedImageInput", func(t *testing.T) {
-		_, err := (&CerebrasGenerator{}).buildRequest(GenerationRequest{
-			Model: "gemma-4-31b",
-			Dialog: Dialog{{Role: User, Blocks: []Block{{
-				BlockType: Content, ModalityType: Image, MimeType: "image/gif", Content: Str("R0lG"),
-			}}}},
-		})
-		if err == nil || !strings.Contains(err.Error(), "unsupported image MIME type") {
-			t.Fatalf("error = %v, want unsupported image MIME type", err)
+	t.Run("RequestTranslation", func(t *testing.T) {
+		g := &CerebrasGenerator{}
+		options := NewGenerationOptions(WithOpenAIExtraBody(map[string]json.RawMessage{"user": json.RawMessage(`"explicit"`)}))
+		before, _ := json.Marshal(options)
+		request, err := g.prepareRequest(GenerationRequest{Options: options, SafetyIdentifier: "identity", PromptCacheKey: "cache-group"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fields := request.Options[OpenAIGenerationOptionExtraBody].(map[string]json.RawMessage)
+		if string(fields["user"]) != `"explicit"` || request.SafetyIdentifier != "" || request.PromptCacheKey != "cache-group" {
+			t.Fatalf("request = %+v", request)
+		}
+		after, _ := json.Marshal(options)
+		if string(before) != string(after) {
+			t.Fatal("mutated caller options")
+		}
+		request, err = g.prepareRequest(GenerationRequest{SafetyIdentifier: "identity"})
+		if err != nil || string(request.Options[OpenAIGenerationOptionExtraBody].(map[string]json.RawMessage)["user"]) != `"identity"` {
+			t.Fatalf("identity translation: %+v, %v", request, err)
+		}
+		for _, key := range []string{CerebrasGenerationOptionLogitBias, CerebrasGenerationOptionLogprobs, CerebrasGenerationOptionParallelToolCalls, CerebrasGenerationOptionPrediction, CerebrasGenerationOptionResponseFormat, CerebrasGenerationOptionSeed, CerebrasGenerationOptionServiceTier, CerebrasGenerationOptionTopLogprobs, OpenAIGenerationOptionExtraBody} {
+			_, err := g.prepareRequest(GenerationRequest{Options: GenerationOptions{key: struct{}{}}})
+			if err == nil {
+				t.Errorf("accepted invalid %s", key)
+			}
 		}
 	})
-	t.Run("CerebrasBuildRequestReplaysThinking", func(t *testing.T) {
-		toolCall, err := ToolCallBlock("call_1", "get_weather", map[string]any{"city": "Paris"})
-		if err != nil {
-			t.Fatalf("create tool call: %v", err)
-		}
-		request, err := (&CerebrasGenerator{}).buildRequest(GenerationRequest{
-			Model: "gpt-oss-120b",
-			Dialog: Dialog{
-				{Role: User, Blocks: []Block{TextBlock("Weather?")}},
-				{Role: Assistant, Blocks: []Block{cerebrasThinkingBlock("private reasoning"), TextBlock("Checking."), toolCall}},
-				ToolResultMessage("call_1", TextBlock("sunny")),
-			},
-		})
-		if err != nil {
-			t.Fatalf("build request: %v", err)
-		}
-		if len(request.Messages) != 3 {
-			t.Fatalf("messages = %d, want 3", len(request.Messages))
-		}
-		assistant, ok := request.Messages[1].GetAssistantMessage()
-		if !ok || assistant.Reasoning.Or("") != "private reasoning" ||
-			assistant.Content.Or("") != "Checking." || len(assistant.ToolCalls) != 1 {
-			t.Fatalf("assistant replay = %+v", assistant)
-		}
-		toolResult, ok := request.Messages[2].GetToolMessage()
-		if !ok || toolResult.ToolCallID != "call_1" || toolResult.Content != "sunny" {
-			t.Fatalf("tool result replay = %+v", toolResult)
-		}
-	})
-	t.Run("CerebrasBuildRequestSupportsImageInput", func(t *testing.T) {
-		request, err := (&CerebrasGenerator{}).buildRequest(GenerationRequest{
-			Model: "gemma-4-31b",
-			Dialog: Dialog{{Role: User, Blocks: []Block{
-				TextBlock("Describe this image."),
-				ImageBlock([]byte("png"), "image/png"),
-			}}},
-		})
-		if err != nil {
-			t.Fatalf("build request: %v", err)
-		}
-		encoded, err := json.Marshal(request)
-		if err != nil {
-			t.Fatalf("marshal request: %v", err)
-		}
-		var payload map[string]any
-		if err := json.Unmarshal(encoded, &payload); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		messages, ok := payload["messages"].([]any)
-		if !ok || len(messages) != 1 {
-			t.Fatalf("messages = %v", payload["messages"])
-		}
-		message, ok := messages[0].(map[string]any)
-		if !ok {
-			t.Fatalf("message = %T %v", messages[0], messages[0])
-		}
-		parts, ok := message["content"].([]any)
-		if !ok || len(parts) != 2 {
-			t.Fatalf("content parts = %v", message["content"])
-		}
-		textPart, _ := parts[0].(map[string]any)
-		imagePart, _ := parts[1].(map[string]any)
-		imageURL, _ := imagePart["image_url"].(map[string]any)
-		if textPart["type"] != "text" || textPart["text"] != "Describe this image." ||
-			imagePart["type"] != "image_url" || imageURL["url"] != "data:image/png;base64,cG5n" {
-			t.Fatalf("content parts = %v", parts)
-		}
-	})
-	t.Run("CerebrasGeneratorMapsGeneratedError", func(t *testing.T) {
+	t.Run("SharedClientErrors", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = w.Write([]byte(`{"error":{"message":"slow down","type":"rate_limit_error","code":"rate_limit"}}`))
+			fmt.Fprint(w, `{"error":{"message":"quota exceeded"}}`)
 		}))
 		defer server.Close()
-
-		_, err := newCerebrasTestGenerator(t, server).Generate(t.Context(), GenerationRequest{
-			Model:  "gpt-oss-120b",
-			Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
-		})
-		var apiErr *ApiErr
-		if !errors.As(err, &apiErr) {
-			t.Fatalf("error = %T %v, want ApiErr", err, err)
-		}
-		if apiErr.Provider != ProviderCerebras || apiErr.Kind != APIErrorKindRateLimit ||
-			apiErr.StatusCode != http.StatusTooManyRequests || apiErr.Message != "slow down" {
-			t.Fatalf("API error = %+v", apiErr)
-		}
-	})
-	t.Run("CerebrasGeneratorReturnsContentPolicyError", func(t *testing.T) {
-		tests := []struct {
-			name       string
-			choiceJSON string
-			want       string
-		}{
-			{
-				name:       "content filter finish reason",
-				choiceJSON: `{"index":0,"finish_reason":"content_filter","message":{"role":"assistant","content":""}}`,
-				want:       "content policy violation detected",
-			},
-			{
-				name:       "message refusal",
-				choiceJSON: `{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","refusal":"I cannot help with that."}}`,
-				want:       "I cannot help with that.",
-			},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(`{"id":"chatcmpl_123","object":"chat.completion","created":0,"model":"test","choices":[` + tt.choiceJSON + `]}`))
-				}))
-				defer server.Close()
-
-				generator := newCerebrasTestGenerator(t, server)
-				response, err := generator.Generate(context.Background(), GenerationRequest{
-					Model:  "test",
-					Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("unsafe request")}}},
-				})
-				if response.FinishReason != ContentPolicyViolation {
-					t.Fatalf("FinishReason = %v, want ContentPolicyViolation", response.FinishReason)
-				}
-
-				var policyErr ContentPolicyErr
-				if !errors.As(err, &policyErr) {
-					t.Fatalf("Generate error = %T %v, want ContentPolicyErr", err, err)
-				}
-				if !strings.Contains(policyErr.Error(), tt.want) {
-					t.Fatalf("Generate error = %q, want message containing %q", policyErr, tt.want)
-				}
-			})
-		}
-	})
-	t.Run("CerebrasGeneratorUsesGeneratedJSONClient", func(t *testing.T) {
-		requests := make(chan map[string]any, 1)
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
-				http.Error(w, "unexpected request", http.StatusNotFound)
-				return
-			}
-			if r.Header.Get("Authorization") != "Bearer test-key" {
-				http.Error(w, "missing authorization", http.StatusUnauthorized)
-				return
-			}
-			var request map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				http.Error(w, "invalid request", http.StatusBadRequest)
-				return
-			}
-			requests <- request
-
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{
-			"id":"completion_1",
-			"object":"chat.completion",
-			"created":1,
-			"model":"gpt-oss-120b",
-			"system_fingerprint":"fp_test",
-			"service_tier":"auto",
-			"service_tier_used":"priority",
-			"choices":[{
-				"index":0,
-				"finish_reason":"tool_calls",
-				"logprobs":{"content":[{"token":"answer","logprob":-0.1}]},
-				"message":{
-					"role":"assistant",
-					"reasoning":"thinking",
-					"content":"answer",
-					"tool_calls":[{
-						"id":"call_1",
-						"type":"function",
-						"function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}
-					}]
-				}
-			}],
-			"usage":{
-				"prompt_tokens":10,
-				"completion_tokens":5,
-				"total_tokens":15,
-				"image_tokens":3,
-				"prompt_tokens_details":{"cached_tokens":4},
-				"completion_tokens_details":{"reasoning_tokens":2}
-			},
-			"time_info":{
-				"queue_time":0.01,
-				"prompt_time":0.02,
-				"completion_time":0.03,
-				"total_time":0.06,
-				"created":123.5
-			}
-		}`))
-		}))
-		defer server.Close()
-
-		schema, err := GenerateSchema[struct {
-			City string `json:"city" jsonschema:"required"`
-		}]()
-		if err != nil {
-			t.Fatalf("generate schema: %v", err)
-		}
-		response, err := newCerebrasTestGenerator(t, server).Generate(t.Context(), GenerationRequest{
-			Model:        "gpt-oss-120b",
-			Instructions: SystemMessage(TextBlock("Be concise.")),
-			Dialog:       Dialog{{Role: User, Blocks: []Block{TextBlock("Weather?")}}},
-			Tools: []Tool{{
-				Name:        "get_weather",
-				Description: "Get weather.",
-				InputSchema: schema,
-			}},
-			Options: NewGenerationOptions(
-				WithTemperature(0.2),
-				WithFrequencyPenalty(0.3),
-				WithPresencePenalty(-0.4),
-				WithCerebrasLogitBias(map[string]float64{"42": -1.5}),
-				WithCerebrasLogprobs(true),
-				WithCerebrasTopLogprobs(3),
-				WithCerebrasParallelToolCalls(false),
-				WithCerebrasPrediction("known output"),
-				WithCerebrasPromptCacheKey("conversation-1"),
-				WithCerebrasResponseFormat(map[string]any{"type": "json_object"}),
-				WithCerebrasSeed(7),
-				WithCerebrasServiceTier(CerebrasServiceTierAuto),
-				WithCerebrasUser("user-1"),
-				WithMaxGenerationTokens(64),
-				WithStopSequences("END", "STOP"),
-				WithToolChoice("get_weather"),
-				WithReasoningEffort("medium"),
-			),
-		})
-		if err != nil {
-			t.Fatalf("generate: %v", err)
-		}
-		if response.FinishReason != ToolUse || len(response.Candidates) != 1 {
-			t.Fatalf("response = %+v", response)
-		}
-		thinking := requireBlockType(t, response, Thinking)
-		if thinking.Content.String() != "thinking" || thinking.ExtraFields[ThinkingExtraFieldGeneratorKey] != ThinkingGeneratorCerebras {
-			t.Fatalf("thinking block = %+v", thinking)
-		}
-		if got := requireBlockType(t, response, Content).Content.String(); got != "answer" {
-			t.Fatalf("content = %q, want answer", got)
-		}
-		var call ToolCallInput
-		if err := json.Unmarshal([]byte(requireBlockType(t, response, ToolCall).Content.String()), &call); err != nil {
-			t.Fatalf("decode tool call: %v", err)
-		}
-		if call.Name != "get_weather" || call.Parameters["city"] != "Paris" {
-			t.Fatalf("tool call = %+v", call)
-		}
-		if response.ExtraFields[CerebrasResponseExtraFieldID] != "completion_1" ||
-			response.ExtraFields[CerebrasResponseExtraFieldModel] != "gpt-oss-120b" ||
-			response.ExtraFields[CerebrasResponseExtraFieldCreated] != int64(1) ||
-			response.ExtraFields[CerebrasResponseExtraFieldSystemFingerprint] != "fp_test" ||
-			response.ExtraFields[CerebrasResponseExtraFieldServiceTier] != "auto" ||
-			response.ExtraFields[CerebrasResponseExtraFieldServiceTierUsed] != "priority" {
-			t.Fatalf("response extra fields = %v", response.ExtraFields)
-		}
-		logprobs, ok := response.Candidates[0].ExtraFields[CerebrasMessageExtraFieldLogprobs].(map[string]any)
-		if !ok {
-			t.Fatalf("candidate logprobs = %v", response.Candidates[0].ExtraFields)
-		}
-		logprobItems, ok := logprobs["content"].([]any)
-		if !ok || len(logprobItems) != 1 {
-			t.Fatalf("candidate logprobs = %v", response.Candidates[0].ExtraFields)
-		}
-		if response.UsageMetadata[UsageMetricInputTokens] != 10 ||
-			response.UsageMetadata[UsageMetricGenerationTokens] != 5 ||
-			response.UsageMetadata[UsageMetricCacheReadTokens] != 4 ||
-			response.UsageMetadata[UsageMetricReasoningTokens] != 2 ||
-			response.UsageMetadata[CerebrasUsageMetricImageTokens] != 3 ||
-			response.UsageMetadata[CerebrasUsageMetricQueueTimeSeconds] != 0.01 ||
-			response.UsageMetadata[CerebrasUsageMetricPromptTimeSeconds] != 0.02 ||
-			response.UsageMetadata[CerebrasUsageMetricCompletionTimeSeconds] != 0.03 ||
-			response.UsageMetadata[CerebrasUsageMetricTotalTimeSeconds] != 0.06 ||
-			response.UsageMetadata[CerebrasUsageMetricTimeInfoCreated] != 123.5 {
-			t.Fatalf("usage metadata = %v", response.UsageMetadata)
-		}
-
-		request := <-requests
-		if request["stream"] != false || request["temperature"] != 0.2 ||
-			request["frequency_penalty"] != 0.3 || request["presence_penalty"] != -0.4 ||
-			request["logprobs"] != true || request["top_logprobs"] != float64(3) ||
-			request["parallel_tool_calls"] != false || request["prompt_cache_key"] != "conversation-1" ||
-			request["seed"] != float64(7) || request["service_tier"] != "auto" || request["user"] != "user-1" ||
-			request["max_completion_tokens"] != float64(64) || request["reasoning_effort"] != "medium" {
-			t.Fatalf("request options = %v", request)
-		}
-		logitBias, ok := request["logit_bias"].(map[string]any)
-		if !ok || logitBias["42"] != -1.5 {
-			t.Fatalf("logit bias = %v", request["logit_bias"])
-		}
-		prediction, ok := request["prediction"].(map[string]any)
-		if !ok || prediction["type"] != "content" || prediction["content"] != "known output" {
-			t.Fatalf("prediction = %v", request["prediction"])
-		}
-		responseFormat, ok := request["response_format"].(map[string]any)
-		if !ok || responseFormat["type"] != "json_object" {
-			t.Fatalf("response format = %v", request["response_format"])
-		}
-		stop, ok := request["stop"].([]any)
-		if !ok || len(stop) != 2 || stop[0] != "END" || stop[1] != "STOP" {
-			t.Fatalf("stop sequences = %v", request["stop"])
-		}
-		toolChoice, ok := request["tool_choice"].(map[string]any)
-		if !ok || toolChoice["type"] != "function" {
-			t.Fatalf("tool choice = %v", request["tool_choice"])
-		}
-	})
-	t.Run("CerebrasGeneratorUsesGeneratedSSEClient", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var request map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request["stream"] != true {
-				http.Error(w, "expected streaming request", http.StatusBadRequest)
-				return
-			}
-
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = w.Write([]byte(
-				"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"system_fingerprint\":\"fp_stream\",\"service_tier\":\"default\",\"service_tier_used\":\"flex\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\"thinking\"},\"finish_reason\":null,\"logprobs\":{\"content\":[{\"token\":\"a\",\"logprob\":-0.1}]}}]}\n\n" +
-					"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":null,\"logprobs\":{\"content\":[{\"token\":\"b\",\"logprob\":-0.2}]}}]}\n\n" +
-					"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\"}}]},\"finish_reason\":null}]}\n\n" +
-					"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"Paris\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n" +
-					"data: {\"id\":\"chunk_1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-oss-120b\",\"choices\":[],\"usage\":{\"prompt_tokens\":6,\"completion_tokens\":4,\"total_tokens\":10,\"image_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":2},\"completion_tokens_details\":{\"reasoning_tokens\":1}},\"time_info\":{\"queue_time\":0.1,\"prompt_time\":0.2,\"completion_time\":0.3,\"total_time\":0.6,\"created\":456.5}}\n\n" +
-					"data: [DONE]\n\n",
-			))
-		}))
-		defer server.Close()
-
-		var thinking, content string
-		var toolBlocks []Block
-		var usage map[string]float64
-		responseExtraFields := make(map[string]interface{})
-		messageExtraFields := make(map[string]interface{})
-		for chunk := range newCerebrasTestGenerator(t, server).Stream(t.Context(), GenerationRequest{
-			Model:  "gpt-oss-120b",
-			Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("weather")}}},
-		}) {
-			if chunk.Err != nil {
-				t.Fatalf("stream returned error: %v", chunk.Err)
-			}
-			if chunk.CandidatesIndex != 0 {
-				t.Fatalf("candidate index = %d, want 0", chunk.CandidatesIndex)
-			}
-			for key, value := range chunk.ResponseExtraFields {
-				responseExtraFields[key] = value
-			}
-			for key, value := range chunk.MessageExtraFields {
-				messageExtraFields[key] = value
-			}
-			switch chunk.Block.BlockType {
-			case Thinking:
-				thinking += chunk.Block.Content.String()
-				if chunk.Block.ExtraFields[ThinkingExtraFieldGeneratorKey] != ThinkingGeneratorCerebras {
-					t.Fatalf("thinking block = %+v", chunk.Block)
-				}
-			case Content:
-				content += chunk.Block.Content.String()
-			case ToolCall:
-				toolBlocks = append(toolBlocks, chunk.Block)
-			case MetadataBlockType:
-				if err := json.Unmarshal([]byte(chunk.Block.Content.String()), &usage); err != nil {
-					t.Fatalf("decode usage metadata: %v", err)
-				}
+		g := newCerebrasTestGenerator(t, server)
+		request := GenerationRequest{Model: "test", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}}
+		check := func(err error) {
+			t.Helper()
+			var apiErr *ApiErr
+			if !errors.As(err, &apiErr) || apiErr.Provider != ProviderCerebras || apiErr.StatusCode != 429 {
+				t.Fatalf("error = %v", err)
 			}
 		}
-		if thinking != "thinking" || content != "answer" {
-			t.Fatalf("thinking = %q, content = %q", thinking, content)
+		_, err := g.Generate(t.Context(), request)
+		check(err)
+		for chunk := range g.Stream(t.Context(), request) {
+			check(chunk.Err)
 		}
-		if responseExtraFields[CerebrasResponseExtraFieldID] != "chunk_1" ||
-			responseExtraFields[CerebrasResponseExtraFieldSystemFingerprint] != "fp_stream" ||
-			responseExtraFields[CerebrasResponseExtraFieldServiceTier] != "default" ||
-			responseExtraFields[CerebrasResponseExtraFieldServiceTierUsed] != "flex" {
-			t.Fatalf("stream response extra fields = %v", responseExtraFields)
+		if _, err := (&CerebrasGenerator{}).Generate(t.Context(), request); err == nil {
+			t.Fatal("accepted uninitialized generator")
 		}
-		streamLogprobs, ok := messageExtraFields[CerebrasMessageExtraFieldLogprobs].(map[string]any)
-		if !ok {
-			t.Fatalf("stream message extra fields = %v", messageExtraFields)
-		}
-		logprobContent, ok := streamLogprobs["content"].([]any)
-		if !ok || len(logprobContent) != 2 {
-			t.Fatalf("stream logprobs = %v", streamLogprobs)
-		}
-		compressed, err := compressStreamingBlocks(toolBlocks)
-		if err != nil {
-			t.Fatalf("assemble streamed tool call: %v", err)
-		}
-		if len(compressed) != 1 || compressed[0].ID != "call_1" {
-			t.Fatalf("assembled tool blocks = %+v", compressed)
-		}
-		var call ToolCallInput
-		if err := json.Unmarshal([]byte(compressed[0].Content.String()), &call); err != nil {
-			t.Fatalf("decode streamed tool call: %v", err)
-		}
-		if call.Name != "get_weather" || call.Parameters["city"] != "Paris" {
-			t.Fatalf("streamed tool call = %+v", call)
-		}
-		if usage[UsageMetricInputTokens] != 6 || usage[UsageMetricGenerationTokens] != 4 ||
-			usage[UsageMetricCacheReadTokens] != 2 || usage[UsageMetricReasoningTokens] != 1 ||
-			usage[CerebrasUsageMetricImageTokens] != 2 ||
-			usage[CerebrasUsageMetricQueueTimeSeconds] != 0.1 ||
-			usage[CerebrasUsageMetricPromptTimeSeconds] != 0.2 ||
-			usage[CerebrasUsageMetricCompletionTimeSeconds] != 0.3 ||
-			usage[CerebrasUsageMetricTotalTimeSeconds] != 0.6 ||
-			usage[CerebrasUsageMetricTimeInfoCreated] != 456.5 {
-			t.Fatalf("usage metadata = %v", usage)
+		for chunk := range (&CerebrasGenerator{}).Stream(t.Context(), request) {
+			if chunk.Err == nil {
+				t.Fatal("accepted uninitialized generator")
+			}
 		}
 	})
 	t.Run("CerebrasGenerator/Generate", func(t *testing.T) {

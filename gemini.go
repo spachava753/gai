@@ -704,9 +704,6 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 								ModalityType: Text,
 								MimeType:     "text/plain",
 								Content:      Str(part.Text),
-								ExtraFields: map[string]interface{}{
-									ThinkingExtraFieldGeneratorKey: ThinkingGeneratorGemini,
-								},
 							},
 							CandidatesIndex: 0,
 						}) {

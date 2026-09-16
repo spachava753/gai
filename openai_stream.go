@@ -270,7 +270,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				}
 				for _, value := range []nullable.Nullable[string]{delta.ReasoningContent, delta.Reasoning} {
 					if text, err := value.Get(); err == nil && text != "" {
-						if !yield(StreamChunk{Block: Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(text), ExtraFields: map[string]interface{}{ThinkingExtraFieldGeneratorKey: "openai"}}, CandidatesIndex: int(index)}) {
+						if !yield(StreamChunk{Block: Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(text)}, CandidatesIndex: int(index)}) {
 							return
 						}
 					}

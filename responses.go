@@ -731,7 +731,6 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (message 
 			// and encrypted content so that when this block is passed back in a
 			// subsequent Assistant message, we can reconstruct the reasoning input item.
 			extraFields := map[string]interface{}{
-				ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
 				ResponsesExtraFieldReasoningID: reas.ID,
 			}
 			if reas.EncryptedContent != "" {
@@ -966,7 +965,6 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, request GenerationReque
 							MimeType:     "text/plain",
 							Content:      Str(reasoningDelta.Delta),
 							ExtraFields: map[string]interface{}{
-								ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
 								ResponsesExtraFieldReasoningID: reasoningDelta.ItemID,
 							},
 						},
@@ -988,7 +986,6 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, request GenerationReque
 							MimeType:     "text/plain",
 							Content:      Str(summaryDelta.Delta),
 							ExtraFields: map[string]interface{}{
-								ThinkingExtraFieldGeneratorKey:  ThinkingGeneratorResponses,
 								ResponsesExtraFieldReasoningID:  summaryDelta.ItemID,
 								ResponsesExtraFieldSummaryIndex: summaryDelta.SummaryIndex,
 							},
@@ -1022,7 +1019,6 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, request GenerationReque
 					reas := item.AsReasoning()
 					if reas.EncryptedContent != "" || reas.ID != "" {
 						extra := map[string]interface{}{
-							ThinkingExtraFieldGeneratorKey: ThinkingGeneratorResponses,
 							ResponsesExtraFieldReasoningID: reas.ID,
 						}
 						if reas.EncryptedContent != "" {

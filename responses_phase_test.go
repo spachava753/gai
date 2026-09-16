@@ -202,7 +202,6 @@ func testResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhaseWithoutT
 				MimeType:     "text/plain",
 				Content:      Str(""),
 				ExtraFields: map[string]interface{}{
-					ThinkingExtraFieldGeneratorKey:      ThinkingGeneratorResponses,
 					ResponsesExtraFieldReasoningID:      "rs_123",
 					ResponsesExtraFieldEncryptedContent: "enc_123",
 				},
