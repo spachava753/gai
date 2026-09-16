@@ -4,7 +4,9 @@ This document describes the request model, generator interfaces, and provider ad
 
 A generator wraps a connection to a model provider. It stores the provider client and, for direct HTTP adapters, the endpoint and credentials. It does not store a model, system instructions, tools, or conversation history. Those values belong to `GenerationRequest` and are supplied on every call.
 
-The library does not append to the conversation or execute tool calls. The application owns both jobs.
+The root `gai` package does not append to the conversation or execute tool calls. Applications can own that loop directly or use the public [`agent` package](agent/design.md), which executes tools and manages a run's active dialog. Persistence remains outside the generator layer.
+
+This document describes the implemented generator layer, not a proposed migration. See [README.md](README.md) for setup and usage, [doc.go](doc.go) for the package API map, and [agent/design.md](agent/design.md) for the agent loop.
 
 A generation call follows this path:
 
@@ -41,14 +43,14 @@ The model and instructions appear in the request because they describe this call
 
 ```go
 type GenerationRequest struct {
-    Headers      http.Header
+    Headers          http.Header
+    Model            string
     SafetyIdentifier string
-    PromptCacheKey string
-    Model        string
-    Instructions Message
-    Dialog       Dialog
-    Tools        []Tool
-    Options      GenerationOptions
+    PromptCacheKey   string
+    Instructions     Message
+    Dialog           Dialog
+    Tools            []Tool
+    Options          GenerationOptions
 }
 ```
 
@@ -72,6 +74,22 @@ A retry can repeat the same request, and middleware can inspect or replace any p
 Generators treat a request as read-only. Copying `GenerationRequest` is shallow because its headers, messages, tools, and options contain slices or maps. The caller must not modify those values while a call is in progress, and a generator must not retain them after the call returns.
 
 Data created while handling a request stays local to that call. Examples include converted provider messages, tool-call ID maps, retry counters, and stream assembly buffers.
+
+### Request headers
+
+`Headers` is an `http.Header` field, not a generation-option key or part of the provider JSON body. It applies to generation, streaming, and remote token counting. Supplied header values replace matching names; unrelated generator/client headers remain intact. Multiple values are preserved. Use `Header.Set` or `Header.Add` to canonicalize names, and do not supply duplicate names with different capitalization.
+
+Headers are applied per invocation, never by mutating a shared client. The Chat Completions client uses a request editor; Anthropic and Responses use SDK request options; Gemini uses per-call `HTTPOptions`; OpenRouter passes headers through the request context to its generated request editor. Z.AI and Moonshot apply headers to their native counting requests as well. SDK-managed authentication can take precedence: Gemini sets `X-Goog-Api-Key` from its client credentials.
+
+Request headers can contain secrets. Serializing or logging a `GenerationRequest` also includes its headers, so callers must redact them where necessary. Fallback forwards headers unchanged, including credentials if the caller supplied them; only use that with trusted targets.
+
+### Identity and cache routing
+
+`SafetyIdentifier` and `PromptCacheKey` have different meanings. Neither is derived from the other or inserted into prompt content.
+
+- `SafetyIdentifier` maps to `safety_identifier` for OpenAI Chat Completions/Responses and Moonshot, `metadata.user_id` for Anthropic, `user_id` for Z.AI/DeepSeek, and `user` for Cerebras. DeepSeek also uses its identity field for cache and scheduling isolation.
+- `PromptCacheKey` maps to `prompt_cache_key` for OpenAI Chat Completions/Responses, Moonshot, and Cerebras. It does not enable caching, select a retention policy, or identify a stored cache resource.
+- Unsupported adapters ignore these fields. In particular, Gemini does not translate either into safety settings or `cachedContent`.
 
 ## Interfaces
 
@@ -97,9 +115,13 @@ type TokenCounter interface {
 }
 ```
 
-All three methods receive the same request. In particular, token counting includes the model, instructions, dialog, and tools instead of relying on configuration hidden in the generator. OpenAI counts locally with `tiktoken`; Anthropic, Gemini, and Z.AI call their token-counting APIs.
+All three methods receive the same request rather than relying on model or dialog settings hidden in the generator. Counting support is deliberately narrower than generation support:
 
-Every provider adapter listed below implements generation and streaming. OpenAI, Anthropic, Gemini, and Z.AI also implement token counting.
+- `OpenAiGenerator.Count` uses `tiktoken` and local estimates. It is not a native counter for arbitrary compatible endpoints. PDF and audio inputs are unsupported by this counter.
+- Anthropic, Gemini, Z.AI, and Moonshot use remote counting APIs. Z.AI counts messages and tools; Moonshot rejects tool-bearing requests because its endpoint does not document tool accounting.
+- Cerebras, DeepSeek, OpenRouter, and Responses do not implement `TokenCounter`.
+
+Every provider adapter listed below implements generation and streaming. Optional interfaces describe the adapter's capabilities, not a guarantee that every model accepts every input.
 
 ## Messages and instructions
 
@@ -160,9 +182,9 @@ type Block struct {
 }
 ```
 
-A `Message` contains one or more blocks. `BlockType` identifies text or media content, model thinking, a tool call, usage metadata, or an internal stream separator. It is a string so an adapter can carry a provider-specific block type without changing the shared enum first.
+A `Message` contains an ordered slice of blocks; whether an empty message is valid depends on its role and the operation. `BlockType` identifies text or media content, model thinking, a tool call, usage metadata, or an internal stream separator. It is a string so an adapter can carry a provider-specific block type without changing the shared enum first.
 
-`ModalityType` describes the data as text, image, audio, or video. `MimeType` gives the concrete media format. `Content` is a `fmt.Stringer`, and adapters read it through `Content.String()`. The package constructors `TextBlock`, `ImageBlock`, `AudioBlock`, `PDFBlock`, and `ToolCallBlock` fill these fields consistently.
+`ModalityType` describes the data as text, image, audio, or video. `MimeType` gives the concrete media format; `PDFBlock` uses the `Image` modality with `application/pdf`, not a separate PDF modality. `Content` is a `fmt.Stringer`, and adapters read it through `Content.String()`. The package constructors `TextBlock`, `ImageBlock`, `AudioBlock`, `PDFBlock`, and `ToolCallBlock` fill these fields consistently.
 
 `ExtraFields` carries provider data that must survive a later turn. For example, an Anthropic thinking signature belongs to the thinking block that produced it, while an OpenAI Responses phase belongs to `Message.ExtraFields` because it applies to the whole assistant message.
 
@@ -200,11 +222,11 @@ request.Tools = []Tool{{
 }}
 ```
 
-JSON Schema is the interchange format because every supported tool API accepts a subset of it. `GenerateSchema[T]` rejects unknown object properties by default. Each provider adapter checks the schema again and reports constructs that its API cannot represent.
+JSON Schema is the interchange format because every supported tool API accepts a subset of it. `GenerateSchema[T]` produces closed object schemas by default. Adapters validate tool declarations and perform the conversion their protocol requires. This is not a universal schema validator: the shared Chat Completions adapter preserves schema JSON and leaves provider/model restrictions to the server.
 
 The adapter converts tools while it builds the provider request. It does not retain the converted definitions, and there is no registration method. As a result, authorization code can choose a different tool list for each request without mutating a shared generator.
 
-A response may contain a `ToolCall` block whose content decodes to `ToolCallInput`. GAI does not execute that call. The application validates and runs it, appends a `ToolResult` message to the dialog, and sends another generation request. `ToolCallback` and `ToolCallBackFunc` are helpers for this application-owned loop.
+A response may contain a `ToolCall` block whose content decodes to `ToolCallInput`. The generator does not execute that call. The application, or the separate `agent` package, validates and runs it, appends a `ToolResult` message to the dialog, and sends another generation request. `ToolCallback` and `ToolCallBackFunc` support application-owned dispatch.
 
 **Implementation note.** Converting an unchanged schema on every request costs more than registration-time conversion. The current design favors immutable generators. If conversion becomes measurable, it can be cached in a separate immutable tool-set value.
 
@@ -234,7 +256,7 @@ options := NewGenerationOptions(
 )
 ```
 
-Each provider helper writes an exported, namespaced key such as `ResponsesServiceTierParam`. Direct map entries remain available for experimental provider controls that do not yet have a helper.
+Provider helpers use exported, namespaced keys such as `ResponsesServiceTierParam`, or populate a shared native-body map. For example, `WithOpenAILogprobs` and `WithOpenAIResponseFormat` add fields to `OpenAIGenerationOptionExtraBody`. `WithOpenAIExtraBody` accepts a `map[string]json.RawMessage` for explicit wire fields.
 
 There is no nested `ExtraArgs` map. An adapter reads the settings it supports, checks their Go types, and ignores unknown keys. Ignoring unknown keys allows a request used for fallback to contain settings for more than one provider.
 
@@ -247,10 +269,15 @@ The common keys use these value types:
 | `temperature`, `top_p`, `frequency_penalty`, `presence_penalty` | `float64` |
 | `top_k`, `candidate_count` | `uint` |
 | `max_generation_tokens` | `int` |
-| `tool_choice`, `thinking_budget` | `string` |
+| `tool_choice`, `reasoning_effort` | `string` |
+| `thinking_budget` | `int` |
 | `stop_sequences` | `[]string` |
 | `output_modalities` | `[]Modality` |
 | `audio_config` | `AudioConfig` |
+
+`WithReasoningEffort(string)` is separate from `WithThinkingBudget(int)`. The former carries an effort label; the latter carries a numeric thinking-token budget. Anthropic and OpenRouter support the budget and reject combining the two.
+
+Shared Chat Completions wrappers preserve explicit options rather than inferring capabilities from model names. They validate Go value types and serialization; the server validates native values, ranges, and supported combinations. Other protocol adapters still perform their own local validation. Native controls such as parallel tool calling, seeds, logprobs, and service tiers remain provider-specific rather than common options.
 
 `GenerationOptions` is a map rather than a struct because the supported parameters are the union of several provider APIs and that union changes often. Typed helpers keep common settings discoverable, while direct entries allow a provider option to be added without changing the shared request type.
 
@@ -276,9 +303,9 @@ Response data is placed at the narrowest scope that owns it:
 - `Message.ExtraFields` contains data that belongs to one candidate.
 - `Block.ExtraFields` contains data tied to one content item, including metadata that must be replayed with that block on a later turn.
 
-`Metadata` and each `ExtraFields` value are maps of JSON-compatible values. Providers export constants for stable native keys. Callers commonly append a returned candidate to the next dialog without retaining its enclosing `Response`, so adapters keep all replay-critical data on the message or block rather than in `Response.ExtraFields`.
+`Metadata` and `ExtraFields` are heterogeneous maps with value types documented on their keys. They can include `json.RawMessage`, typed maps, or HTTP headers, not just untyped decoded JSON. Providers export constants for stable native keys. Callers commonly append a returned candidate to the next dialog without retaining its enclosing `Response`, so adapters keep all replay-critical data on the message or block rather than in `Response.ExtraFields`.
 
-Provider API failures use `ApiErr`. It keeps the provider details and adds an `APIErrorKind` that retry and fallback policies can inspect. Local validation failures use sentinel errors or small error structs.
+Mapped provider API failures use `ApiErr`. It keeps provider details and adds an `APIErrorKind` that retry and fallback policies can inspect. Context, transport, decoding, and local validation failures can use other error types. Some generation failures return a partial `Response` alongside an error; callers must inspect the method's contract rather than assume every error implies empty output.
 
 ## Streaming
 
@@ -310,7 +337,7 @@ Adapters convert all failures to this form, whether the provider sent an error e
 Data chunks use the same `Block` type as messages. The stream protocol adds a few ordering rules:
 
 - Text and thinking blocks contain fragments that may be joined with adjacent blocks of the same type.
-- A tool call starts with a block containing the call ID and tool name. Later blocks contain JSON argument fragments.
+- A tool call is represented by a header block containing the call ID and tool name, followed by argument blocks. These may be incremental fragments or buffered complete arguments, depending on the adapter.
 - A separator ends a provider block. It prevents adjacent fragments from being joined and is omitted from the final response.
 - If the provider reports usage, the final data chunk contains a metadata block.
 
@@ -318,7 +345,13 @@ Data chunks use the same `Block` type as messages. The stream protocol adds a fe
 
 `CandidatesIndex` identifies the generated candidate. OpenAI Chat Completions reports this index when `candidate_count` is greater than one.
 
-**Current limitations.** `StreamingAdapter` returns an error for candidate indexes above zero. The Gemini API supports multiple streamed candidates, but `GeminiGenerator.Stream` does not yet handle them.
+**Current limitations.** `StreamingAdapter` returns an error for candidate indexes above zero. It returns an empty response on a stream error rather than exposing partially collected output. It infers `ToolUse` when the collected blocks contain a tool call and `EndTurn` otherwise; it does not carry every native finish reason. It also converts numeric values from metadata blocks to integers, so it is not suitable for preserving fractional native usage metrics. The Gemini API supports multiple streamed candidates, but `GeminiGenerator.Stream` does not yet handle them.
+
+### Shared Chat Completions streaming
+
+The shared parser handles SSE framing and maintains separate candidate/tool-call state for each invocation. Parallel tool-call fragments are assembled by index, validated, and emitted in index order after reading the stream. Reasoning fields and structured `reasoning_details` are retained for replay, including signature-only fragments.
+
+`[DONE]` does not immediately end reading: the parser consumes through EOF to retain trailing metadata such as gateway cost. Callers should supply a context deadline. EOF without `[DONE]` or a finish reason is treated as incomplete output. There are no automatic POST retries or stream reconnects in this adapter; retry policy belongs to a wrapper.
 
 ## Provider generators
 
@@ -340,11 +373,39 @@ Constructors set up those connections. Generated clients under `internal/` never
 
 Constructors do not choose a model, install tools, or store instructions. Every call gets that data from `GenerationRequest`.
 
-The Z.AI, DeepSeek, and Moonshot adapters hold private `*OpenAiGenerator` fields, not embedded generic wrappers. Each provider's own file implements request translation and Generate/Stream delegation, copying request option maps to apply its defaults and preserve explicit native overrides. Native counting endpoints, payloads, response schemas, and limitations also belong to the corresponding provider. Only error relabeling and authenticated JSON HTTP mechanics are shared in `compatible.go`; that file does not dispatch on provider identity. This shares wire conversion and stream assembly without accidentally exposing OpenAI's local token counting. Z.AI and Moonshot have native counters; Moonshot rejects tool-bearing count requests rather than claiming undocumented accounting.
+The Cerebras, Z.AI, DeepSeek, and Moonshot adapters hold private `*OpenAiGenerator` fields, not embedded generic wrappers. Each provider's own file implements request translation and Generate/Stream delegation, copying request option maps to apply its defaults and preserve explicit native overrides. Native counting endpoints, payloads, response schemas, and limitations also belong to the corresponding provider. Only error relabeling and authenticated JSON HTTP mechanics are shared in `compatible.go`; that file does not dispatch on provider identity. This shares wire conversion and stream assembly without accidentally exposing OpenAI's local token counting. Z.AI and Moonshot have native counters; Moonshot rejects tool-bearing count requests rather than claiming undocumented accounting.
 
-`GenerationRequest.SafetyIdentifier` and `PromptCacheKey` are independent semantic inputs. Adapters only map them where the provider documents an equivalent; neither is injected into prompts or used to synthesize the other. Cache policy and server cache resource IDs remain separate. `WithReasoningEffort(string)` and `WithThinkingBudget(int)` distinguish qualitative effort from actual thinking-token budgets. Anthropic and OpenRouter reject supplying both.
+### Shared client and provider defaults
 
-`ResponsesGenerator` also sets the upstream `store` option to false. The OpenAI service does not retain the conversation, and the Go generator does not retain request state.
+Only two generated clients remain under `internal/`: `internal/openai` uses oapi-codegen, and `internal/openrouter` uses OGEN. The separate Cerebras, DeepSeek, Z.AI, and OpenCode clients have been removed. The shared Chat Completions schema preserves opaque JSON, nullable fields, and numeric values without routing provider-specific behavior through a central provider switch. Regenerate it with `go generate ./internal/openai`; its tests check regeneration and codec/HTTP contracts.
+
+| Adapter | Default output-limit field | Stream usage request |
+| --- | --- | --- |
+| OpenAI, Cerebras, Moonshot | `max_completion_tokens` | Enabled |
+| DeepSeek | `max_tokens` | Enabled |
+| Z.AI | `max_tokens` | Omitted |
+
+`WithOpenAITokenLimitField` and `WithOpenAIStreamUsage` override these defaults. Translated native options are merged with explicit `WithOpenAIExtraBody` fields, with explicit fields taking precedence. Cerebras uses the shared request fields for identity and cache routing, not separate native helpers.
+
+The shared adapters use OpenAI-named metadata keys even when the endpoint is another provider:
+
+- `OpenAIExtraFieldWireFields` retains message/block fields needed for replay.
+- `OpenAIExtraFieldChoice` retains candidate-level details such as logprobs.
+- `OpenAIResponseExtraFieldWireFields` retains invocation fields, including IDs, timing, service tiers, and gateway cost.
+- `OpenAIResponseExtraFieldUsage` retains native usage breakdowns alongside normalized common metrics.
+- `OpenAIResponseExtraFieldHeaders` retains response headers.
+
+Thinking blocks no longer carry a generator-name marker. Replay depends on the actual provider wire fields, reasoning IDs, signatures, and encrypted content. Replay metadata remains on messages/blocks so appending a candidate does not require retaining the enclosing response. It is not necessarily portable to a different backend.
+
+The shared adapters encode image bytes as data URLs and PDFs as inline file bodies where accepted by the backend. Schema coverage is not a claim that every provider supports every modality or native tool. Recorded request tests exercise public adapters against captured SDK conversations; normal tests never refresh captures or call live APIs.
+
+### Protocol-specific adapters and gateways
+
+Responses, Anthropic Messages, and Gemini retain separate implementations because their request and streaming protocols differ from Chat Completions. OpenRouter also retains its dedicated adapter and generated client. The Anthropic and Responses constructors accept SDK service interfaces; Gemini accepts a `*genai.Client`. Their underlying SDK configuration remains the caller's responsibility.
+
+`ResponsesGenerator` sets `store: false` in its upstream request. This opts out of storing the response through that API option; it is not a guarantee about every form of provider logging or retention. The Go generator does not retain conversation state.
+
+OpenCode has no generator of its own. Callers select Chat Completions, Responses, or Anthropic Messages according to the model and configure that adapter's endpoint and credentials. For OpenCode Go, the Chat Completions/Responses base URL is `https://opencode.ai/zen/go/v1`; the Anthropic SDK base URL is `https://opencode.ai/zen/go/`. Set `Headers` with a stable `X-Opencode-Session` value for the conversation, including retries and tool follow-ups. Errors and metadata use the selected protocol adapter's labels and keys.
 
 ## Wrappers
 
@@ -372,21 +433,21 @@ generator := Wrap(
 
 `RetryGenerator` retries ordinary generation failures according to its policy. For streaming, it retries only failures that occur before the caller receives a data chunk. Retrying after partial output would duplicate content.
 
-`FallbackGenerator` tries generators in order and forwards the request unchanged.
+`FallbackGenerator` implements only `Generator`. It tries generators in order while its fallback policy permits, forwarding the request unchanged. It does not provide streaming failover or token counting.
 
 **Current limitation.** Fallback also forwards `Model` unchanged. Targets that use different model names need a request-rewrite step outside `FallbackGenerator`; the package does not provide a rewrite hook.
 
-`PreprocessingGenerator` makes a shallow copy of the request and replaces its dialog with one that combines parallel tool results. Anthropic and Gemini require this form.
+`PreprocessingGenerator` makes a shallow copy of the request and replaces its dialog with one that combines consecutive parallel tool results for generation and streaming. Anthropic and Gemini require this form. Other fields, including headers, are forwarded unchanged. Its inherited `Count` method delegates without preprocessing.
 
-`StreamingAdapter` collects a `StreamingGenerator` and exposes it as a normal `Generator`.
+`StreamingAdapter` collects a `StreamingGenerator` and exposes it as a normal `Generator`. Its `Count` method delegates when the inner stream generator also implements `TokenCounter`; otherwise it returns an unsupported error.
 
 `AnthropicServiceWrapper` wraps the Anthropic SDK service before it reaches `AnthropicGenerator`. It applies provider request changes such as cache controls.
 
 ## Ownership and concurrency
 
-A generator can handle concurrent calls with different models, instructions, dialogs, tools, and options. The provider client stored inside it must also support concurrent use.
+A generator can handle concurrent calls with different headers, models, instructions, dialogs, tools, and options. The provider client stored inside it must also support concurrent use.
 
-The caller owns request slices and maps. Adapters read them and build provider request values without changing them. Functional option helpers clone slice arguments, so changing the source slice later does not change the stored option.
+The caller owns request slices and maps. Adapters read them and build provider request values without changing them. Option helpers copy data according to their documented contracts; some copies are shallow. Nested maps, schemas, and block content should be treated as borrowed unless the corresponding helper promises a deeper copy.
 
 Retry notifications, fallback policy functions, and service middleware may run concurrently. Code passed into those hooks must be safe for that use.
 
