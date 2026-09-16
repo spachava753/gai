@@ -1,8 +1,0 @@
-generator:
-  features:
-    enable:
-      - "paths/client"
-      - "client/request/validation"
-      - "ogen/otel"
-      - "client/editors"
-    disable_all: true
