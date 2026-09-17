@@ -510,6 +510,14 @@ func openAIRequest(request GenerationRequest, stream bool) (wire.ChatCompletionR
 		if err != nil {
 			return params, nil, err
 		}
+		// Keep instruction boundaries when text blocks become one string.
+		content, contentErr := message.Content.Get()
+		if contentErr == nil {
+			if _, err := content.AsMessageContent0(); err == nil {
+				_ = content.FromMessageContent0(strings.Join(instructions, "\n\n"))
+				message.Content = nullable.NewNullableWithValue(content)
+			}
+		}
 		params.Messages = append(params.Messages, message)
 	}
 	for _, msg := range request.Dialog {
@@ -582,10 +590,10 @@ func openAIRequest(request GenerationRequest, stream bool) (wire.ChatCompletionR
 		modalities = append(modalities, modality.String())
 		if modality == Audio {
 			if options.AudioConfig.VoiceName == "" {
-				return params, nil, InvalidParameterErr{Parameter: "AudioConfig.VoiceName", Reason: "voice name is required for audio output"}
+				return params, nil, InvalidParameterErr{Parameter: "OpenAIAudioConfig.VoiceName", Reason: "voice name is required for audio output"}
 			}
 			if options.AudioConfig.Format == "" {
-				return params, nil, InvalidParameterErr{Parameter: "AudioConfig.Format", Reason: "format is required for audio output"}
+				return params, nil, InvalidParameterErr{Parameter: "OpenAIAudioConfig.Format", Reason: "format is required for audio output"}
 			}
 			params.Audio = nullable.NewNullableWithValue(wire.AudioOptions{Voice: &options.AudioConfig.VoiceName, Format: &options.AudioConfig.Format})
 		}
@@ -609,6 +617,25 @@ func openAIRequest(request GenerationRequest, stream bool) (wire.ChatCompletionR
 		return params, nil, err
 	}
 	params.AdditionalProperties = make(map[string]json.RawMessage, len(fields))
+	if options.LogitBias != nil {
+		value, err := json.Marshal(*options.LogitBias)
+		if err != nil {
+			return params, nil, &InvalidParameterErr{Parameter: GenerationOptionLogitBias, Reason: err.Error()}
+		}
+		params.AdditionalProperties["logit_bias"] = value
+	}
+	if options.Logprobs != nil {
+		params.Logprobs = nullable.NewNullableWithValue(*options.Logprobs)
+	}
+	if options.TopLogprobs != nil {
+		params.TopLogprobs = nullable.NewNullableWithValue(int64(*options.TopLogprobs))
+	}
+	if options.ParallelToolCalls != nil {
+		params.ParallelToolCalls = nullable.NewNullableWithValue(*options.ParallelToolCalls)
+	}
+	if options.Seed != nil {
+		params.Seed = nullable.NewNullableWithValue(int64(*options.Seed))
+	}
 	for name, value := range fields {
 		switch name {
 		case "model", "messages", "tools", "stream":
@@ -640,6 +667,13 @@ func openAIUsage(usage wire.Usage) Metadata {
 	}
 	if cached != nil {
 		result[UsageMetricCacheReadTokens] = int(*cached)
+	}
+	if details.CacheWriteTokens != nil {
+		result[UsageMetricCacheWriteTokens] = int(*details.CacheWriteTokens)
+	}
+	completion, _ := usage.CompletionTokensDetails.Get()
+	if completion.ReasoningTokens != nil {
+		result[UsageMetricReasoningTokens] = int(*completion.ReasoningTokens)
 	}
 	return result
 }
@@ -776,6 +810,9 @@ func openAIResponseMessage(message wire.ResponseMessage, audioFormat string) (Me
 			result.Blocks = append(result.Blocks, TextBlock(*audio.Transcript))
 		}
 	}
+	if len(fields) > 0 {
+		result.ExtraFields = map[string]interface{}{OpenAIExtraFieldWireFields: fields}
+	}
 	calls, _ := message.ToolCalls.Get()
 	for _, call := range calls {
 		if call.Function == nil || call.Function.Name == nil || call.Function.Arguments == nil {
@@ -804,9 +841,6 @@ func openAIResponseMessage(message wire.ResponseMessage, audioFormat string) (Me
 		block.ExtraFields = map[string]interface{}{OpenAIExtraFieldWireFields: extra}
 		result.Blocks = append(result.Blocks, block)
 	}
-	if len(fields) > 0 {
-		result.ExtraFields = map[string]interface{}{OpenAIExtraFieldWireFields: fields}
-	}
 	return result, nil
 }
 
@@ -826,6 +860,8 @@ func openAIFinish(reason, refusal string, tools bool) (FinishReason, error) {
 		return MaxGenerationLimit, ErrMaxGenerationLimit
 	case "content_filter", "sensitive":
 		return ContentPolicyViolation, ContentPolicyErr("content policy violation detected")
+	case "error":
+		return Unknown, &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindServer, Message: "generation stopped: error"}
 	case "network_error", "insufficient_system_resource":
 		// Compatible providers use these terminal reasons instead of an HTTP
 		// error. Wrappers replace Provider while preserving retry classification.
@@ -835,7 +871,50 @@ func openAIFinish(reason, refusal string, tools bool) (FinishReason, error) {
 	}
 }
 
+// openAIResponseError reads an error delivered after HTTP headers were sent.
+// Some compatible APIs put it on a choice beside partial output. Keep the full
+// response body for inspection, but use that error's message and numeric status.
+func openAIResponseError(response *http.Response, data []byte) *ApiErr {
+	var envelope struct {
+		Error   json.RawMessage `json:"error"`
+		Choices []struct {
+			Error json.RawMessage `json:"error"`
+		} `json:"choices"`
+	}
+	_ = json.Unmarshal(data, &envelope)
+	detail := envelope.Error
+	if len(detail) == 0 || bytes.Equal(bytes.TrimSpace(detail), []byte("null")) {
+		for _, choice := range envelope.Choices {
+			if len(choice.Error) > 0 && !bytes.Equal(bytes.TrimSpace(choice.Error), []byte("null")) {
+				detail = choice.Error
+				break
+			}
+		}
+	}
+	if len(detail) == 0 || bytes.Equal(bytes.TrimSpace(detail), []byte("null")) {
+		detail = data
+	}
+	var fields struct {
+		Code int `json:"code"`
+	}
+	_ = json.Unmarshal(detail, &fields)
+	status := response.StatusCode
+	if status >= 200 && status < 300 && fields.Code >= 400 && fields.Code <= 599 {
+		status = fields.Code
+	}
+	return &ApiErr{
+		Provider:           ProviderOpenAI,
+		Kind:               classifyHTTPStatus(status),
+		StatusCode:         status,
+		Message:            parseAPIErrorMessage(string(detail)),
+		RawBody:            string(data),
+		RetryAfterDuration: retryAfterFromResponse(response),
+	}
+}
+
 // Generate sends one request, preserving response headers and opaque metadata.
+// If the provider reports an error alongside partial output, both the response
+// and the error are returned. Check err before treating the answer as complete.
 func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationRequest) (Response, error) {
 	if g.client == nil {
 		return Response{}, fmt.Errorf("openai: client not initialized")
@@ -860,14 +939,9 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationReques
 	if err := json.Unmarshal(data, &completion); err != nil {
 		return Response{}, fmt.Errorf("decode openai response: %w", err)
 	}
+	var generationErr error
 	if completion.Error.IsSpecified() && !completion.Error.IsNull() {
-		return Response{}, &ApiErr{
-			Provider:   ProviderOpenAI,
-			Kind:       APIErrorKindUnknown,
-			StatusCode: response.StatusCode,
-			Message:    parseAPIErrorMessage(string(data)),
-			RawBody:    string(data),
-		}
+		generationErr = openAIResponseError(response, data)
 	}
 	usage, _ := completion.Usage.Get()
 	result := Response{
@@ -879,21 +953,37 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationReques
 		},
 	}
 	if completion.Choices == nil {
+		if generationErr != nil {
+			return result, generationErr
+		}
 		return result, fmt.Errorf("openai response missing choices")
 	}
 	for _, choice := range *completion.Choices {
+		detail := choice.AdditionalProperties["error"]
+		if len(detail) > 0 && !bytes.Equal(bytes.TrimSpace(detail), []byte("null")) {
+			generationErr = openAIResponseError(response, data)
+		}
 		if choice.Message == nil {
+			if generationErr != nil {
+				continue
+			}
 			return result, fmt.Errorf("openai choice missing message")
 		}
 		message, err := openAIResponseMessage(*choice.Message, options.AudioConfig.Format)
-		if err != nil {
+		if err != nil && generationErr == nil {
 			return result, err
 		}
+		// A provider failure can interrupt tool arguments. Keep the text and
+		// metadata decoded so far, but return the provider error, not a JSON
+		// parsing error. The incomplete tool call is never added to the message.
 		if message.ExtraFields == nil {
 			message.ExtraFields = map[string]interface{}{}
 		}
 		message.ExtraFields[OpenAIExtraFieldChoice] = openAIRawFields(choice, "message")
 		result.Candidates = append(result.Candidates, message)
+	}
+	if generationErr != nil {
+		return result, generationErr
 	}
 	if len(*completion.Choices) > 0 {
 		first := (*completion.Choices)[0]
@@ -906,6 +996,11 @@ func (g *OpenAiGenerator) Generate(ctx context.Context, request GenerationReques
 }
 
 type openAIGenerationOptions struct {
+	LogitBias           *map[string]float64
+	Logprobs            *bool
+	TopLogprobs         *int
+	ParallelToolCalls   *bool
+	Seed                *int
 	Temperature         *float64
 	TopP                *float64
 	FrequencyPenalty    *float64
@@ -915,13 +1010,48 @@ type openAIGenerationOptions struct {
 	ToolChoice          string
 	StopSequences       []string
 	OutputModalities    []Modality
-	AudioConfig         AudioConfig
+	AudioConfig         OpenAIAudioConfig
 	ReasoningEffort     string
 }
 
 // parseOpenAIGenerationOptions validates common option values and records the typed Chat Completions configuration.
 func parseOpenAIGenerationOptions(values GenerationOptions) (*openAIGenerationOptions, error) {
 	options := &openAIGenerationOptions{}
+	logitBias, present, err := generationOption[map[string]float64](values, GenerationOptionLogitBias)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		options.LogitBias = &logitBias
+	}
+	logprobs, present, err := generationOption[bool](values, GenerationOptionLogprobs)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		options.Logprobs = &logprobs
+	}
+	topLogprobs, present, err := generationOption[int](values, GenerationOptionTopLogprobs)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		options.TopLogprobs = &topLogprobs
+	}
+	parallelToolCalls, present, err := generationOption[bool](values, GenerationOptionParallelToolCalls)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		options.ParallelToolCalls = &parallelToolCalls
+	}
+	seed, present, err := generationOption[int](values, GenerationOptionSeed)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		options.Seed = &seed
+	}
 
 	temperature, ok, err := generationOption[float64](values, GenerationOptionTemperature)
 	if err != nil {
@@ -971,10 +1101,10 @@ func parseOpenAIGenerationOptions(values GenerationOptions) (*openAIGenerationOp
 	if options.StopSequences, _, err = generationOption[[]string](values, GenerationOptionStopSequences); err != nil {
 		return nil, err
 	}
-	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
+	if options.OutputModalities, _, err = generationOption[[]Modality](values, OpenAIGenerationOptionOutputModalities); err != nil {
 		return nil, err
 	}
-	if options.AudioConfig, _, err = generationOption[AudioConfig](values, GenerationOptionAudioConfig); err != nil {
+	if options.AudioConfig, _, err = generationOption[OpenAIAudioConfig](values, OpenAIGenerationOptionAudioConfig); err != nil {
 		return nil, err
 	}
 	if options.ReasoningEffort, _, err = generationOption[string](values, GenerationOptionReasoningEffort); err != nil {

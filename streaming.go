@@ -99,8 +99,10 @@ type StreamChunk struct {
 // canonical blocks for the final Response. The compression follows these rules:
 //
 // - Consecutive blocks of the same type are merged unless separated by Separator:
-//   - Multiple "content" chunks -> Single content block with concatenated text
-//   - Multiple "thinking" chunks -> Single thinking block with concatenated text
+//   - Consecutive text "content" chunks -> Single content block with concatenated text
+//   - Consecutive text "thinking" chunks -> Single thinking block with concatenated text
+//   - Nontext Content/Thinking chunks -> Separate media blocks with original payloads,
+//     MIME types, and metadata; media blocks also end the preceding text run
 //   - "thinking", Separator, "thinking" -> Two thinking blocks
 //
 // - Separator chunks are dropped after acting as merge boundaries.
@@ -114,10 +116,11 @@ type StreamChunk struct {
 //
 // Modality constraints:
 //
-//   - Content and Thinking blocks MUST have ModalityType=Text
+//   - Text Content and Thinking blocks carry incremental text
+//   - Nontext Content and Thinking blocks carry independently encoded media payloads;
+//     callers must not concatenate their base64 strings to assemble media
 //   - Tool call blocks MUST have ModalityType=Text
 //   - Separator blocks SHOULD have ModalityType=Text and empty content
-//   - Non-text modalities in streaming are not currently supported
 //
 // Tool call structure:
 //
@@ -252,7 +255,6 @@ type StreamingAdapter struct {
 //
 // Returns an error if:
 //   - A block has an unsupported BlockType
-//   - A content/thinking block doesn't have Text modality
 //   - Tool call parameter chunks don't form valid JSON
 //   - A tool call block is missing its ID in the header chunk
 //
@@ -271,9 +273,11 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 		blk := blocks[i]
 		switch blk.BlockType {
 		case Thinking:
-			// Enforce text modality
+			// Thought images are complete media payloads, not text deltas.
 			if blk.ModalityType != Text {
-				return nil, fmt.Errorf("content block type %q does not have text modality (got %q)", blk.BlockType, blk.ModalityType)
+				result = append(result, blk)
+				i++
+				continue
 			}
 			// Group all consecutive thinking blocks.
 			//
@@ -285,10 +289,7 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 			joined := blk.Content.String()
 			extraFields := make(map[string]interface{})
 			maps.Copy(extraFields, blk.ExtraFields)
-			for j < n && blocks[j].BlockType == Thinking {
-				if blocks[j].ModalityType != Text {
-					return nil, fmt.Errorf("content block type %q does not have text modality (got %q)", blocks[j].BlockType, blocks[j].ModalityType)
-				}
+			for j < n && blocks[j].BlockType == Thinking && blocks[j].ModalityType == Text {
 				joined += blocks[j].Content.String()
 				maps.Copy(extraFields, blocks[j].ExtraFields)
 				j++
@@ -303,19 +304,19 @@ func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 			i = j
 			continue
 		case Content:
-			// Enforce text modality
+			// Media blocks contain complete encoded payloads, not text deltas.
+			// Keep each payload and its MIME type and metadata intact.
 			if blk.ModalityType != Text {
-				return nil, fmt.Errorf("content block type %q does not have text modality (got %q)", blk.BlockType, blk.ModalityType)
+				result = append(result, blk)
+				i++
+				continue
 			}
 			// Group consecutive content/text blocks
 			j := i + 1
 			joined := blk.Content.String()
 			extraFields := make(map[string]interface{})
 			maps.Copy(extraFields, blk.ExtraFields)
-			for j < n && blocks[j].BlockType == Content {
-				if blocks[j].ModalityType != Text {
-					return nil, fmt.Errorf("content block type %q does not have text modality (got %q)", blocks[j].BlockType, blocks[j].ModalityType)
-				}
+			for j < n && blocks[j].BlockType == Content && blocks[j].ModalityType == Text {
 				joined += blocks[j].Content.String()
 				maps.Copy(extraFields, blocks[j].ExtraFields)
 				j++

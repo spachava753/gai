@@ -82,7 +82,7 @@ func TestCerebrasAdapterScenarios(t *testing.T) {
 					t.Fatal("exposes OpenAI counter")
 				}
 				request := GenerationRequest{Model: "test-model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, SafetyIdentifier: "native-user", PromptCacheKey: "native-cache", Options: NewGenerationOptions(
-					WithMaxGenerationTokens(128), WithReasoningEffort("high"), WithCerebrasPrediction("known"), WithCerebrasLogitBias(map[string]float64{"42": -1.5}), WithCerebrasLogprobs(true), WithCerebrasTopLogprobs(3), WithCerebrasParallelToolCalls(false), WithCerebrasSeed(7), WithCerebrasServiceTier(CerebrasServiceTierFlex), WithCerebrasResponseFormat(map[string]any{"type": "json_object"}),
+					WithMaxGenerationTokens(128), WithReasoningEffort("high"), WithCerebrasPrediction("known"), WithLogitBias(map[string]float64{"42": -1.5}), WithLogprobs(true), WithTopLogprobs(3), WithParallelToolCalls(false), WithSeed(7), WithCerebrasServiceTier(CerebrasServiceTierFlex), WithCerebrasResponseFormat(map[string]any{"type": "json_object"}),
 				)}
 				var response Response
 				var err error
@@ -126,8 +126,11 @@ func TestCerebrasAdapterScenarios(t *testing.T) {
 		if err != nil || string(request.Options[OpenAIGenerationOptionExtraBody].(map[string]json.RawMessage)["user"]) != `"identity"` {
 			t.Fatalf("identity translation: %+v, %v", request, err)
 		}
-		for _, key := range []string{CerebrasGenerationOptionLogitBias, CerebrasGenerationOptionLogprobs, CerebrasGenerationOptionParallelToolCalls, CerebrasGenerationOptionPrediction, CerebrasGenerationOptionResponseFormat, CerebrasGenerationOptionSeed, CerebrasGenerationOptionServiceTier, CerebrasGenerationOptionTopLogprobs, OpenAIGenerationOptionExtraBody} {
-			_, err := g.prepareRequest(GenerationRequest{Options: GenerationOptions{key: struct{}{}}})
+		for _, key := range []string{GenerationOptionLogitBias, GenerationOptionLogprobs, GenerationOptionParallelToolCalls, CerebrasGenerationOptionPrediction, CerebrasGenerationOptionResponseFormat, GenerationOptionSeed, CerebrasGenerationOptionServiceTier, GenerationOptionTopLogprobs, OpenAIGenerationOptionExtraBody} {
+			request, err := g.prepareRequest(GenerationRequest{Options: GenerationOptions{key: struct{}{}}, Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}})
+			if err == nil {
+				_, _, err = openAIRequest(request, false)
+			}
 			if err == nil {
 				t.Errorf("accepted invalid %s", key)
 			}

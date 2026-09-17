@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"mime"
 	"strings"
 	"time"
 
@@ -213,7 +214,34 @@ func convertToolsToGemini(tools []Tool) ([]*genai.FunctionDeclaration, error) {
 	return converted, nil
 }
 
+// GeminiExtraFieldLogprobs is the [Message.ExtraFields] key containing
+// []*genai.LogprobsResult: one native candidate report for Generate, or the
+// ordered native reports received by Stream. Reports are not summed or deduplicated.
+const GeminiExtraFieldLogprobs = "gemini_logprobs"
+
+// GeminiGenerationOptionOutputModalities is the []Modality option key set by
+// [WithGeminiOutputModalities]. Gemini accepts Text, Image, and Audio output;
+// the selected model validates which combinations it supports.
+const GeminiGenerationOptionOutputModalities = "gemini_output_modalities"
+
+// WithGeminiOutputModalities selects Gemini response modalities using
+// [GeminiGenerationOptionOutputModalities]. Omit it to use the model's default.
+// Returned inline image and audio blocks contain base64 data and the MIME type
+// supplied by Gemini; no file headers or audio format conversions are added.
+func WithGeminiOutputModalities(values ...Modality) GenerationOption {
+	return func(options GenerationOptions) {
+		options[GeminiGenerationOptionOutputModalities] = append([]Modality(nil), values...)
+	}
+}
+
 type geminiGenerationOptions struct {
+	OutputModalities    []string
+	ThinkingBudget      *int32
+	PresencePenalty     *float32
+	FrequencyPenalty    *float32
+	Seed                *int32
+	TopLogprobs         *int32
+	Logprobs            bool
 	Temperature         *float64
 	TopP                *float64
 	TopK                *uint
@@ -227,6 +255,46 @@ type geminiGenerationOptions struct {
 // parseGeminiGenerationOptions validates common option values and records the typed Gemini configuration.
 func parseGeminiGenerationOptions(values GenerationOptions) (*geminiGenerationOptions, error) {
 	options := &geminiGenerationOptions{}
+	for _, field := range []struct {
+		key    string
+		target **float32
+	}{
+		{GenerationOptionPresencePenalty, &options.PresencePenalty},
+		{GenerationOptionFrequencyPenalty, &options.FrequencyPenalty},
+	} {
+		value, present, err := generationOption[float64](values, field.key)
+		if err != nil {
+			return nil, err
+		}
+		if present {
+			converted := float32(value)
+			*field.target = &converted
+		}
+	}
+	for _, field := range []struct {
+		key    string
+		target **int32
+	}{
+		{GenerationOptionSeed, &options.Seed},
+		{GenerationOptionTopLogprobs, &options.TopLogprobs},
+	} {
+		value, present, err := generationOption[int](values, field.key)
+		if err != nil {
+			return nil, err
+		}
+		if present {
+			if int64(value) < -1<<31 || int64(value) > 1<<31-1 {
+				return nil, &InvalidParameterErr{Parameter: field.key, Reason: "must fit in int32"}
+			}
+			converted := int32(value)
+			*field.target = &converted
+		}
+	}
+	logprobs, _, err := generationOption[bool](values, GenerationOptionLogprobs)
+	if err != nil {
+		return nil, err
+	}
+	options.Logprobs = logprobs
 
 	temperature, ok, err := generationOption[float64](values, GenerationOptionTemperature)
 	if err != nil {
@@ -272,16 +340,84 @@ func parseGeminiGenerationOptions(values GenerationOptions) (*geminiGenerationOp
 	if options.ReasoningEffort, _, err = generationOption[string](values, GenerationOptionReasoningEffort); err != nil {
 		return nil, err
 	}
+	budget, present, err := generationOption[int](values, GenerationOptionThinkingBudget)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		if budget <= 0 || int64(budget) > 1<<31-1 || options.ReasoningEffort != "" {
+			return nil, &InvalidParameterErr{Parameter: GenerationOptionThinkingBudget, Reason: "must be positive, fit in int32, and cannot be combined with reasoning effort"}
+		}
+		options.ThinkingBudget = genai.Ptr(int32(budget))
+	}
+	modalities, present, err := generationOption[[]Modality](values, GeminiGenerationOptionOutputModalities)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		if len(modalities) == 0 {
+			return nil, &InvalidParameterErr{Parameter: GeminiGenerationOptionOutputModalities, Reason: "must contain at least one modality"}
+		}
+		for _, modality := range modalities {
+			switch modality {
+			case Text:
+				options.OutputModalities = append(options.OutputModalities, "TEXT")
+			case Image:
+				options.OutputModalities = append(options.OutputModalities, "IMAGE")
+			case Audio:
+				options.OutputModalities = append(options.OutputModalities, "AUDIO")
+			default:
+				return nil, &InvalidParameterErr{Parameter: GeminiGenerationOptionOutputModalities, Reason: fmt.Sprintf("unsupported output modality %d", modality)}
+			}
+		}
+	}
 	return options, nil
+}
+
+// geminiContentBlock preserves a returned text or inline-media part.
+func geminiContentBlock(part *genai.Part) (Block, error) {
+	block := TextBlock(part.Text)
+	if part.Thought {
+		block.BlockType = Thinking
+	}
+	if part.InlineData != nil {
+		mediaType, _, err := mime.ParseMediaType(part.InlineData.MIMEType)
+		if err != nil {
+			return Block{}, fmt.Errorf("gemini: invalid inline output MIME type %q: %w", part.InlineData.MIMEType, err)
+		}
+		switch {
+		case strings.HasPrefix(mediaType, "image/"):
+			block.ModalityType = Image
+		case strings.HasPrefix(mediaType, "audio/"):
+			block.ModalityType = Audio
+		default:
+			return Block{}, UnsupportedOutputModalityErr(part.InlineData.MIMEType)
+		}
+		block.MimeType = part.InlineData.MIMEType
+		block.Content = Str(base64.StdEncoding.EncodeToString(part.InlineData.Data))
+	}
+	if part.ThoughtSignature != nil {
+		block.ExtraFields = map[string]interface{}{GeminiExtraFieldThoughtSignature: base64.StdEncoding.EncodeToString(part.ThoughtSignature)}
+	}
+	return block, nil
 }
 
 // GeminiGenerator adapts Google Gemini to [Generator], [StreamingGenerator], and
 // [TokenCounter]. It accepts text, image, audio, and PDF input, produces text,
+// inline images, and inline audio,
 // supports function tools, and preprocesses parallel tool results.
 //
 // Gemini consumes [WithTemperature], [WithTopP], [WithTopK],
 // [WithCandidateCount], [WithMaxGenerationTokens], [WithToolChoice],
-// [WithStopSequences], and [WithReasoningEffort]. Thinking blocks preserve
+// [WithStopSequences], [WithReasoningEffort], [WithSeed], [WithLogprobs],
+// [WithTopLogprobs], [WithPresencePenalty], [WithFrequencyPenalty],
+// [WithThinkingBudget], and [WithGeminiOutputModalities]. Thinking budgets must
+// be positive and fit int32; Gemini's native 0 and -1 sentinels are not part of
+// the common budget option. Budget and reasoning effort cannot be combined.
+// Logprobs false uses the endpoint's false default (the SDK omits false).
+// [WithTopLogprobs] does not enable [WithLogprobs]. Seed and top-logprob counts
+// must fit int32. Logprob reports are retained under [GeminiExtraFieldLogprobs].
+// Thinking blocks preserve
 // [GeminiExtraFieldThoughtSignature] in [Block.ExtraFields] for replay.
 // SafetyIdentifier and PromptCacheKey are ignored: generateContent has no
 // equivalent fields. They are not mapped to safety settings or cachedContent,
@@ -368,6 +504,13 @@ func (g *GeminiGenerator) Generate(ctx context.Context, request GenerationReques
 			genContentConfig.ToolConfig = tc
 		}
 
+		genContentConfig.ResponseModalities = options.OutputModalities
+		genContentConfig.ThinkingConfig.ThinkingBudget = options.ThinkingBudget
+		genContentConfig.PresencePenalty = options.PresencePenalty
+		genContentConfig.FrequencyPenalty = options.FrequencyPenalty
+		genContentConfig.Seed = options.Seed
+		genContentConfig.Logprobs = options.TopLogprobs
+		genContentConfig.ResponseLogprobs = options.Logprobs
 		if options.Temperature != nil {
 			genContentConfig.Temperature = genai.Ptr(float32(*options.Temperature))
 		}
@@ -433,62 +576,20 @@ func (g *GeminiGenerator) Generate(ctx context.Context, request GenerationReques
 	// Map candidates to gai.Messages
 	var hasToolCalls bool
 	for _, cand := range resp.Candidates {
-		if cand.Content == nil {
+		if cand == nil {
 			continue
 		}
 		var blocks []Block
-		for _, part := range cand.Content.Parts {
-			if part.Text != "" {
-				blkType := Content
-				if part.Thought {
-					blkType = Thinking
+		var parts []*genai.Part
+		if cand.Content != nil {
+			parts = cand.Content.Parts
+		}
+		for _, part := range parts {
+			if part.Text != "" || part.InlineData != nil || (part.ThoughtSignature != nil && part.FunctionCall == nil) {
+				block, err := geminiContentBlock(part)
+				if err != nil {
+					return result, err
 				}
-
-				block := Block{
-					BlockType:    blkType,
-					ModalityType: Text,
-					MimeType:     "text/plain",
-					Content:      Str(part.Text),
-				}
-
-				if part.ThoughtSignature != nil {
-					block.ExtraFields = map[string]interface{}{
-						GeminiExtraFieldThoughtSignature: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
-					}
-				}
-
-				blocks = append(blocks, block)
-			} else if part.InlineData != nil {
-				// Handle inline data (could be image, audio, video)
-				mimeType := part.InlineData.MIMEType
-				data := base64.StdEncoding.EncodeToString(part.InlineData.Data)
-
-				// Determine modality based on MIME type
-				var modality Modality
-				if strings.HasPrefix(mimeType, "image/") {
-					modality = Image
-				} else if strings.HasPrefix(mimeType, "audio/") {
-					modality = Audio
-				} else if strings.HasPrefix(mimeType, "video/") {
-					modality = Video
-				} else {
-					// Default to text for unknown types
-					modality = Text
-				}
-
-				block := Block{
-					BlockType:    Content,
-					ModalityType: modality,
-					MimeType:     mimeType,
-					Content:      Str(data),
-				}
-
-				if part.ThoughtSignature != nil {
-					block.ExtraFields = map[string]interface{}{
-						GeminiExtraFieldThoughtSignature: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
-					}
-				}
-
 				blocks = append(blocks, block)
 			} else if part.FunctionCall != nil {
 				fc := part.FunctionCall
@@ -523,6 +624,9 @@ func (g *GeminiGenerator) Generate(ctx context.Context, request GenerationReques
 		msg := Message{
 			Role:   Assistant,
 			Blocks: blocks,
+		}
+		if cand.LogprobsResult != nil {
+			msg.ExtraFields = map[string]interface{}{GeminiExtraFieldLogprobs: []*genai.LogprobsResult{cand.LogprobsResult}}
 		}
 		result.Candidates = append(result.Candidates, msg)
 	}
@@ -616,6 +720,13 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				genContentConfig.ToolConfig = tc
 			}
 
+			genContentConfig.ResponseModalities = options.OutputModalities
+			genContentConfig.ThinkingConfig.ThinkingBudget = options.ThinkingBudget
+			genContentConfig.PresencePenalty = options.PresencePenalty
+			genContentConfig.FrequencyPenalty = options.FrequencyPenalty
+			genContentConfig.Seed = options.Seed
+			genContentConfig.Logprobs = options.TopLogprobs
+			genContentConfig.ResponseLogprobs = options.Logprobs
 			if options.Temperature != nil {
 				genContentConfig.Temperature = genai.Ptr(float32(*options.Temperature))
 			}
@@ -655,6 +766,7 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 		var totalInputTokens, totalOutputTokens, totalCacheReadTokens int32
 
 		genContentConfig.HTTPOptions = &genai.HTTPOptions{Headers: request.Headers.Clone()}
+		var logprobReports []*genai.LogprobsResult
 		for resp, err := range g.client.Models.GenerateContentStream(ctx, request.Model, allContents, genContentConfig) {
 			if err != nil {
 				if mapped := mapGeminiError(err); mapped != nil {
@@ -685,43 +797,40 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				}
 			}
 
-			if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
+			if len(resp.Candidates) > 0 && resp.Candidates[0] != nil && resp.Candidates[0].LogprobsResult != nil {
+				logprobReports = append(logprobReports, resp.Candidates[0].LogprobsResult)
+			}
+			if len(resp.Candidates) == 0 || resp.Candidates[0] == nil || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
 				if !yield(StreamChunk{
 					Block:           TextBlock(""),
 					CandidatesIndex: 0,
 				}) {
 					return
 				}
+				continue
 			}
 			if len(resp.Candidates) != 1 {
 				panic("cannot handle multiple candidates at this time")
 			}
 
 			for _, part := range resp.Candidates[0].Content.Parts {
-				if part.Text != "" {
-					if part.Thought {
-						if !yield(StreamChunk{
-							Block: Block{
-								BlockType:    Thinking,
-								ModalityType: Text,
-								MimeType:     "text/plain",
-								Content:      Str(part.Text),
-							},
-							CandidatesIndex: 0,
-						}) {
-							return
-						}
-					} else {
-						if !yield(StreamChunk{
-							Block: TextBlock(part.Text),
-						}) {
-							return
-						}
+				if part.Text != "" || part.InlineData != nil || (part.ThoughtSignature != nil && part.FunctionCall == nil) {
+					block, err := geminiContentBlock(part)
+					if err != nil {
+						yield(StreamChunk{Err: err})
+						return
+					}
+					// Each inline blob is a complete base64 payload, not a text delta.
+					if part.InlineData != nil && !yield(StreamChunk{Block: SeparatorBlock()}) {
+						return
+					}
+					if !yield(StreamChunk{Block: block}) {
+						return
+					}
+					if part.InlineData != nil && !yield(StreamChunk{Block: SeparatorBlock()}) {
+						return
 					}
 				} else {
-					if part.InlineData != nil {
-						panic("unknown block type")
-					}
 					if part.CodeExecutionResult != nil {
 						panic("unknown block type")
 					}
@@ -771,6 +880,12 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 						panic("unexpected block type")
 					}
 				}
+			}
+		}
+
+		if len(logprobReports) > 0 {
+			if !yield(StreamChunk{Block: SeparatorBlock(), MessageExtraFields: map[string]interface{}{GeminiExtraFieldLogprobs: logprobReports}}) {
+				return
 			}
 		}
 
@@ -831,35 +946,33 @@ func msgToGeminiContent(msg Message, toolCallIDToFuncName map[string]string) (*g
 	case Assistant:
 		role = genai.RoleModel
 		for _, block := range msg.Blocks {
-			if block.BlockType == Content {
+			if block.BlockType == Content || block.BlockType == Thinking {
+				var part *genai.Part
 				switch block.ModalityType {
 				case Text:
-					part := genai.NewPartFromText(block.Content.String())
-					if sigVal, ok := block.ExtraFields[GeminiExtraFieldThoughtSignature]; ok && sigVal != nil {
-						sig, err := base64.StdEncoding.DecodeString(sigVal.(string))
-						if err != nil {
-							return nil, fmt.Errorf("could not decode base64 thought signature: %w", err)
-						}
-						part.ThoughtSignature = sig
+					part = genai.NewPartFromText(block.Content.String())
+				case Image, Audio:
+					data, err := base64.StdEncoding.DecodeString(block.Content.String())
+					if err != nil {
+						return nil, fmt.Errorf("decoding assistant media failed: %w", err)
 					}
-					parts = append(parts, part)
-				case Audio:
-					fileContent, decodeErr := base64.StdEncoding.DecodeString(block.Content.String())
-					if decodeErr != nil {
-						return nil, fmt.Errorf("decoding audio content failed: %w", decodeErr)
-					}
-					part := genai.NewPartFromBytes(fileContent, block.MimeType)
-					if sigVal, ok := block.ExtraFields[GeminiExtraFieldThoughtSignature]; ok && sigVal != nil {
-						sig, err := base64.StdEncoding.DecodeString(sigVal.(string))
-						if err != nil {
-							return nil, fmt.Errorf("could not decode base64 thought signature: %w", err)
-						}
-						part.ThoughtSignature = sig
-					}
-					parts = append(parts, part)
+					part = genai.NewPartFromBytes(data, block.MimeType)
 				default:
-					// Skip unsupported modalities for assistant messages
+					return nil, fmt.Errorf("unsupported modality type in assistant message: %v", block.ModalityType)
 				}
+				part.Thought = block.BlockType == Thinking
+				if value, present := block.ExtraFields[GeminiExtraFieldThoughtSignature]; present && value != nil {
+					encoded, ok := value.(string)
+					if !ok {
+						return nil, fmt.Errorf("gemini: thought signature must be a base64 string, got %T", value)
+					}
+					signature, err := base64.StdEncoding.DecodeString(encoded)
+					if err != nil {
+						return nil, fmt.Errorf("could not decode base64 thought signature: %w", err)
+					}
+					part.ThoughtSignature = signature
+				}
+				parts = append(parts, part)
 			}
 			if block.BlockType == ToolCall && block.ModalityType == Text {
 				// Unmarshal to get function name, params

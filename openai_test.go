@@ -35,6 +35,47 @@ Assistant: Nvidia
 `
 
 func TestChatCompletionRequestControls(t *testing.T) {
+	t.Run("NativeAudioOptions", func(t *testing.T) {
+		modalities := []Modality{Text, Audio}
+		options := NewGenerationOptions(WithOpenAIOutputModalities(modalities...), WithOpenAIAudioConfig(OpenAIAudioConfig{VoiceName: "alloy", Format: "wav"}))
+		modalities[0] = Video
+		request := GenerationRequest{Model: "model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: options}
+		for _, stream := range []bool{false, true} {
+			params, parsed, err := openAIRequest(request, stream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(data, &body); err != nil {
+				t.Fatal(err)
+			}
+			if fmt.Sprint(body["modalities"]) != "[text audio]" || body["audio"].(map[string]any)["voice"] != "alloy" || body["audio"].(map[string]any)["format"] != "wav" || parsed.AudioConfig.Format != "wav" {
+				t.Fatalf("audio configuration lost: %s", data)
+			}
+		}
+		for _, key := range []string{OpenAIGenerationOptionOutputModalities, OpenAIGenerationOptionAudioConfig} {
+			request.Options = GenerationOptions{key: "wrong"}
+			if _, _, err := openAIRequest(request, false); err == nil {
+				t.Fatalf("accepted invalid %s", key)
+			}
+		}
+		request.Options = GenerationOptions{"output_modalities": []Modality{Audio}, "audio_config": OpenAIAudioConfig{VoiceName: "alloy", Format: "wav"}}
+		params, parsed, err := openAIRequest(request, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := json.Marshal(params)
+		var body map[string]any
+		_ = json.Unmarshal(data, &body)
+		if body["modalities"] != nil || body["audio"] != nil || parsed.AudioConfig.Format != "" {
+			t.Fatalf("legacy generic keys still consumed: %s", data)
+		}
+	})
+	t.Run("CommonOptions", func(t *testing.T) { testCommonChatCompletionOptions(t) })
 	for _, stream := range []bool{false, true} {
 		request := GenerationRequest{Model: "model", SafetyIdentifier: "opaque-user", PromptCacheKey: "prefix", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(WithThinkingBudget(2048), WithOpenAIPromptCacheRetention("24h"), WithOpenAIPromptCacheOptions(json.RawMessage(`{"mode":"implicit","ttl":"30m"}`)), WithOpenAIResponseFormat(json.RawMessage(`{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object"}}}`)))}
 		params, _, err := openAIRequest(request, stream)
@@ -74,7 +115,7 @@ func TestChatCompletionRequestControls(t *testing.T) {
 	}
 	raw := json.RawMessage(`{"type":"json_object"}`)
 	fields := map[string]json.RawMessage{"other": json.RawMessage(`true`)}
-	opts := NewGenerationOptions(WithOpenAIExtraBody(fields), WithOpenAIResponseFormat(raw), WithOpenAILogprobs(true))
+	opts := NewGenerationOptions(WithOpenAIExtraBody(fields), WithOpenAIResponseFormat(raw), WithLogprobs(true))
 	raw[0] = 'x'
 	if len(fields) != 1 || string(opts[OpenAIGenerationOptionExtraBody].(map[string]json.RawMessage)["response_format"]) != `{"type":"json_object"}` {
 		t.Fatal("option mutated or retained mutable input")
@@ -94,6 +135,21 @@ func ExampleNewOpenAiGenerator() {
 	_ = GenerationRequest{Model: "caller-selected-model", Options: options}
 	fmt.Println(generator != nil, options[OpenAIGenerationOptionTokenLimitField])
 	// Output: true max_tokens
+}
+
+func ExampleWithOpenAIAudioConfig() {
+	options := NewGenerationOptions(
+		WithOpenAIOutputModalities(Text, Audio),
+		WithOpenAIAudioConfig(OpenAIAudioConfig{VoiceName: "alloy", Format: "wav"}),
+	)
+	// Supply these options to a Chat Completions model that supports audio.
+	// The format also determines the MIME type of returned audio blocks.
+	config := options[OpenAIGenerationOptionAudioConfig].(OpenAIAudioConfig)
+	fmt.Println(options[OpenAIGenerationOptionOutputModalities])
+	fmt.Println(config.VoiceName, config.Format)
+	// Output:
+	// [text audio]
+	// alloy wav
 }
 
 func ExampleWithOpenAIExtraBody() {
@@ -449,6 +505,8 @@ func TestToOpenAIMessage(t *testing.T) {
 }
 
 func TestOpenAIAdapterScenarios(t *testing.T) {
+	t.Run("EmbeddedErrors", func(t *testing.T) { testOpenAIEmbeddedErrors(t) })
+	t.Run("StreamChoiceMetadata", func(t *testing.T) { testOpenAIStreamChoiceMetadata(t) })
 	t.Run("HTTP", func(t *testing.T) { testOpenAIHTTPClient(t) })
 	t.Run("SSE", func(t *testing.T) { testOpenAIHTTPStreaming(t) })
 	t.Run("termination", func(t *testing.T) { testOpenAIStreamTermination(t) })

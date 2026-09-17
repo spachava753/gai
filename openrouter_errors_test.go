@@ -15,8 +15,26 @@ func testOpenRouterGeneratorSurfacesProviderOverload(t *testing.T) {
 		wantPartial bool
 	}{
 		{
+			name: "top-level error_type",
+			body: `{"error":{"code":503,"message":"Upstream request failed","error_type":"provider_overloaded"}}`,
+		},
+		{
+			name: "metadata takes precedence",
+			body: `{"error":{"code":503,"message":"Upstream request failed","error_type":"authentication","metadata":{"error_type":"provider_overloaded"}}}`,
+		},
+		{
 			name: "top-level error",
 			body: `{"error":{"code":503,"message":"Invalid API key","metadata":{"error_type":"provider_overloaded"}}}`,
+		},
+		{
+			name:        "choice error with interrupted tool arguments",
+			body:        `{"choices":[{"index":0,"message":{"role":"assistant","content":"partial output","tool_calls":[{"id":"call","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":"error","error":{"code":503,"message":"Upstream request failed","metadata":{"error_type":"provider_overloaded"}}}]}`,
+			wantPartial: true,
+		},
+		{
+			name:        "top-level error with interrupted tool arguments",
+			body:        `{"error":{"code":503,"message":"Upstream request failed","metadata":{"error_type":"provider_overloaded"}},"choices":[{"index":0,"message":{"role":"assistant","content":"partial output","tool_calls":[{"id":"call","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":"error"}]}`,
+			wantPartial: true,
 		},
 		{
 			name:        "choice error after partial output",

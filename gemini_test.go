@@ -12,6 +12,8 @@ import (
 )
 
 func TestGoogleAdapterScenarios(t *testing.T) {
+	t.Run("NativeOutputAndThinking", func(t *testing.T) { testGeminiNativeOutputAndThinking(t) })
+	t.Run("CommonLogprobOptions", func(t *testing.T) { testGeminiCommonLogprobOptions(t) })
 	t.Run("GeminiAPIErrorMapping", func(t *testing.T) { testGeminiAPIErrorMapping(t) })
 	t.Run("GeminiGenerator/Count", func(t *testing.T) {
 		apiKey := requireLiveAPIKey(t, "GEMINI_API_KEY")

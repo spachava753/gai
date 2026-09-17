@@ -141,6 +141,53 @@ func openAIMergeStreamFields(target map[string]json.RawMessage, update map[strin
 	return nil
 }
 
+// openAIMergeChoiceFields retains the final choice metadata and joins token
+// log probabilities in stream order. A later null does not erase earlier data.
+func openAIMergeChoiceFields(target map[string]json.RawMessage, choice wire.ChunkChoice) error {
+	for key, value := range openAIRawFields(choice, "delta", "usage") {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) && target[key] != nil {
+			continue
+		}
+		if key != "logprobs" || target[key] == nil {
+			target[key] = value
+			continue
+		}
+		var previous, incoming map[string]json.RawMessage
+		if err := json.Unmarshal(target[key], &previous); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(value, &incoming); err != nil {
+			return err
+		}
+		if previous == nil {
+			previous = make(map[string]json.RawMessage)
+		}
+		for field, fragment := range incoming {
+			if bytes.Equal(bytes.TrimSpace(fragment), []byte("null")) && previous[field] != nil {
+				continue
+			}
+			switch field {
+			case "content", "refusal", "reasoning_content":
+				var before, after []json.RawMessage
+				if old := previous[field]; old != nil {
+					if err := json.Unmarshal(old, &before); err != nil {
+						return err
+					}
+				}
+				if err := json.Unmarshal(fragment, &after); err != nil {
+					return err
+				}
+				if len(before) > 0 || len(after) > 0 {
+					fragment, _ = json.Marshal(append(before, after...))
+				}
+			}
+			previous[field] = fragment
+		}
+		target[key], _ = json.Marshal(previous)
+	}
+	return nil
+}
+
 func openAISSELine(data []byte, atEOF bool) (int, []byte, error) {
 	for i, b := range data {
 		if b == '\n' {
@@ -172,6 +219,7 @@ type openAIStreamCandidate struct {
 	thinking openAIThinkingDisplay
 	tools    map[int64]*openAIStreamTool
 	fields   map[string]json.RawMessage
+	choice   map[string]json.RawMessage
 	reason   string
 	refused  string
 }
@@ -208,7 +256,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				yield(StreamChunk{Err: err})
 				return
 			}
-			yield(StreamChunk{Err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindUnknown, StatusCode: response.StatusCode, Message: parseAPIErrorMessage(string(body)), RawBody: string(body)}})
+			yield(StreamChunk{Err: openAIResponseError(response, body)})
 			return
 		}
 		candidates := map[int64]*openAIStreamCandidate{}
@@ -230,7 +278,7 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				return
 			}
 			if (chunk.Error.IsSpecified() && !chunk.Error.IsNull()) || (chunk.Type != nil && *chunk.Type == "error") {
-				yield(StreamChunk{Err: &ApiErr{Provider: ProviderOpenAI, Kind: APIErrorKindUnknown, StatusCode: response.StatusCode, RawBody: string(data), Message: parseAPIErrorMessage(string(data))}})
+				yield(StreamChunk{Err: openAIResponseError(response, data)})
 				return
 			}
 			for key, value := range openAIRawFields(chunk, "choices", "usage") {
@@ -243,6 +291,10 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				continue
 			}
 			for _, choice := range *chunk.Choices {
+				if detail := choice.AdditionalProperties["error"]; len(detail) > 0 && !bytes.Equal(bytes.TrimSpace(detail), []byte("null")) {
+					yield(StreamChunk{Err: openAIResponseError(response, data)})
+					return
+				}
 				index := int64(0)
 				if choice.Index != nil {
 					index = *choice.Index
@@ -253,8 +305,12 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				}
 				candidate := candidates[index]
 				if candidate == nil {
-					candidate = &openAIStreamCandidate{tools: map[int64]*openAIStreamTool{}, fields: map[string]json.RawMessage{"content": json.RawMessage(`""`)}}
+					candidate = &openAIStreamCandidate{tools: map[int64]*openAIStreamTool{}, fields: map[string]json.RawMessage{"content": json.RawMessage(`""`)}, choice: map[string]json.RawMessage{}}
 					candidates[index] = candidate
+				}
+				if err := openAIMergeChoiceFields(candidate.choice, choice); err != nil {
+					yield(StreamChunk{Err: fmt.Errorf("merge openai choice metadata: %w", err)})
+					return
 				}
 				if value, err := choice.Usage.Get(); err == nil {
 					usage = value
@@ -386,8 +442,8 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				}
 				delete(candidate.fields, "audio")
 			}
-			if len(candidate.fields) > 0 {
-				if !yield(StreamChunk{Block: SeparatorBlock(), MessageExtraFields: map[string]interface{}{OpenAIExtraFieldWireFields: candidate.fields}, CandidatesIndex: int(index)}) {
+			if len(candidate.fields) > 0 || len(candidate.choice) > 0 {
+				if !yield(StreamChunk{Block: SeparatorBlock(), MessageExtraFields: map[string]interface{}{OpenAIExtraFieldWireFields: candidate.fields, OpenAIExtraFieldChoice: candidate.choice}, CandidatesIndex: int(index)}) {
 					return
 				}
 			}

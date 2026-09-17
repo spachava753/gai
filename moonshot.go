@@ -24,8 +24,11 @@ const MoonshotDefaultBaseURL = "https://api.moonshot.ai/v1"
 // and keeps reasoning. K3 requests should omit these thinking controls and use
 // [WithReasoningEffort] instead. These are caller responsibilities: this adapter
 // does not rewrite settings or discard historical reasoning based on model names.
-// Current models may fix sampling parameters and restrict required/named tools.
-// JSON-object/schema output uses [WithOpenAIResponseFormat].
+// Current Kimi models fix temperature, top-p, candidate count, and frequency/
+// presence penalties, and restrict required/named tools. Logprob controls are
+// documented. Seed, logit bias, and parallel-tool control are forwarded if
+// supplied, but are not documented provider controls. JSON-object/schema output
+// uses [WithOpenAIResponseFormat].
 //
 // [MoonshotGenerator.Count] calls the native estimator for text and supported
 // images. Requests containing tools are rejected because the counting endpoint

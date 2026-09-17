@@ -12,9 +12,13 @@ import (
 func testNewGenerationOptions(t *testing.T) {
 	stops := []string{"END", "STOP"}
 	modalities := []Modality{Text, Audio}
-	audio := AudioConfig{VoiceName: "alloy", Format: "wav"}
+	audio := OpenAIAudioConfig{VoiceName: "alloy", Format: "wav"}
+	bias := map[string]float64{"42": -1.5}
 
 	options := NewGenerationOptions(
+		WithLogitBias(bias), WithLogprobs(false), WithTopLogprobs(0),
+		WithParallelToolCalls(false), WithSeed(0), WithOpenRouterMinP(0.05),
+		WithOpenRouterTopA(0.2), WithOpenRouterRepetitionPenalty(1.1),
 		WithTemperature(0.2),
 		WithTopP(0.8),
 		WithTopK(40),
@@ -24,36 +28,48 @@ func testNewGenerationOptions(t *testing.T) {
 		WithMaxGenerationTokens(512),
 		WithToolChoice(ToolChoiceAuto),
 		WithStopSequences(stops...),
-		WithOutputModalities(modalities...),
-		WithAudioConfig(audio),
+		WithOpenAIOutputModalities(modalities...),
+		WithOpenAIAudioConfig(audio),
 		WithReasoningEffort("medium"),
 	)
 
 	want := GenerationOptions{
-		GenerationOptionTemperature:         0.2,
-		GenerationOptionTopP:                0.8,
-		GenerationOptionTopK:                uint(40),
-		GenerationOptionFrequencyPenalty:    0.1,
-		GenerationOptionPresencePenalty:     0.3,
-		GenerationOptionCandidateCount:      uint(2),
-		GenerationOptionMaxGenerationTokens: 512,
-		GenerationOptionToolChoice:          ToolChoiceAuto,
-		GenerationOptionStopSequences:       []string{"END", "STOP"},
-		GenerationOptionOutputModalities:    []Modality{Text, Audio},
-		GenerationOptionAudioConfig:         audio,
-		GenerationOptionReasoningEffort:     "medium",
+		GenerationOptionLogitBias:                   map[string]float64{"42": -1.5},
+		GenerationOptionLogprobs:                    false,
+		GenerationOptionTopLogprobs:                 0,
+		GenerationOptionParallelToolCalls:           false,
+		GenerationOptionSeed:                        0,
+		OpenRouterGenerationOptionMinP:              0.05,
+		OpenRouterGenerationOptionTopA:              0.2,
+		OpenRouterGenerationOptionRepetitionPenalty: 1.1,
+		GenerationOptionTemperature:                 0.2,
+		GenerationOptionTopP:                        0.8,
+		GenerationOptionTopK:                        uint(40),
+		GenerationOptionFrequencyPenalty:            0.1,
+		GenerationOptionPresencePenalty:             0.3,
+		GenerationOptionCandidateCount:              uint(2),
+		GenerationOptionMaxGenerationTokens:         512,
+		GenerationOptionToolChoice:                  ToolChoiceAuto,
+		GenerationOptionStopSequences:               []string{"END", "STOP"},
+		OpenAIGenerationOptionOutputModalities:      []Modality{Text, Audio},
+		OpenAIGenerationOptionAudioConfig:           audio,
+		GenerationOptionReasoningEffort:             "medium",
 	}
 	if !reflect.DeepEqual(options, want) {
 		t.Fatalf("NewGenerationOptions() = %#v, want %#v", options, want)
 	}
 
+	bias["42"] = 99
+	if options[GenerationOptionLogitBias].(map[string]float64)["42"] != -1.5 {
+		t.Fatal("logit bias changed after mutating input")
+	}
 	stops[0] = "changed"
 	modalities[0] = Video
 	if !reflect.DeepEqual(options[GenerationOptionStopSequences], []string{"END", "STOP"}) {
 		t.Fatalf("stop sequences changed after mutating input: %#v", options[GenerationOptionStopSequences])
 	}
-	if !reflect.DeepEqual(options[GenerationOptionOutputModalities], []Modality{Text, Audio}) {
-		t.Fatalf("output modalities changed after mutating input: %#v", options[GenerationOptionOutputModalities])
+	if !reflect.DeepEqual(options[OpenAIGenerationOptionOutputModalities], []Modality{Text, Audio}) {
+		t.Fatalf("output modalities changed after mutating input: %#v", options[OpenAIGenerationOptionOutputModalities])
 	}
 }
 
@@ -136,12 +152,12 @@ func TestTextInstructions(t *testing.T) {
 		if !reflect.DeepEqual(parts, []string{"first", "second"}) {
 			t.Fatalf("textInstructions() = %#v", parts)
 		}
-		joined, err := joinedTextInstructions(instructions)
+		params, err := (&ResponsesGenerator{}).buildParams(nil, GenerationRequest{Model: "test", Instructions: instructions})
 		if err != nil {
-			t.Fatalf("joinedTextInstructions() error = %v", err)
+			t.Fatal(err)
 		}
-		if joined != "first\n\nsecond" {
-			t.Fatalf("joinedTextInstructions() = %q, want %q", joined, "first\n\nsecond")
+		if params.Instructions.Value != "first\n\nsecond" {
+			t.Fatalf("Responses instructions = %q, want %q", params.Instructions.Value, "first\n\nsecond")
 		}
 	})
 
@@ -228,7 +244,10 @@ func TestProviderOptionParsersIgnoreUnknownOptions(t *testing.T) {
 			_, err := (&CerebrasGenerator{}).prepareRequest(GenerationRequest{Options: options})
 			return err
 		}},
-		{name: "OpenRouter", parse: func(options GenerationOptions) error { _, err := parseOpenRouterGenerationOptions(options); return err }},
+		{name: "OpenRouter", parse: func(options GenerationOptions) error {
+			_, err := (&OpenRouterGenerator{}).prepareRequest(GenerationRequest{Options: options})
+			return err
+		}},
 		{name: "Responses", parse: func(options GenerationOptions) error { _, err := parseResponsesGenerationOptions(options); return err }},
 		{name: "ZAI", parse: func(options GenerationOptions) error {
 			_, err := (&ZaiGenerator{}).prepareRequest(GenerationRequest{Options: options})

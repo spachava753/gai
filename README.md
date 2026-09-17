@@ -106,7 +106,17 @@ For OpenCode Go, use the protocol generator required by the model: `OpenAiGenera
 
 `ZaiGenerator`, `DeepSeekGenerator`, and `MoonshotGenerator` delegate to a private `OpenAiGenerator`, sharing its multimodal conversion, streaming assembly, tool validation, reasoning replay, and OpenAI-named metadata keys. They do not embed a generic wrapper or inherit its optional capabilities. Z.AI and DeepSeek default to `max_tokens`; Moonshot keeps `max_completion_tokens`. Z.AI omits `stream_options` by default; Moonshot and DeepSeek request usage. Explicit options override these defaults. Z.AI's default URL is `https://api.z.ai/api/paas/v4`; pass the Coding Plan base URL explicitly when needed.
 
-`CerebrasGenerator` also delegates to the shared Chat Completions implementation, with `max_completion_tokens` and streamed usage enabled by default. Native `WithCerebras…` request helpers remain supported except `WithCerebrasUser` and `WithCerebrasPromptCacheKey`, replaced by `GenerationRequest.SafetyIdentifier` and `GenerationRequest.PromptCacheKey`; explicit `WithOpenAIExtraBody` fields take precedence. Model capabilities and native option ranges are validated by the server. Cerebras-specific response and usage constants have been removed: use `OpenAIExtraFieldChoice` for logprobs, `OpenAIResponseExtraFieldUsage` for native usage (including image tokens), and `OpenAIResponseExtraFieldWireFields` for timing and service-tier fields. Cerebras does not expose OpenAI's local token counter.
+`OpenRouterGenerator` delegates to the shared Chat Completions implementation with `max_tokens` and streamed usage enabled by default. Use common helpers for sampling, log probabilities, seeds, and parallel tool calls. OpenRouter-specific helpers remain for min-p, top-a, repetition penalty, fallback models, routing, session IDs, service tiers, prediction, and response formats; explicit `WithOpenAIExtraBody` fields override translated settings. Capability and range checks are left to the server. Effort maps to `reasoning.effort`, numeric budgets to `reasoning.max_tokens`; combining them is rejected. Set `GenerationRequest.SafetyIdentifier` to send OpenRouter's `user` identity and `GenerationRequest.PromptCacheKey` to send `prompt_cache_key`. The redundant `WithOpenRouterUser` and `WithOpenRouterPromptCacheKey` helpers and their option constants have been removed. Explicit extra-body values still take precedence. OpenRouter uses an explicit session ID ahead of the cache key for sticky routing.
+
+**OpenRouter metadata migration (breaking, pre-v1):** the former `OpenRouterExtraField…`, `OpenRouterResponseExtraField…`, `OpenRouterMessageExtraFieldLogprobs`, and `OpenRouterUsageMetric…` constants are removed.
+
+Preserve returned candidate `ExtraFields` when replaying reasoning: `OpenAIExtraFieldWireFields` retains the complete native `reasoning_details`, including signatures and encrypted data, while `OpenAIExtraFieldReasoningSource` marks readable thinking blocks. Text and summaries appear as `Thinking` blocks; detail IDs, signatures, and encrypted content stay in message metadata for the next request, rather than on the displayed blocks.
+
+Use `OpenAIExtraFieldChoice` for logprobs, `OpenAIResponseExtraFieldWireFields` for IDs, service tiers, and `openrouter_metadata`, and `OpenAIResponseExtraFieldUsage` for cost, BYOK, cache, and server-tool usage details. These native objects use `map[string]json.RawMessage`; common token metrics remain in `UsageMetadata`. No OpenAI local token counter is exposed.
+
+Embedded OpenRouter errors, including errors on individual choices, return `ApiErr` alongside any partial generated response, headers, and usage. Numeric error codes become the error status when the HTTP response was successful; router `metadata.error_type` takes precedence over `error_type` for classification.
+
+`CerebrasGenerator` also delegates to the shared Chat Completions implementation, with `max_completion_tokens` and streamed usage enabled by default. Use common helpers for logit bias, log probabilities, seeds, and parallel tool calls. Prediction, response format, and service tier keep their Cerebras-specific helpers. `GenerationRequest.SafetyIdentifier` and `GenerationRequest.PromptCacheKey` replace the former native user/cache helpers; explicit `WithOpenAIExtraBody` fields take precedence. Model capabilities and native option ranges are validated by the server. Cerebras-specific response and usage constants have been removed: use `OpenAIExtraFieldChoice` for logprobs, `OpenAIResponseExtraFieldUsage` for native usage (including image tokens), and `OpenAIResponseExtraFieldWireFields` for timing and service-tier fields. Cerebras does not expose OpenAI's local token counter.
 
 Thinking controls are provider-specific: `WithZaiThinking`, `WithZaiClearThinking`, `WithMoonshotThinking`, `WithMoonshotKeepThinking`, and `WithDeepSeekThinking`. Omitting them preserves server defaults; none removes caller history. Kimi K3 should use `WithReasoningEffort` without the older `thinking` controls. Always-thinking models, fixed sampling settings, and tool-choice restrictions remain the caller's responsibility. `WithZaiDoSample` and `WithZaiToolStream` expose Z.AI's separate sampling and tool-stream switches.
 
@@ -141,16 +151,36 @@ options := gai.NewGenerationOptions(
 )
 ```
 
-`WithReasoningEffort("high")` sets a qualitative effort label. `WithThinkingBudget(4096)` sets an actual thinking-token budget on Anthropic or OpenRouter; those providers reject combining it with effort. Other adapters ignore numeric thinking budgets rather than serializing them as effort. Anthropic also accepts `"adaptive"` and `"disabled"` through the effort control.
+`WithReasoningEffort("high")` sets a qualitative effort label. `WithThinkingBudget(4096)` sets a positive thinking-token budget on Anthropic, Gemini, or OpenRouter; those providers reject combining it with effort. Other adapters ignore numeric thinking budgets rather than serializing them as effort. Anthropic also accepts `"adaptive"` and `"disabled"` through the effort control. Gemini's native zero/automatic budget sentinels are not part of the shared positive-budget option.
 
-Chat Completions adapters share `WithOpenAIResponseFormat` (native JSON-object/schema configuration), `WithOpenAILogprobs`, `WithOpenAITopLogprobs`, and `WithOpenAIStreamUsage`. OpenAI cache policies use `WithOpenAIPromptCacheRetention` or `WithOpenAIPromptCacheOptions`; the server validates model support. These helpers compose with `WithOpenAIExtraBody` in option order. Explicit extra-body fields override corresponding common and provider-specific settings when building the request.
+Use one common helper for settings with the same meaning across providers:
+
+| Helpers | Documented provider controls wired through GAI |
+| --- | --- |
+| `WithLogitBias` | OpenAI Chat Completions, Cerebras, OpenRouter |
+| `WithLogprobs`, `WithTopLogprobs` | OpenAI Chat Completions, Cerebras, OpenRouter, DeepSeek, Moonshot, Gemini, Responses |
+| `WithParallelToolCalls` | OpenAI Chat Completions, Cerebras, OpenRouter, Anthropic, Responses |
+| `WithSeed` | OpenAI Chat Completions, Cerebras, OpenRouter, Gemini |
+| `WithFrequencyPenalty`, `WithPresencePenalty` | OpenAI Chat Completions, Cerebras, OpenRouter, Gemini |
+| `WithTopK` | Anthropic (supported models only; deprecated on newer models), Gemini, OpenRouter |
+| `WithThinkingBudget` | Anthropic, Gemini, OpenRouter |
+
+Chat Completions includes OpenAI, Cerebras, OpenRouter, Z.AI, DeepSeek, and Moonshot. These wrappers can forward additional shared OpenAI fields, but forwarding is not evidence of provider support. Z.AI does not document logit bias, logprob controls, seed, parallel-tool control, or frequency/presence penalties. DeepSeek documents logprob controls, but explicitly deprecates and ignores frequency/presence penalties; seed, logit bias, and parallel-tool control are not documented. Moonshot documents logprob controls; seed, logit bias, and parallel-tool control are not documented, and current Kimi models fix temperature, top-p, candidate count, and frequency/presence penalties. Explicit settings are preserved rather than filtered using model-name guesses; the server may reject them. OpenRouter support depends on the routed model/provider. Other adapters ignore options they do not implement. `WithTopLogprobs` selects how many token alternatives to return; pair it with `WithLogprobs(true)` to enable reporting. A seed requests repeatable sampling but does not guarantee identical answers. `WithCandidateCount` requests multiple candidates on OpenAI Chat Completions or Gemini; Cerebras and current Kimi models accept only one, and `StreamingAdapter` only accepts candidate zero. Log probabilities are available in Chat Completions choice metadata (`OpenAIExtraFieldChoice`), Gemini message metadata (`GeminiExtraFieldLogprobs`), or Responses text-block metadata (`ResponsesExtraFieldLogprobs`); see those keys for their value types.
+
+**Breaking change:** the duplicated OpenAI logprob helpers and Cerebras/OpenRouter helpers for these common settings, along with their provider-specific option constants, have been removed. Replace them with the common helpers above; there are no compatibility aliases.
+
+Min-p, top-a, and repetition penalty are OpenRouter-specific: use `WithOpenRouterMinP`, `WithOpenRouterTopA`, and `WithOpenRouterRepetitionPenalty`. Repetition penalty is distinct from frequency and presence penalties.
+
+Output controls are provider-specific, with no aliases for the former shared APIs. Use `WithOpenAIOutputModalities` and `WithOpenAIAudioConfig(OpenAIAudioConfig{...})` for OpenAI Chat Completions audio. Use `WithGeminiOutputModalities` for Gemini text, image, or audio output on supporting models. Generated media blocks preserve base64 content, MIME types, and thought signatures; streaming media chunks remain separate blocks rather than being joined as text. Anthropic and Responses no longer parse the former shared text-only modality setting.
+
+Prediction and response formats remain provider-specific. Use helpers such as `WithOpenAIResponseFormat`, `WithCerebrasPrediction`, or `WithOpenRouterResponseFormat` for their native contracts. `WithOpenAIStreamUsage` controls Chat Completions usage requests. OpenAI cache policies use `WithOpenAIPromptCacheRetention` or `WithOpenAIPromptCacheOptions`; the server validates model support. Native-body helpers compose with `WithOpenAIExtraBody` in option order. Explicit extra-body fields override corresponding common and provider-specific settings when building the request.
 
 `GenerationRequest` has two independent optional fields:
 
 | Field | Mapping and meaning |
 | --- | --- |
-| `SafetyIdentifier` | An opaque stable end-user identity, preferably a hash or UUID—not personal data. OpenAI Chat Completions/Responses and Moonshot send `safety_identifier`; Anthropic sends `metadata.user_id`; Z.AI and DeepSeek send `user_id`; Cerebras sends `user`. DeepSeek also uses it for cache and scheduling isolation. |
-| `PromptCacheKey` | A cache grouping/routing hint sent as `prompt_cache_key` by OpenAI Chat Completions/Responses, Moonshot, and Cerebras. It does not enable caching, set a TTL, or name a stored cache resource. |
+| `SafetyIdentifier` | An opaque stable end-user identity, preferably a hash or UUID—not personal data. OpenAI Chat Completions/Responses and Moonshot send `safety_identifier`; Anthropic sends `metadata.user_id`; Z.AI and DeepSeek send `user_id`; Cerebras and OpenRouter send `user`. DeepSeek also uses it for cache and scheduling isolation. |
+| `PromptCacheKey` | A cache grouping/routing hint sent as `prompt_cache_key` by OpenAI Chat Completions/Responses, Moonshot, Cerebras, and OpenRouter. An explicit OpenRouter session ID takes routing precedence. It does not enable caching, set a TTL, or name a stored cache resource. |
 
 Unsupported providers ignore these fields. Native Gemini ignores both; neither is translated to safety settings, labels, or `cachedContent`. Anthropic's prompt cache controls remain separate from end-user identity. Values are never derived from each other or inserted into prompt content. The former `WithResponsesPromptCacheKey` option is replaced by the request field.
 
@@ -266,7 +296,7 @@ Use `GetMetric` with provider-specific metric constants for native cost, timing,
 go test ./...
 go vet ./...
 go test -race ./...
-go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(openai|openrouter)$' ./...
+go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/openai$' ./...
 ```
 
 The shared Chat Completions wire client in `internal/openai` uses oapi-codegen. Regenerate it after changing its schema, configuration, or lossless-JSON overlay:
@@ -275,7 +305,7 @@ The shared Chat Completions wire client in `internal/openai` uses oapi-codegen. 
 go generate ./internal/openai
 ```
 
-Its tests check that the generated file is current and exercise JSON round trips and local HTTP behavior. `OpenAiGenerator` uses this client; the other generated provider packages still use OGEN.
+Its tests check that the generated file is current and exercise JSON round trips and local HTTP behavior. All Chat Completions adapters use this client. The former separate generated clients and OGEN tool have been removed.
 
 The OpenAI adapter has [SDK request contract tests](testdata/openai_sdk/README.md). An explicit scenario matrix drives public GAI APIs against conversations recorded through the OpenAI Python SDK for OpenAI, Z.AI, Kimi, and DeepSeek. Captures store only request/response body pairs; options are declared once in the matrix and translated into public GAI options by the tests. Each named provider/mode/step case checks JSON-equivalent outgoing HTTP bodies, with later history built from GAI output. Replay also checks successful completion, usable function calls, and known scenario arguments or JSON results—not exact generated prose. New captures come from a small SDK conversation script running through mitmproxy. Building the corpus requires explicit approval for live calls; ordinary tests never refresh it.
 

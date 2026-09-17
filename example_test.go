@@ -10,6 +10,22 @@ import (
 	"github.com/spachava753/gai"
 )
 
+func ExampleWithLogprobs() {
+	// Use the same controls with any adapter that supports them. Seeds request
+	// best-effort repeatability, and the provider validates model capabilities.
+	options := gai.NewGenerationOptions(
+		gai.WithLogprobs(true), gai.WithTopLogprobs(3),
+		gai.WithSeed(0), gai.WithParallelToolCalls(false),
+		gai.WithLogitBias(map[string]float64{"42": -1.5}),
+	)
+	request := gai.GenerationRequest{Model: "caller-selected-model", Options: options}
+	fmt.Println(request.Options[gai.GenerationOptionLogprobs], request.Options[gai.GenerationOptionTopLogprobs])
+	fmt.Println(request.Options[gai.GenerationOptionSeed], request.Options[gai.GenerationOptionParallelToolCalls])
+	// Output:
+	// true 3
+	// 0 false
+}
+
 type exampleGenerator struct{}
 
 func (exampleGenerator) Generate(_ context.Context, request gai.GenerationRequest) (gai.Response, error) {

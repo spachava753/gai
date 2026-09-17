@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -86,6 +87,37 @@ func testStreamingAdapterBlockCompression(t *testing.T) {
 		}
 		if len(compressed) != 1 || compressed[0].BlockType != Content || compressed[0].Content.String() != "Hello, world!" {
 			t.Errorf("expected 1 content block with merged content, got %+v", compressed)
+		}
+	})
+
+	t.Run("preserves thought images between thinking text runs", func(t *testing.T) {
+		image := Block{BlockType: Thinking, ModalityType: Image, MimeType: "image/png", Content: Str("AQ=="), ExtraFields: map[string]interface{}{"signature": "thought-signature"}}
+		blocks := []Block{{BlockType: Thinking, Content: Str("before ")}, {BlockType: Thinking, Content: Str("image")}, image, image, {BlockType: Thinking, Content: Str("after ")}, {BlockType: Thinking, Content: Str("image")}}
+		compressed, err := compressStreamingBlocks(blocks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(compressed) != 4 || compressed[0].Content.String() != "before image" || compressed[3].Content.String() != "after image" {
+			t.Fatalf("unexpected compressed blocks: %+v", compressed)
+		}
+		if !reflect.DeepEqual(compressed[1:3], blocks[2:4]) {
+			t.Fatalf("thought images or metadata changed: %+v", compressed[1:3])
+		}
+	})
+
+	t.Run("preserves separate media payloads between text runs", func(t *testing.T) {
+		image := Block{BlockType: Content, ModalityType: Image, MimeType: "image/png", Content: Str("AQ=="), ExtraFields: map[string]interface{}{"signature": "image-signature"}}
+		audio := Block{BlockType: Content, ModalityType: Audio, MimeType: "audio/pcm;rate=24000", Content: Str("Ag=="), ExtraFields: map[string]interface{}{"signature": "audio-signature"}}
+		blocks := []Block{TextBlock("before "), TextBlock("image"), image, image, audio, TextBlock("after "), TextBlock("audio")}
+		compressed, err := compressStreamingBlocks(blocks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(compressed) != 5 || compressed[0].Content.String() != "before image" || compressed[4].Content.String() != "after audio" {
+			t.Fatalf("unexpected compressed blocks: %+v", compressed)
+		}
+		if !reflect.DeepEqual(compressed[1:4], blocks[2:5]) {
+			t.Fatalf("media payloads or metadata changed: %+v", compressed[1:4])
 		}
 	})
 

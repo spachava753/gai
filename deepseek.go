@@ -26,8 +26,11 @@ const DeepSeekDefaultBaseURL = "https://api.deepseek.com"
 //
 // SafetyIdentifier maps to user_id, which DeepSeek also uses for KV-cache and
 // scheduling isolation. PromptCacheKey is ignored. Function tools, JSON-object
-// output, and logprobs use the shared OpenAI helpers; the server validates model
-// support. No strict-beta tool defaults are injected.
+// output, and logprobs use the common options and OpenAI-specific helpers; the
+// server validates model support. DeepSeek documents frequency/presence penalties
+// as deprecated and ignored. Seed, logit bias, and parallel-tool control are
+// forwarded if supplied, but are not documented provider controls. No strict-beta
+// tool defaults are injected.
 type DeepSeekGenerator struct {
 	client *OpenAiGenerator
 }

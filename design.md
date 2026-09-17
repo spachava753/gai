@@ -79,7 +79,7 @@ Data created while handling a request stays local to that call. Examples include
 
 `Headers` is an `http.Header` field, not a generation-option key or part of the provider JSON body. It applies to generation, streaming, and remote token counting. Supplied header values replace matching names; unrelated generator/client headers remain intact. Multiple values are preserved. Use `Header.Set` or `Header.Add` to canonicalize names, and do not supply duplicate names with different capitalization.
 
-Headers are applied per invocation, never by mutating a shared client. The Chat Completions client uses a request editor; Anthropic and Responses use SDK request options; Gemini uses per-call `HTTPOptions`; OpenRouter passes headers through the request context to its generated request editor. Z.AI and Moonshot apply headers to their native counting requests as well. SDK-managed authentication can take precedence: Gemini sets `X-Goog-Api-Key` from its client credentials.
+Headers are applied per invocation, never by mutating a shared client. The Chat Completions client uses a request editor; Anthropic and Responses use SDK request options; Gemini uses per-call `HTTPOptions`; OpenRouter delegates to the shared Chat Completions request editor. Z.AI and Moonshot apply headers to their native counting requests as well. SDK-managed authentication can take precedence: Gemini sets `X-Goog-Api-Key` from its client credentials.
 
 Request headers can contain secrets. Serializing or logging a `GenerationRequest` also includes its headers, so callers must redact them where necessary. Fallback forwards headers unchanged, including credentials if the caller supplied them; only use that with trusted targets.
 
@@ -87,8 +87,8 @@ Request headers can contain secrets. Serializing or logging a `GenerationRequest
 
 `SafetyIdentifier` and `PromptCacheKey` have different meanings. Neither is derived from the other or inserted into prompt content.
 
-- `SafetyIdentifier` maps to `safety_identifier` for OpenAI Chat Completions/Responses and Moonshot, `metadata.user_id` for Anthropic, `user_id` for Z.AI/DeepSeek, and `user` for Cerebras. DeepSeek also uses its identity field for cache and scheduling isolation.
-- `PromptCacheKey` maps to `prompt_cache_key` for OpenAI Chat Completions/Responses, Moonshot, and Cerebras. It does not enable caching, select a retention policy, or identify a stored cache resource.
+- `SafetyIdentifier` maps to `safety_identifier` for OpenAI Chat Completions/Responses and Moonshot, `metadata.user_id` for Anthropic, `user_id` for Z.AI/DeepSeek, and `user` for Cerebras/OpenRouter. DeepSeek also uses its identity field for cache and scheduling isolation.
+- `PromptCacheKey` maps to `prompt_cache_key` for OpenAI Chat Completions/Responses, Moonshot, Cerebras, and OpenRouter. An explicit OpenRouter session ID takes routing precedence. It does not enable caching, select a retention policy, or identify a stored cache resource.
 - Unsupported adapters ignore these fields. In particular, Gemini does not translate either into safety settings or `cachedContent`.
 
 ## Interfaces
@@ -256,7 +256,7 @@ options := NewGenerationOptions(
 )
 ```
 
-Provider helpers use exported, namespaced keys such as `ResponsesServiceTierParam`, or populate a shared native-body map. For example, `WithOpenAILogprobs` and `WithOpenAIResponseFormat` add fields to `OpenAIGenerationOptionExtraBody`. `WithOpenAIExtraBody` accepts a `map[string]json.RawMessage` for explicit wire fields.
+Provider helpers use exported, namespaced keys such as `ResponsesServiceTierParam`, or populate a shared native-body map. For example, `WithOpenAIResponseFormat` adds fields to `OpenAIGenerationOptionExtraBody`. Prediction and response formats keep their provider-specific APIs. `WithOpenAIExtraBody` accepts a `map[string]json.RawMessage` for explicit wire fields.
 
 There is no nested `ExtraArgs` map. An adapter reads the settings it supports, checks their Go types, and ignores unknown keys. Ignoring unknown keys allows a request used for fallback to contain settings for more than one provider.
 
@@ -268,16 +268,16 @@ The common keys use these value types:
 | --- | --- |
 | `temperature`, `top_p`, `frequency_penalty`, `presence_penalty` | `float64` |
 | `top_k`, `candidate_count` | `uint` |
-| `max_generation_tokens` | `int` |
+| `max_generation_tokens`, `seed`, `top_logprobs` | `int` |
+| `logprobs`, `parallel_tool_calls` | `bool` |
+| `logit_bias` | `map[string]float64` |
 | `tool_choice`, `reasoning_effort` | `string` |
 | `thinking_budget` | `int` |
 | `stop_sequences` | `[]string` |
-| `output_modalities` | `[]Modality` |
-| `audio_config` | `AudioConfig` |
 
-`WithReasoningEffort(string)` is separate from `WithThinkingBudget(int)`. The former carries an effort label; the latter carries a numeric thinking-token budget. Anthropic and OpenRouter support the budget and reject combining the two.
+`WithReasoningEffort(string)` is separate from `WithThinkingBudget(int)`. The former carries an effort label; the latter carries a positive numeric thinking-token budget. Anthropic, Gemini, and OpenRouter support the budget and reject combining the two. Gemini checks int32 representability; its zero/automatic budget sentinels are not shared-option values.
 
-Shared Chat Completions wrappers preserve explicit options rather than inferring capabilities from model names. They validate Go value types and serialization; the server validates native values, ranges, and supported combinations. Other protocol adapters still perform their own local validation. Native controls such as parallel tool calling, seeds, logprobs, and service tiers remain provider-specific rather than common options.
+Shared Chat Completions wrappers preserve explicit options rather than inferring capabilities from model names. They validate Go value types and serialization; the server validates native values, ranges, and supported combinations. Other protocol adapters still perform their own local validation. Parallel tool calling, seeds, log probabilities, and logit bias use common option keys instead of duplicated provider helpers. Gemini maps seed, logprob controls, presence/frequency penalties, and numeric thinking budgets; Responses maps logprob controls and parallel tool calls; Anthropic maps top-k and parallel tool calls by negating its disable flag. Min-p, top-a, and repetition penalty use OpenRouter-native helpers. Output modalities and audio configuration use OpenAI-native helpers and keys; Gemini has its own output-modality helper, with returned inline image/audio bytes represented as base64 blocks carrying their MIME types and thought signatures. Streaming collection retains separate media payloads rather than concatenating their base64 strings. Anthropic and Responses do not parse output-modality options. Service tiers, routing, prediction, and response formats remain provider-specific. Forwarding a shared field through an OpenAI-compatible wrapper does not imply endpoint support; README distinguishes documented controls, fixed/ignored settings, and undocumented forwarded fields. `WithTopLogprobs` selects a count rather than implicitly enabling `WithLogprobs`. Explicit false and zero values are retained; unsupported controls are ignored by adapters that do not implement them.
 
 `GenerationOptions` is a map rather than a struct because the supported parameters are the union of several provider APIs and that union changes often. Typed helpers keep common settings discoverable, while direct entries allow a provider option to be added without changing the shared request type.
 
@@ -377,7 +377,7 @@ A provider generator keeps only what it needs to send a request:
 | `AnthropicGenerator` | message service | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `GeminiGenerator` | Gemini client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `CerebrasGenerator` | private `OpenAiGenerator` delegate | `Generator`, `StreamingGenerator` |
-| `OpenRouterGenerator` | private generated client | `Generator`, `StreamingGenerator` |
+| `OpenRouterGenerator` | private `*OpenAiGenerator` delegate | `Generator`, `StreamingGenerator` |
 | `ResponsesGenerator` | Responses service | `Generator`, `StreamingGenerator` |
 | `ZaiGenerator` | private `*OpenAiGenerator` and native counting HTTP client | `Generator`, `StreamingGenerator`, `TokenCounter` |
 | `DeepSeekGenerator` | private `*OpenAiGenerator` | `Generator`, `StreamingGenerator` |
@@ -387,19 +387,19 @@ Constructors set up those connections. Generated clients under `internal/` never
 
 Constructors do not choose a model, install tools, or store instructions. Every call gets that data from `GenerationRequest`.
 
-The Cerebras, Z.AI, DeepSeek, and Moonshot adapters hold private `*OpenAiGenerator` fields, not embedded generic wrappers. Each provider's own file implements request translation and Generate/Stream delegation, copying request option maps to apply its defaults and preserve explicit native overrides. Native counting endpoints, payloads, response schemas, and limitations also belong to the corresponding provider. Only error relabeling and authenticated JSON HTTP mechanics are shared in `compatible.go`; that file does not dispatch on provider identity. This shares wire conversion and stream assembly without accidentally exposing OpenAI's local token counting. Z.AI and Moonshot have native counters; Moonshot rejects tool-bearing count requests rather than claiming undocumented accounting.
+The Cerebras, OpenRouter, Z.AI, DeepSeek, and Moonshot adapters hold private `*OpenAiGenerator` fields, not embedded generic wrappers. Each provider's own file implements request translation and Generate/Stream delegation, copying request option maps to apply its defaults and preserve explicit native overrides. Native counting endpoints, payloads, response schemas, and limitations also belong to the corresponding provider. Only error relabeling and authenticated JSON HTTP mechanics are shared in `compatible.go`; that file does not dispatch on provider identity. This shares wire conversion and stream assembly without accidentally exposing OpenAI's local token counting. Z.AI and Moonshot have native counters; Moonshot rejects tool-bearing count requests rather than claiming undocumented accounting.
 
 ### Shared client and provider defaults
 
-Only two generated clients remain under `internal/`: `internal/openai` uses oapi-codegen, and `internal/openrouter` uses OGEN. The separate Cerebras, DeepSeek, Z.AI, and OpenCode clients have been removed. The shared Chat Completions schema preserves opaque JSON, nullable fields, and numeric values without routing provider-specific behavior through a central provider switch. Regenerate it with `go generate ./internal/openai`; its tests check regeneration and codec/HTTP contracts.
+Only one generated client remains under `internal/`: `internal/openai` uses oapi-codegen. The separate OpenRouter, Cerebras, DeepSeek, Z.AI, and OpenCode clients have been removed. The shared Chat Completions schema preserves opaque JSON, nullable fields, and numeric values without routing provider-specific behavior through a central provider switch. Regenerate it with `go generate ./internal/openai`; its tests check regeneration and codec/HTTP contracts.
 
 | Adapter | Default output-limit field | Stream usage request |
 | --- | --- | --- |
 | OpenAI, Cerebras, Moonshot | `max_completion_tokens` | Enabled |
-| DeepSeek | `max_tokens` | Enabled |
+| DeepSeek, OpenRouter | `max_tokens` | Enabled |
 | Z.AI | `max_tokens` | Omitted |
 
-`WithOpenAITokenLimitField` and `WithOpenAIStreamUsage` override these defaults. Translated native options are merged with explicit `WithOpenAIExtraBody` fields, with explicit fields taking precedence. Cerebras uses the shared request fields for identity and cache routing, not separate native helpers.
+`WithOpenAITokenLimitField` and `WithOpenAIStreamUsage` override these defaults. Translated native options are merged with explicit `WithOpenAIExtraBody` fields, with explicit fields taking precedence. Cerebras and OpenRouter use the shared request fields for identity and cache routing, not separate native helpers. OpenRouter translates effort to `reasoning.effort` and numeric budgets to `reasoning.max_tokens`, rejecting their combination. Native capability and range validation belongs to the server.
 
 The shared adapters use OpenAI-named metadata keys even when the endpoint is another provider:
 
@@ -415,7 +415,7 @@ The shared adapters encode image bytes as data URLs and PDFs as inline file bodi
 
 ### Protocol-specific adapters and gateways
 
-Responses, Anthropic Messages, and Gemini retain separate implementations because their request and streaming protocols differ from Chat Completions. OpenRouter also retains its dedicated adapter and generated client. The Anthropic and Responses constructors accept SDK service interfaces; Gemini accepts a `*genai.Client`. Their underlying SDK configuration remains the caller's responsibility.
+Responses, Anthropic Messages, and Gemini retain separate implementations because their request and streaming protocols differ from Chat Completions. The Anthropic and Responses constructors accept SDK service interfaces; Gemini accepts a `*genai.Client`. Their underlying SDK configuration remains the caller's responsibility.
 
 `ResponsesGenerator` sets `store: false` in its upstream request. This opts out of storing the response through that API option; it is not a guarantee about every form of provider logging or retention. The Go generator does not retain conversation state.
 

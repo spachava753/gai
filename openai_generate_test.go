@@ -22,6 +22,133 @@ import (
 	wire "github.com/spachava753/gai/internal/openai"
 )
 
+func testCommonChatCompletionOptions(t *testing.T) {
+	providers := []struct {
+		name string
+		new  func(*http.Client, string, string) (Generator, error)
+	}{
+		{"openai", func(c *http.Client, u, k string) (Generator, error) { return NewOpenAiGenerator(c, u, k) }},
+		{"cerebras", func(c *http.Client, u, k string) (Generator, error) { return NewCerebrasGenerator(c, u, k) }},
+		{"openrouter", func(c *http.Client, u, k string) (Generator, error) { return NewOpenRouterGenerator(c, u, k) }},
+		{"zai", func(c *http.Client, u, k string) (Generator, error) { return NewZaiGenerator(c, u, k) }},
+		{"deepseek", func(c *http.Client, u, k string) (Generator, error) { return NewDeepSeekGenerator(c, u, k) }},
+		{"moonshot", func(c *http.Client, u, k string) (Generator, error) { return NewMoonshotGenerator(c, u, k) }},
+	}
+	for _, provider := range providers {
+		for _, streaming := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", provider.name, streaming), func(t *testing.T) {
+				var received map[string]any
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+						t.Error(err)
+					}
+					if streaming {
+						w.Header().Set("Content-Type", "text/event-stream")
+						fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+					} else {
+						w.Header().Set("Content-Type", "application/json")
+						fmt.Fprint(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+					}
+				}))
+				defer server.Close()
+				generator, err := provider.new(server.Client(), server.URL, "test-key")
+				if err != nil {
+					t.Fatal(err)
+				}
+				invoke := func(options GenerationOptions) {
+					t.Helper()
+					before, _ := json.Marshal(options)
+					received = nil
+					request := GenerationRequest{Model: "test-model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: options}
+					if streaming {
+						for chunk := range generator.(StreamingGenerator).Stream(t.Context(), request) {
+							if chunk.Err != nil {
+								t.Fatal(chunk.Err)
+							}
+						}
+					} else if _, err := generator.Generate(t.Context(), request); err != nil {
+						t.Fatal(err)
+					}
+					after, _ := json.Marshal(options)
+					if !bytes.Equal(before, after) {
+						t.Fatal("mutated caller options")
+					}
+				}
+				invoke(nil)
+				for _, field := range []string{"logit_bias", "logprobs", "top_logprobs", "parallel_tool_calls", "seed", "min_p", "top_a", "repetition_penalty"} {
+					if _, present := received[field]; present {
+						t.Errorf("omitted option sent: %s", field)
+					}
+				}
+				for _, zero := range []bool{false, true} {
+					bias, count, seed, minP, topA, repetition := 123.5, 30, -7, -0.5, 1.5, -2.0
+					if zero {
+						bias, count, seed, minP, topA, repetition = 0, 0, 0, 0, 0, 0
+					}
+					options := NewGenerationOptions(WithLogitBias(map[string]float64{"42": bias}), WithLogprobs(!zero), WithTopLogprobs(count), WithParallelToolCalls(!zero), WithSeed(seed), WithOpenRouterMinP(minP), WithOpenRouterTopA(topA), WithOpenRouterRepetitionPenalty(repetition))
+					invoke(options)
+					if received["logprobs"] != !zero || received["top_logprobs"] != float64(count) || received["parallel_tool_calls"] != !zero || received["seed"] != float64(seed) || !reflect.DeepEqual(received["logit_bias"], map[string]any{"42": bias}) {
+						t.Fatalf("common options = %v", received)
+					}
+					for field, want := range map[string]float64{"min_p": minP, "top_a": topA, "repetition_penalty": repetition} {
+						if provider.name == "openrouter" {
+							if received[field] != want {
+								t.Errorf("%s = %v, want %v", field, received[field], want)
+							}
+						} else if _, present := received[field]; present {
+							t.Errorf("unsupported field sent: %s", field)
+						}
+					}
+					explicit := map[string]json.RawMessage{"logit_bias": json.RawMessage(`{"99":-1}`), "logprobs": json.RawMessage(`false`), "top_logprobs": json.RawMessage(`2`), "parallel_tool_calls": json.RawMessage(`false`), "seed": json.RawMessage(`13`)}
+					if provider.name == "openrouter" {
+						explicit["min_p"] = json.RawMessage(`0.4`)
+						explicit["top_a"] = json.RawMessage(`0.3`)
+						explicit["repetition_penalty"] = json.RawMessage(`1.2`)
+					}
+					WithOpenAIExtraBody(explicit)(options)
+					invoke(options)
+					for field, raw := range explicit {
+						var want any
+						_ = json.Unmarshal(raw, &want)
+						if !reflect.DeepEqual(received[field], want) {
+							t.Errorf("override %s = %v, want %v", field, received[field], want)
+						}
+					}
+				}
+				// A count does not silently enable logprobs or rewrite explicit false.
+				invoke(NewGenerationOptions(WithTopLogprobs(2)))
+				if _, present := received["logprobs"]; present {
+					t.Fatal("top-logprobs implicitly enabled logprobs")
+				}
+				invoke(NewGenerationOptions(WithTopLogprobs(2), WithLogprobs(false)))
+				if received["logprobs"] != false {
+					t.Fatal("explicit logprobs false ignored")
+				}
+				keys := []string{GenerationOptionLogitBias, GenerationOptionLogprobs, GenerationOptionTopLogprobs, GenerationOptionParallelToolCalls, GenerationOptionSeed}
+				if provider.name == "openrouter" {
+					keys = append(keys, OpenRouterGenerationOptionMinP, OpenRouterGenerationOptionTopA, OpenRouterGenerationOptionRepetitionPenalty)
+				}
+				for _, key := range keys {
+					received = nil
+					request := GenerationRequest{Model: "test", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: GenerationOptions{key: struct{}{}}}
+					var err error
+					if streaming {
+						for chunk := range generator.(StreamingGenerator).Stream(t.Context(), request) {
+							err = chunk.Err
+						}
+					} else {
+						_, err = generator.Generate(t.Context(), request)
+					}
+					var invalid *InvalidParameterErr
+					if !errors.As(err, &invalid) || invalid.Parameter != key || received != nil {
+						t.Fatalf("invalid %s: err=%v request=%v", key, err, received)
+					}
+				}
+			})
+		}
+	}
+}
+
 // mockChatCompletionService supplies SDK-shaped fixtures over an HTTP transport.
 type mockChatCompletionService struct {
 	response     *oai.ChatCompletion
@@ -509,7 +636,7 @@ func testOpenAIStreamAudioAndCandidates(t *testing.T) {
 	}
 	var audio Block
 	var second bool
-	for chunk := range g.Stream(t.Context(), GenerationRequest{Model: "m", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hi")}}}, Options: NewGenerationOptions(WithOutputModalities(Text, Audio), WithAudioConfig(AudioConfig{VoiceName: "alloy", Format: "wav"}))}) {
+	for chunk := range g.Stream(t.Context(), GenerationRequest{Model: "m", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hi")}}}, Options: NewGenerationOptions(WithOpenAIOutputModalities(Text, Audio), WithOpenAIAudioConfig(OpenAIAudioConfig{VoiceName: "alloy", Format: "wav"}))}) {
 		if chunk.Err != nil {
 			t.Fatal(chunk.Err)
 		}
@@ -544,6 +671,140 @@ func BenchmarkOpenAIThinkingReplay(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func testOpenAIStreamChoiceMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, event := range []string{
+			`{"choices":[{"index":0,"delta":{"content":"A"},"finish_reason":null,"logprobs":{"content":[{"token":"A","logprob":-0.1,"extra":9007199254740993}]}}]}`,
+			`{"choices":[{"index":0,"delta":{},"logprobs":null}]}`,
+			`{"choices":[{"index":0,"delta":{"content":"B"},"logprobs":{"content":[{"token":"B","logprob":-0.2}]}}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"stop","logprobs":{"content":null}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":3},"completion_tokens_details":{"reasoning_tokens":2}}}`,
+		} {
+			fmt.Fprintf(w, "data: %s\n\n", event)
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+	g, err := NewOpenAiGenerator(server.Client(), server.URL, "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := (&StreamingAdapter{S: g}).Generate(t.Context(), GenerationRequest{Model: "test", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Candidates) != 1 || response.Candidates[0].Blocks[0].Content.String() != "AB" {
+		t.Fatalf("response = %+v", response)
+	}
+	fields := response.Candidates[0].ExtraFields[OpenAIExtraFieldChoice].(map[string]json.RawMessage)
+	var logprobs struct {
+		Content []struct {
+			Token string          `json:"token"`
+			Extra json.RawMessage `json:"extra"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(fields["logprobs"], &logprobs); err != nil {
+		t.Fatal(err)
+	}
+	if len(logprobs.Content) != 2 || logprobs.Content[0].Token != "A" || logprobs.Content[1].Token != "B" || string(logprobs.Content[0].Extra) != "9007199254740993" {
+		t.Fatalf("logprobs = %s", fields["logprobs"])
+	}
+	if string(fields["finish_reason"]) != `"stop"` {
+		t.Fatalf("finish reason = %s", fields["finish_reason"])
+	}
+	if response.UsageMetadata[UsageMetricCacheWriteTokens] != 3 || response.UsageMetadata[UsageMetricReasoningTokens] != 2 {
+		t.Fatalf("usage = %+v", response.UsageMetadata)
+	}
+}
+
+// testOpenAIEmbeddedErrors checks documented HTTP-200 error envelopes and
+// choice errors without making provider calls. Partial answers are not success.
+func testOpenAIEmbeddedErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		status     int
+		kind       APIErrorKind
+		partial    bool
+	}{
+		{"top level", `{"id":"failed","error":{"code":429,"message":"limited"}}`, 429, APIErrorKindRateLimit, false},
+		{"choice with partial output", `{"choices":[{"index":0,"message":{"role":"assistant","content":"partial"},"finish_reason":"error","error":{"code":502,"message":"limited"}}],"usage":{"prompt_tokens":5}}`, 502, APIErrorKindServer, true},
+		{"choice without message", `{"choices":[{"index":0,"error":{"code":503,"message":"limited"}}]}`, 503, APIErrorKindServiceUnavailable, false},
+		{"choice with interrupted tool", `{"choices":[{"index":0,"message":{"role":"assistant","content":"partial","reasoning":"checking","tool_calls":[{"id":"call","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":"error","error":{"code":503,"message":"limited"}}]}`, 503, APIErrorKindServiceUnavailable, true},
+		{"top level with interrupted tool", `{"error":{"code":503,"message":"limited"},"choices":[{"index":0,"message":{"role":"assistant","content":"partial","reasoning":"checking","tool_calls":[{"id":"call","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":"error"}]}`, 503, APIErrorKindServiceUnavailable, true},
+		{"string code", `{"error":{"code":"rate_limit_exceeded","message":"limited"}}`, 200, APIErrorKindUnknown, false},
+	} {
+		for _, mode := range []string{"generate", "stream JSON error", "stream event error"} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Retry-After", "7")
+					w.Header().Set("X-Request-Id", "request-1")
+					if mode == "stream event error" {
+						w.Header().Set("Content-Type", "text/event-stream")
+						fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\ndata: %s\n\ndata: [DONE]\n\n", tc.body)
+					} else {
+						w.Header().Set("Content-Type", "application/json")
+						fmt.Fprint(w, tc.body)
+					}
+				}))
+				defer server.Close()
+				g, err := NewOpenAiGenerator(server.Client(), server.URL, "test-key")
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := GenerationRequest{Model: "test", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}}
+				if mode == "generate" {
+					var response Response
+					response, err = g.Generate(t.Context(), request)
+					if tc.partial && (len(response.Candidates) != 1 || response.Candidates[0].Blocks[0].Content.String() != "partial") {
+						t.Fatalf("partial response lost: %+v", response)
+					}
+					if strings.Contains(tc.name, "interrupted tool") {
+						for _, block := range response.Candidates[0].Blocks {
+							if block.BlockType == ToolCall {
+								t.Fatal("incomplete tool call exposed")
+							}
+						}
+						fields := response.Candidates[0].ExtraFields[OpenAIExtraFieldWireFields].(map[string]json.RawMessage)
+						if string(fields["reasoning"]) != `"checking"` {
+							t.Fatal("partial reasoning metadata lost")
+						}
+					}
+					if response.ExtraFields[OpenAIResponseExtraFieldHeaders].(http.Header).Get("X-Request-Id") != "request-1" {
+						t.Fatal("response headers lost")
+					}
+				} else {
+					var text strings.Builder
+					for chunk := range g.Stream(t.Context(), request) {
+						if err != nil {
+							t.Fatal("stream continued after error")
+						}
+						if chunk.Err != nil {
+							err = chunk.Err
+							continue
+						}
+						if chunk.Block.BlockType == Content {
+							text.WriteString(chunk.Block.Content.String())
+						}
+					}
+					if mode == "stream event error" && text.String() != "partial" {
+						t.Fatalf("partial stream text = %q", text.String())
+					}
+				}
+				var api *ApiErr
+				if !errors.As(err, &api) {
+					t.Fatalf("error = %v, want ApiErr", err)
+				}
+				if api.StatusCode != tc.status || api.Kind != tc.kind || api.Message != "limited" || api.RawBody != tc.body {
+					t.Fatalf("API error = %+v", api)
+				}
+				if delay, ok := api.RetryAfter(); !ok || delay != 7*time.Second {
+					t.Fatalf("retry delay = %v, %v", delay, ok)
+				}
+			})
+		}
 	}
 }
 

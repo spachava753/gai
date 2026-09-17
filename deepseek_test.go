@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -99,7 +100,7 @@ func testCompatibleProviderRequests(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					opts := NewGenerationOptions(append(provider.options, WithReasoningEffort("high"), WithMaxGenerationTokens(123), WithOpenAIResponseFormat(json.RawMessage(`{"type":"json_object"}`)), WithOpenAILogprobs(true), WithOpenAITopLogprobs(2))...)
+					opts := NewGenerationOptions(append(provider.options, WithReasoningEffort("high"), WithMaxGenerationTokens(123), WithOpenAIResponseFormat(json.RawMessage(`{"type":"json_object"}`)), WithLogprobs(true), WithTopLogprobs(2))...)
 					before, _ := json.Marshal(opts)
 					request := GenerationRequest{Model: "no-model-heuristics", SafetyIdentifier: "opaque-user", PromptCacheKey: "prefix", Instructions: SystemMessage(TextBlock("instruction")), Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: opts}
 					var executor Generator = generator
@@ -429,20 +430,30 @@ func TestThinkingControlsAreDistinct(t *testing.T) {
 		if _, err := parseAnthropicGenerationOptions(options); err != nil {
 			t.Fatal(err)
 		}
-		params, err := (&OpenRouterGenerator{}).buildRequest(GenerationRequest{Model: "model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: options})
+		request, err := (&OpenRouterGenerator{}).prepareRequest(GenerationRequest{Model: "model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: options})
 		if err != nil {
 			t.Fatal(err)
 		}
-		reasoning, ok := params.Reasoning.Get()
-		if !ok {
-			t.Fatal("missing reasoning config")
+		params, _, err := openAIRequest(request, false)
+		if err != nil {
+			t.Fatal(err)
 		}
+		data, err := json.Marshal(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			Reasoning map[string]any `json:"reasoning"`
+		}
+		if err := json.Unmarshal(data, &body); err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]any{"effort": "high"}
 		if _, budget := options[GenerationOptionThinkingBudget]; budget {
-			if reasoning.MaxTokens.Or(0) != 1024 || reasoning.Effort.IsSet() {
-				t.Fatalf("numeric budget = %+v", reasoning)
-			}
-		} else if string(reasoning.Effort.Or("")) != "high" || reasoning.MaxTokens.IsSet() {
-			t.Fatalf("effort = %+v", reasoning)
+			want = map[string]any{"max_tokens": float64(1024)}
+		}
+		if !reflect.DeepEqual(body.Reasoning, want) {
+			t.Fatalf("reasoning = %#v, want %#v", body.Reasoning, want)
 		}
 	}
 }

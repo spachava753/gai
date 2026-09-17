@@ -2,8 +2,10 @@ package gai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,6 +54,98 @@ func (d *responsesStreamDecoder) Err() error             { return nil }
 
 func responseSSEvent(eventType, data string) ssestream.Event {
 	return ssestream.Event{Type: eventType, Data: []byte(data)}
+}
+
+func testResponsesLogprobMetadata(t *testing.T) {
+	var output []responses.ResponseOutputItemUnion
+	if err := json.Unmarshal([]byte(`[{"type":"message","content":[{"type":"output_text","text":"ok","logprobs":[{"token":"ok","logprob":-0.1,"top_logprobs":[]}]}]}]`), &output); err != nil {
+		t.Fatal(err)
+	}
+	request := GenerationRequest{Model: "model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hi")}}}}
+	generated, err := NewResponsesGenerator(&mockResponsesService{response: &responses.Response{Output: output}}).Generate(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens, ok := generated.Candidates[0].Blocks[0].ExtraFields[ResponsesExtraFieldLogprobs].([]json.RawMessage); !ok || len(tokens) != 1 {
+		t.Fatalf("metadata: %#v", generated)
+	}
+	svc := &responsesStreamService{events: []ssestream.Event{
+		responseSSEvent("response.content_part.added", `{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}`),
+		responseSSEvent("response.output_text.delta", `{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"ok","logprobs":[{"token":"ok","logprob":-0.1,"top_logprobs":[]}]}`),
+		responseSSEvent("response.output_text.delta", `{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"","logprobs":[{"token":"!","logprob":-0.2,"top_logprobs":[]}]}`),
+		responseSSEvent("response.output_text.done", `{"type":"response.output_text.done","output_index":0,"content_index":0,"text":"ok","logprobs":[{"token":"ok","logprob":-0.1,"top_logprobs":[]},{"token":"!","logprob":-0.2,"top_logprobs":[]}]}`),
+	}}
+	gen := NewResponsesGenerator(svc)
+	var chunks []StreamChunk
+	for chunk := range gen.Stream(t.Context(), request) {
+		if chunk.Err != nil {
+			t.Fatal(chunk.Err)
+		}
+		if chunk.Block.BlockType != Separator {
+			chunks = append(chunks, chunk)
+		}
+	}
+	if len(chunks) != 2 {
+		t.Fatalf("chunks: %#v", chunks)
+	}
+	if chunks[0].Block.ExtraFields != nil || len(chunks[1].Block.ExtraFields[ResponsesExtraFieldLogprobs].([]json.RawMessage)) != 2 {
+		t.Fatal("expected incremental text followed by one final token list")
+	}
+	adapter := StreamingAdapter{S: gen}
+	result, err := adapter.Generate(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Candidates[0].Blocks[0].ExtraFields[ResponsesExtraFieldLogprobs].([]json.RawMessage)) != 2 {
+		t.Fatalf("assembled: %#v", result)
+	}
+	t.Run("linear metadata storage", func(t *testing.T) {
+		for _, count := range []int{1000, 2000} {
+			const token = `{"token":"x","logprob":-0.1,"top_logprobs":[]}`
+			var events []ssestream.Event
+			for part := 0; part < 2; part++ {
+				events = append(events, responseSSEvent("response.content_part.added", fmt.Sprintf(`{"type":"response.content_part.added","output_index":0,"content_index":%d,"part":{"type":"output_text","text":""}}`, part)))
+				for i := 0; i < count/2; i++ {
+					events = append(events, responseSSEvent("response.output_text.delta", fmt.Sprintf(`{"type":"response.output_text.delta","output_index":0,"content_index":%d,"delta":"x","logprobs":[%s]}`, part, token)))
+				}
+				tokens := strings.TrimSuffix(strings.Repeat(token+",", count/2), ",")
+				events = append(events, responseSSEvent("response.output_text.done", fmt.Sprintf(`{"type":"response.output_text.done","output_index":0,"content_index":%d,"text":%q,"logprobs":[%s]}`, part, strings.Repeat("x", count/2), tokens)))
+			}
+			generator := NewResponsesGenerator(&responsesStreamService{events: events})
+			// Keep all yielded blocks, as StreamingAdapter does. There must be
+			// one retained token list per part, not a growing copy per delta.
+			var retained []StreamChunk
+			for chunk := range generator.Stream(t.Context(), request) {
+				if chunk.Err != nil {
+					t.Fatal(chunk.Err)
+				}
+				retained = append(retained, chunk)
+			}
+			entries, lists := 0, 0
+			for _, chunk := range retained {
+				if tokens, ok := chunk.Block.ExtraFields[ResponsesExtraFieldLogprobs].([]json.RawMessage); ok {
+					entries += len(tokens)
+					lists++
+				}
+			}
+			if entries != count || lists != 2 {
+				t.Fatalf("%d tokens retained %d entries in %d lists", count, entries, lists)
+			}
+			response, err := (&StreamingAdapter{S: generator}).Generate(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocks := response.Candidates[0].Blocks
+			if len(blocks) != 2 {
+				t.Fatalf("got %d text parts", len(blocks))
+			}
+			for _, block := range blocks {
+				if len(block.Content.String()) != count/2 || len(block.ExtraFields[ResponsesExtraFieldLogprobs].([]json.RawMessage)) != count/2 {
+					t.Fatal("text-part metadata mixed or lost")
+				}
+			}
+		}
+	})
 }
 
 func testResponsesStreamingAdapterPreservesReasoningSummaryParts(t *testing.T) {

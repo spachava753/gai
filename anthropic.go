@@ -63,9 +63,14 @@ func mapAnthropicError(err error) *ApiErr {
 // [StreamingGenerator], and [TokenCounter]. It accepts text, image, and PDF
 // input, produces text, and supports function tools and extended thinking.
 //
-// Anthropic consumes [WithTemperature], [WithTopP],
+// Anthropic consumes [WithTemperature], [WithTopP], [WithTopK],
 // [WithMaxGenerationTokens], [WithToolChoice], [WithStopSequences],
-// [WithOutputModalities], [WithReasoningEffort], and [WithThinkingBudget].
+// [WithReasoningEffort], [WithThinkingBudget], and
+// [WithParallelToolCalls]. WithParallelToolCalls(false) asks Anthropic to return
+// at most one tool call per turn. It has no effect when tools are absent or
+// forbidden, and does not control how the application executes tools.
+// Top-k is deprecated on newer models and may be rejected by the server; the
+// adapter does not infer support from model names.
 // Effort selects adaptive thinking; a numeric budget selects enabled thinking.
 // The two controls cannot be combined. Thinking blocks preserve
 // [AnthropicExtraFieldThinkingSignature] in [Block.ExtraFields] for replay.
@@ -109,18 +114,26 @@ func convertToolsToAnthropic(tools []Tool) ([]a.ToolParam, error) {
 }
 
 type anthropicGenerationOptions struct {
+	ParallelToolCalls   *bool
 	Temperature         *float64
 	TopP                *float64
 	MaxGenerationTokens *int
 	ToolChoice          string
 	StopSequences       []string
-	OutputModalities    []Modality
+	TopK                *uint
 	ThinkingBudget      string
 }
 
 // parseAnthropicGenerationOptions validates recognized option values and records a typed request snapshot.
 func parseAnthropicGenerationOptions(values GenerationOptions) (*anthropicGenerationOptions, error) {
 	options := &anthropicGenerationOptions{}
+	parallel, present, err := generationOption[bool](values, GenerationOptionParallelToolCalls)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		options.ParallelToolCalls = &parallel
+	}
 
 	temperature, ok, err := generationOption[float64](values, GenerationOptionTemperature)
 	if err != nil {
@@ -149,8 +162,15 @@ func parseAnthropicGenerationOptions(values GenerationOptions) (*anthropicGenera
 	if options.StopSequences, _, err = generationOption[[]string](values, GenerationOptionStopSequences); err != nil {
 		return nil, err
 	}
-	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
+	topK, present, err := generationOption[uint](values, GenerationOptionTopK)
+	if err != nil {
 		return nil, err
+	}
+	if present {
+		if uint64(topK) > 1<<63-1 {
+			return nil, &InvalidParameterErr{Parameter: GenerationOptionTopK, Reason: "must fit in int64"}
+		}
+		options.TopK = &topK
 	}
 	if options.ThinkingBudget, err = thinkingSetting(values); err != nil {
 		return nil, err
@@ -163,6 +183,25 @@ const (
 	// for an Anthropic [Thinking] signature. Preserve it when replaying the block.
 	AnthropicExtraFieldThinkingSignature = "anthropic_thinking_signature"
 )
+
+// applyAnthropicParallelToolCalls only configures choices that permit tool use.
+func applyAnthropicParallelToolCalls(choice *a.ToolChoiceUnionParam, allow *bool, hasTools bool) {
+	if allow == nil || !hasTools || choice.OfNone != nil {
+		return
+	}
+	disable := a.Bool(!*allow)
+	switch {
+	case choice.OfAny != nil:
+		choice.OfAny.DisableParallelToolUse = disable
+	case choice.OfTool != nil:
+		choice.OfTool.DisableParallelToolUse = disable
+	default:
+		if choice.OfAuto == nil {
+			choice.OfAuto = &a.ToolChoiceAutoParam{}
+		}
+		choice.OfAuto.DisableParallelToolUse = disable
+	}
+}
 
 func applyAnthropicThinkingConfig(params *a.MessageNewParams, budget string) error {
 	budget = strings.ToLower(strings.TrimSpace(budget))
@@ -511,20 +550,11 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationReq
 			}
 		}
 
-		// Handle multimodality options
-		if len(options.OutputModalities) > 0 {
-			for _, m := range options.OutputModalities {
-				switch m {
-				case Audio:
-					return Response{}, UnsupportedOutputModalityErr("image output not supported by model")
-				case Image:
-					return Response{}, UnsupportedOutputModalityErr("image output not supported by model")
-				case Video:
-					return Response{}, UnsupportedOutputModalityErr("video output not supported by model")
-				}
-			}
+		if options.TopK != nil {
+			params.TopK = a.Int(int64(*options.TopK))
 		}
 
+		applyAnthropicParallelToolCalls(&params.ToolChoice, options.ParallelToolCalls, len(tools) > 0)
 		if err := applyAnthropicThinkingConfig(&params, options.ThinkingBudget); err != nil {
 			return Response{}, err
 		}
@@ -753,17 +783,11 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 				}
 			}
 
-			// Handle multimodality options
-			if len(options.OutputModalities) > 0 {
-				for _, m := range options.OutputModalities {
-					switch m {
-					case Audio, Image, Video:
-						yield(StreamChunk{Err: UnsupportedOutputModalityErr("image output not supported by model")})
-						return
-					}
-				}
+			if options.TopK != nil {
+				params.TopK = a.Int(int64(*options.TopK))
 			}
 
+			applyAnthropicParallelToolCalls(&params.ToolChoice, options.ParallelToolCalls, len(tools) > 0)
 			if err := applyAnthropicThinkingConfig(&params, options.ThinkingBudget); err != nil {
 				yield(StreamChunk{Err: err})
 				return

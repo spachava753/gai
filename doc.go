@@ -28,8 +28,9 @@
 // # Options
 //
 // Build request options with [NewGenerationOptions] and [GenerationOption]
-// helpers such as [WithTemperature], [WithToolChoice], and
-// [WithMaxGenerationTokens]. Each helper documents its matching
+// helpers such as [WithTemperature], [WithToolChoice], [WithMaxGenerationTokens],
+// [WithLogprobs], [WithSeed], and [WithParallelToolCalls]. Prediction and response
+// formats use provider-specific helpers. Each helper documents its matching
 // GenerationOption constant. Provider adapters ignore option keys they do not
 // support and return [InvalidParameterErr] for recognized values with invalid
 // types or ranges.
@@ -75,7 +76,9 @@
 //   - Z.AI: [NewZaiGenerator]
 //
 // Each provider type documents supported content, common options,
-// provider-specific options, replay metadata, and optional interfaces.
+// provider-specific options, replay metadata, and optional interfaces. Adapters
+// using the shared Chat Completions implementation retain native fields under
+// OpenAI-named metadata keys even when the endpoint is another provider.
 //
 // # Errors
 //

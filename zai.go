@@ -27,6 +27,9 @@ const ZaiDefaultBaseURL = "https://api.z.ai/api/paas/v4"
 // Coding Plan and standard endpoints may have different reuse defaults.
 // GLM always-thinking models may reject disabling thinking. Effort labels and
 // tool-choice support depend on the model; caller settings are never rewritten.
+// Shared logit bias, logprob controls, seed, parallel-tool control, and
+// frequency/presence penalties are forwarded if supplied, but are not documented
+// Z.AI controls. Accepting these options locally does not establish server support.
 //
 // SafetyIdentifier maps to user_id (the provider documents 6–128 characters).
 // PromptCacheKey is ignored. [ZaiGenerator.Count] uses the native tokenizer, including tools

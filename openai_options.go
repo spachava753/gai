@@ -5,26 +5,48 @@ import (
 	"maps"
 )
 
+const (
+	// OpenAIGenerationOptionOutputModalities is the []Modality output selection set by [WithOpenAIOutputModalities].
+	OpenAIGenerationOptionOutputModalities = "openai_output_modalities"
+	// OpenAIGenerationOptionAudioConfig is the [OpenAIAudioConfig] output configuration set by [WithOpenAIAudioConfig].
+	OpenAIGenerationOptionAudioConfig = "openai_audio_config"
+)
+
+// OpenAIAudioConfig selects the voice and encoding for Chat Completions audio
+// output. Use [WithOpenAIAudioConfig] and request [Audio] through
+// [WithOpenAIOutputModalities]. The provider validates supported voices and formats.
+// Format also determines the MIME type assigned to returned audio blocks.
+type OpenAIAudioConfig struct {
+	// VoiceName is the provider-defined built-in voice name.
+	VoiceName string `json:"voice_name,omitempty" yaml:"voice_name,omitempty"`
+	// Format is the audio encoding, such as "wav" or "mp3".
+	Format string `json:"format,omitempty" yaml:"format,omitempty"`
+}
+
+// WithOpenAIOutputModalities selects Chat Completions output modalities using
+// [OpenAIGenerationOptionOutputModalities]. Text and Audio are supported by the
+// adapter; the server validates model support. Requesting Audio also requires
+// [WithOpenAIAudioConfig]. The values are copied when the option is applied.
+func WithOpenAIOutputModalities(values ...Modality) GenerationOption {
+	return func(options GenerationOptions) {
+		options[OpenAIGenerationOptionOutputModalities] = append([]Modality(nil), values...)
+	}
+}
+
+// WithOpenAIAudioConfig configures Chat Completions audio output under
+// [OpenAIGenerationOptionAudioConfig]. Request Audio through
+// [WithOpenAIOutputModalities] to send the voice and format to the provider.
+// The format is also used to decode audio responses, including streamed output.
+func WithOpenAIAudioConfig(value OpenAIAudioConfig) GenerationOption {
+	return func(options GenerationOptions) { options[OpenAIGenerationOptionAudioConfig] = value }
+}
+
 // WithOpenAIResponseFormat sends a native response_format object, such as
 // {"type":"json_object"} or {"type":"json_schema","json_schema":{...}}.
 // Model support and schema restrictions are provider-defined. The raw JSON is
 // copied when applying the option. Invalid JSON is rejected before HTTP.
 func WithOpenAIResponseFormat(format json.RawMessage) GenerationOption {
 	return openAIFieldOption("response_format", format)
-}
-
-// WithOpenAILogprobs requests token log probabilities. They are retained in
-// choice metadata under [OpenAIExtraFieldChoice], including when streaming.
-func WithOpenAILogprobs(enabled bool) GenerationOption {
-	value, _ := json.Marshal(enabled)
-	return openAIFieldOption("logprobs", value)
-}
-
-// WithOpenAITopLogprobs requests the provider-defined number of alternatives per
-// output token. Use with [WithOpenAILogprobs]; the server validates its range.
-func WithOpenAITopLogprobs(count int) GenerationOption {
-	value, _ := json.Marshal(count)
-	return openAIFieldOption("top_logprobs", value)
 }
 
 // WithOpenAIPromptCacheRetention sets OpenAI's prompt_cache_retention policy

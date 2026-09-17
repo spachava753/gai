@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -12,8 +13,6 @@ import (
 	anthropicshared "github.com/anthropics/anthropic-sdk-go/shared"
 	oai "github.com/openai/openai-go/v3"
 	oairesponses "github.com/openai/openai-go/v3/responses"
-
-	openrouterapi "github.com/spachava753/gai/internal/openrouter"
 )
 
 type trackingReadCloser struct {
@@ -323,23 +322,21 @@ func testOpenAIErrorMappingUsesHTTPStatus(t *testing.T) {
 	}
 }
 
-func testOpenRouterGeneratedOverloadMapping(t *testing.T) {
-	cause := &openrouterapi.ErrorEnvelopeStatusCodeWithHeaders{
-		StatusCode: http.StatusServiceUnavailable,
-		RetryAfter: openrouterapi.NewOptString("11"),
-		Response: openrouterapi.ErrorEnvelope{Error: openrouterapi.ErrorDetail{
-			Code:    http.StatusServiceUnavailable,
-			Message: "Upstream request failed",
-			Metadata: openrouterapi.NewOptErrorMetadata(openrouterapi.ErrorMetadata{
-				ErrorType: openrouterapi.NewOptString("provider_overloaded"),
-			}),
-		}},
+func testOpenRouterHTTPOverloadMapping(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "11")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"code":503,"message":"Upstream request failed","metadata":{"error_type":"provider_overloaded"}}}`)
+	}))
+	defer server.Close()
+	g, err := NewOpenRouterGenerator(server.Client(), server.URL, "test-key")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	err := mapOpenRouterTransportError(cause)
+	_, err = g.Generate(t.Context(), GenerationRequest{Model: "test", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}})
 	var got *ApiErr
 	if !errors.As(err, &got) {
-		t.Fatalf("mapOpenRouterTransportError() = %T %v, want *ApiErr", err, err)
+		t.Fatalf("Generate() = %T %v, want *ApiErr", err, err)
 	}
 	if got.Kind != APIErrorKindOverloaded {
 		t.Fatalf("Kind = %q, want %q", got.Kind, APIErrorKindOverloaded)
@@ -350,8 +347,8 @@ func testOpenRouterGeneratedOverloadMapping(t *testing.T) {
 	if delay, ok := got.RetryAfter(); !ok || delay != 11*time.Second {
 		t.Fatalf("RetryAfter() = (%s, %t), want (11s, true)", delay, ok)
 	}
-	if !errors.Is(got, cause) {
-		t.Fatal("mapped error does not wrap the generated error")
+	if got.Provider != ProviderOpenRouter || got.StatusCode != http.StatusServiceUnavailable || !strings.Contains(got.RawBody, "provider_overloaded") {
+		t.Fatalf("error details lost: %+v", got)
 	}
 }
 

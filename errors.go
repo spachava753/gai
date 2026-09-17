@@ -22,7 +22,7 @@ func (u UnsupportedInputModalityErr) Error() string {
 	return fmt.Sprintf("unsupported input modality: %s", string(u))
 }
 
-// UnsupportedOutputModalityErr reports that [WithOutputModalities] requested a
+// UnsupportedOutputModalityErr reports that [WithOpenAIOutputModalities] requested a
 // modality unsupported by the selected provider or model. Its string value
 // names the rejected modality.
 type UnsupportedOutputModalityErr string
@@ -170,6 +170,8 @@ type ApiErr struct {
 	Kind APIErrorKind `json:"kind" yaml:"kind"`
 
 	// StatusCode is the HTTP status code returned by the API, or zero when unavailable.
+	// If the API reports an error after sending successful HTTP headers, this
+	// may instead be the numeric status supplied in the error body.
 	StatusCode int `json:"status_code,omitempty" yaml:"status_code,omitempty"`
 	// Message is the best-effort human-readable message extracted from the provider response.
 	Message string `json:"message,omitempty" yaml:"message,omitempty"`

@@ -190,10 +190,13 @@ type ResponsesService interface {
 // [ResponsesMessageExtraFieldPhase].
 //
 // Responses consumes [WithTemperature], [WithTopP],
-// [WithMaxGenerationTokens], [WithToolChoice], [WithOutputModalities], and
+// [WithMaxGenerationTokens], [WithToolChoice],
+// [WithParallelToolCalls], [WithLogprobs], [WithTopLogprobs], and
 // [WithReasoningEffort], plus [WithResponsesThoughtSummaryDetail],
-// [WithResponsesServiceTier]. SafetyIdentifier and PromptCacheKey are passed
-// directly from [GenerationRequest].
+// [WithResponsesServiceTier]. Read token probabilities from output-text blocks
+// under [ResponsesExtraFieldLogprobs]. WithTopLogprobs sets the alternative-token
+// count; WithLogprobs(true) enables reporting. SafetyIdentifier and PromptCacheKey
+// are passed directly from [GenerationRequest].
 type ResponsesGenerator struct {
 	client ResponsesService
 }
@@ -291,13 +294,21 @@ func convertToolsToResponses(tools []Tool) ([]responses.ToolUnionParam, error) {
 	return converted, nil
 }
 
+// ResponsesExtraFieldLogprobs is the [Block.ExtraFields] key for output-text
+// token log probabilities, stored as []json.RawMessage native token objects.
+// Stream sends the complete list once when each text part finishes, on an empty
+// text block. [StreamingAdapter] attaches it to that part's collected text.
+const ResponsesExtraFieldLogprobs = "responses_logprobs"
+
 type responsesGenerationOptions struct {
+	ParallelToolCalls   *bool
+	Logprobs            bool
+	TopLogprobs         *int
 	Temperature         *float64
 	TopP                *float64
 	MaxGenerationTokens *int
 	ToolChoice          string
 	ReasoningEffort     string
-	OutputModalities    []Modality
 	ServiceTier         *responses.ResponseNewParamsServiceTier
 	ThoughtSummary      *responses.ReasoningSummary
 }
@@ -305,6 +316,23 @@ type responsesGenerationOptions struct {
 // parseResponsesGenerationOptions validates common and Responses-specific values into typed settings.
 func parseResponsesGenerationOptions(values GenerationOptions) (*responsesGenerationOptions, error) {
 	options := &responsesGenerationOptions{}
+	parallel, present, err := generationOption[bool](values, GenerationOptionParallelToolCalls)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		options.ParallelToolCalls = &parallel
+	}
+	if options.Logprobs, _, err = generationOption[bool](values, GenerationOptionLogprobs); err != nil {
+		return nil, err
+	}
+	topLogprobs, present, err := generationOption[int](values, GenerationOptionTopLogprobs)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		options.TopLogprobs = &topLogprobs
+	}
 
 	temperature, ok, err := generationOption[float64](values, GenerationOptionTemperature)
 	if err != nil {
@@ -331,9 +359,6 @@ func parseResponsesGenerationOptions(values GenerationOptions) (*responsesGenera
 		return nil, err
 	}
 	if options.ReasoningEffort, _, err = generationOption[string](values, GenerationOptionReasoningEffort); err != nil {
-		return nil, err
-	}
-	if options.OutputModalities, _, err = generationOption[[]Modality](values, GenerationOptionOutputModalities); err != nil {
 		return nil, err
 	}
 
@@ -616,7 +641,7 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
-	instructions, err := joinedTextInstructions(request.Instructions)
+	instructionParts, err := textInstructions(request.Instructions)
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
@@ -636,10 +661,19 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 		},
 	}
 
-	if instructions != "" {
+	if instructions := strings.Join(instructionParts, "\n\n"); instructions != "" {
 		params.Instructions = openai.Opt(instructions)
 	}
 	params.Tools = tools
+	if options.ParallelToolCalls != nil {
+		params.ParallelToolCalls = openai.Opt(*options.ParallelToolCalls)
+	}
+	if options.Logprobs {
+		params.Include = append(params.Include, responses.ResponseIncludable("message.output_text.logprobs"))
+	}
+	if options.TopLogprobs != nil {
+		params.TopLogprobs = openai.Opt(int64(*options.TopLogprobs))
+	}
 
 	if options.Temperature != nil {
 		params.Temperature = openai.Opt(*options.Temperature)
@@ -675,11 +709,6 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 			params.Reasoning.Summary = *options.ThoughtSummary
 		}
 	}
-	for _, modality := range options.OutputModalities {
-		if modality != Text {
-			return params, UnsupportedOutputModalityErr(modality.String())
-		}
-	}
 
 	return params, nil
 }
@@ -700,7 +729,15 @@ func processResponseOutput(output []responses.ResponseOutputItemUnion) (message 
 			for _, c := range msg.Content {
 				switch c.Type {
 				case "output_text":
-					message.Blocks = append(message.Blocks, Block{BlockType: Content, ModalityType: Text, MimeType: "text/plain", Content: Str(c.Text)})
+					block := TextBlock(c.Text)
+					if raw := c.AsOutputText().JSON.Logprobs.Raw(); raw != "" && raw != "null" {
+						var tokens []json.RawMessage
+						if err := json.Unmarshal([]byte(raw), &tokens); err != nil {
+							return Message{}, false, "", err
+						}
+						block.ExtraFields = map[string]interface{}{ResponsesExtraFieldLogprobs: tokens}
+					}
+					message.Blocks = append(message.Blocks, block)
 				case "refusal":
 					if c.Refusal != "" {
 						refusal = c.Refusal
@@ -927,6 +964,12 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, request GenerationReque
 						return
 					}
 				}
+			case "response.content_part.added":
+				if event.AsResponseContentPartAdded().Part.Type == "output_text" {
+					if !yield(StreamChunk{Block: Block{BlockType: Separator}}) {
+						return
+					}
+				}
 			case "response.output_text.delta":
 				textDelta := event.AsResponseOutputTextDelta()
 				if textDelta.Delta != "" {
@@ -934,6 +977,21 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, request GenerationReque
 						Block:              TextBlock(textDelta.Delta),
 						MessageExtraFields: maps.Clone(assistantMessageExtraFields),
 					}) {
+						return
+					}
+				}
+			case "response.output_text.done":
+				// The final event contains the complete token list. Publishing it
+				// once avoids retaining a growing copy on every text chunk.
+				if raw := event.AsResponseOutputTextDone().JSON.Logprobs.Raw(); raw != "" && raw != "null" {
+					var tokens []json.RawMessage
+					if err := json.Unmarshal([]byte(raw), &tokens); err != nil {
+						yield(StreamChunk{Err: err})
+						return
+					}
+					block := TextBlock("")
+					block.ExtraFields = map[string]interface{}{ResponsesExtraFieldLogprobs: tokens}
+					if !yield(StreamChunk{Block: block, MessageExtraFields: maps.Clone(assistantMessageExtraFields)}) {
 						return
 					}
 				}

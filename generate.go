@@ -3,6 +3,7 @@ package gai
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 )
@@ -19,6 +20,16 @@ const (
 // Common keys in [GenerationOptions]. Provider adapters ignore unsupported
 // keys and validate recognized values when building a request.
 const (
+	// GenerationOptionLogitBias is the map[string]float64 token-bias control set by [WithLogitBias].
+	GenerationOptionLogitBias = "logit_bias"
+	// GenerationOptionLogprobs is the bool token-probability control set by [WithLogprobs].
+	GenerationOptionLogprobs = "logprobs"
+	// GenerationOptionTopLogprobs is the int alternative-token count set by [WithTopLogprobs].
+	GenerationOptionTopLogprobs = "top_logprobs"
+	// GenerationOptionParallelToolCalls is the bool parallel-tool control set by [WithParallelToolCalls].
+	GenerationOptionParallelToolCalls = "parallel_tool_calls"
+	// GenerationOptionSeed is the int sampling seed set by [WithSeed].
+	GenerationOptionSeed = "seed"
 	// GenerationOptionTemperature is the float64 sampling-temperature key set by
 	// [WithTemperature]. Valid ranges are provider-defined.
 	GenerationOptionTemperature = "temperature"
@@ -33,8 +44,8 @@ const (
 	// [WithPresencePenalty].
 	GenerationOptionPresencePenalty = "presence_penalty"
 	// GenerationOptionCandidateCount is the uint candidate-count key set by
-	// [WithCandidateCount]. It is supported by OpenAI Chat Completions, Gemini,
-	// and OpenRouter generation; [StreamingAdapter] supports one candidate.
+	// [WithCandidateCount]. OpenAI Chat Completions and Gemini support multiple
+	// candidates on supporting models; [StreamingAdapter] accepts candidate zero.
 	GenerationOptionCandidateCount = "candidate_count"
 	// GenerationOptionMaxGenerationTokens is the int output-token limit key set
 	// by [WithMaxGenerationTokens].
@@ -46,30 +57,12 @@ const (
 	// GenerationOptionStopSequences is the []string stop-sequence key set by
 	// [WithStopSequences].
 	GenerationOptionStopSequences = "stop_sequences"
-	// GenerationOptionOutputModalities is the []Modality output key set by
-	// [WithOutputModalities]. Providers reject unsupported requested modalities.
-	GenerationOptionOutputModalities = "output_modalities"
-	// GenerationOptionAudioConfig is the [AudioConfig] key set by
-	// [WithAudioConfig]. OpenAI Chat Completions consumes this option when audio
-	// output is requested.
-	GenerationOptionAudioConfig = "audio_config"
 	// GenerationOptionReasoningEffort is the string effort key set by [WithReasoningEffort].
 	GenerationOptionReasoningEffort = "reasoning_effort"
 	// GenerationOptionThinkingBudget is the positive int thinking-token budget
-	// set by [WithThinkingBudget], supported by Anthropic and OpenRouter.
+	// set by [WithThinkingBudget], supported by Anthropic, Gemini, and OpenRouter.
 	GenerationOptionThinkingBudget = "thinking_budget"
 )
-
-// AudioConfig selects the voice and encoding for generated audio. Use it with
-// [WithAudioConfig] and request [Audio] through [WithOutputModalities]. The
-// provider validates supported voices and formats.
-type AudioConfig struct {
-	// VoiceName is the provider-defined built-in voice name.
-	VoiceName string `json:"voice_name,omitempty" yaml:"voice_name,omitempty"`
-
-	// Format is the provider-defined audio encoding, such as "wav" or "mp3".
-	Format string `json:"format,omitempty" yaml:"format,omitempty"`
-}
 
 // GenerationOptions stores common and provider-specific request controls.
 // Prefer [NewGenerationOptions] and typed [GenerationOption] helpers. Direct
@@ -89,6 +82,48 @@ func NewGenerationOptions(options ...GenerationOption) GenerationOptions {
 		option(values)
 	}
 	return values
+}
+
+// WithLogitBias adjusts the likelihood of provider token IDs, represented as
+// decimal strings. Positive values favor tokens; negative values discourage them.
+// Providers define the accepted range. The map is copied when this option is
+// applied and stored under [GenerationOptionLogitBias]. Unsupported adapters ignore it.
+func WithLogitBias(value map[string]float64) GenerationOption {
+	return func(options GenerationOptions) { options[GenerationOptionLogitBias] = maps.Clone(value) }
+}
+
+// WithLogprobs requests log probabilities for generated tokens through
+// [GenerationOptionLogprobs]. False disables the request. Read the results from
+// [Message.ExtraFields] under [OpenAIExtraFieldChoice] for Chat Completions or
+// [GeminiExtraFieldLogprobs] for Gemini. Responses attaches them to output-text
+// [Block.ExtraFields] under [ResponsesExtraFieldLogprobs]. Other adapters ignore
+// this option. Use [WithTopLogprobs] to request alternative tokens as well.
+func WithLogprobs(enabled bool) GenerationOption {
+	return func(options GenerationOptions) { options[GenerationOptionLogprobs] = enabled }
+}
+
+// WithTopLogprobs requests count alternative tokens at each output position
+// through [GenerationOptionTopLogprobs]. Pair it with WithLogprobs(true); a count
+// alone does not enable log probability reporting. Zero is sent
+// explicitly; the provider validates the count and model support.
+func WithTopLogprobs(count int) GenerationOption {
+	return func(options GenerationOptions) { options[GenerationOptionTopLogprobs] = count }
+}
+
+// WithParallelToolCalls controls whether a response may request multiple tool
+// calls through [GenerationOptionParallelToolCalls]. False asks the provider to
+// disable parallel calls; it does not control how the application executes tools.
+// The provider validates support. Unsupported adapters ignore it.
+func WithParallelToolCalls(enabled bool) GenerationOption {
+	return func(options GenerationOptions) { options[GenerationOptionParallelToolCalls] = enabled }
+}
+
+// WithSeed requests best-effort repeatable sampling through [GenerationOptionSeed].
+// Identical seeds do not guarantee identical output. Zero is sent explicitly;
+// supported seed values and reproducibility guarantees depend on the provider.
+// Chat Completions adapters and Gemini translate this option; others ignore it.
+func WithSeed(value int) GenerationOption {
+	return func(options GenerationOptions) { options[GenerationOptionSeed] = value }
 }
 
 // WithTemperature returns a [GenerationOption] that stores value under
@@ -149,21 +184,6 @@ func WithStopSequences(values ...string) GenerationOption {
 	}
 }
 
-// WithOutputModalities stores a copy of values under
-// [GenerationOptionOutputModalities]. Unsupported requests return
-// [UnsupportedOutputModalityErr].
-func WithOutputModalities(values ...Modality) GenerationOption {
-	return func(options GenerationOptions) {
-		options[GenerationOptionOutputModalities] = append([]Modality(nil), values...)
-	}
-}
-
-// WithAudioConfig stores value under [GenerationOptionAudioConfig]. Use it with
-// [WithOutputModalities] when requesting [Audio] output.
-func WithAudioConfig(value AudioConfig) GenerationOption {
-	return func(options GenerationOptions) { options[GenerationOptionAudioConfig] = value }
-}
-
 // WithReasoningEffort stores a qualitative effort label under
 // [GenerationOptionReasoningEffort]. Accepted labels depend on the provider.
 // Anthropic also accepts "adaptive" and "disabled". Numeric token budgets use
@@ -172,8 +192,8 @@ func WithReasoningEffort(value string) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionReasoningEffort] = value }
 }
 
-// WithThinkingBudget sets a positive number of thinking tokens for Anthropic
-// or OpenRouter. It cannot be combined with [WithReasoningEffort]. Other
+// WithThinkingBudget sets a positive number of thinking tokens for Anthropic,
+// Gemini, or OpenRouter. It cannot be combined with [WithReasoningEffort]. Other
 // providers ignore it; it is not an output-token limit.
 func WithThinkingBudget(value int) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionThinkingBudget] = value }
@@ -195,10 +215,11 @@ type GenerationRequest struct {
 	Model string `json:"model" yaml:"model"`
 	// SafetyIdentifier is an opaque stable end-user identity, not personal data.
 	// OpenAI and Moonshot send safety_identifier; Anthropic sends metadata.user_id;
-	// Z.AI and DeepSeek send user_id; Cerebras sends user. DeepSeek also uses it for
+	// Z.AI and DeepSeek send user_id; Cerebras and OpenRouter send user. DeepSeek also uses it for
 	// cache and scheduling isolation. Unsupported providers, including native Gemini, ignore it.
 	SafetyIdentifier string `json:"safety_identifier,omitempty" yaml:"safety_identifier,omitempty"`
-	// PromptCacheKey groups requests for cache routing on OpenAI, Moonshot, and Cerebras.
+	// PromptCacheKey groups requests for cache routing on OpenAI, Moonshot, Cerebras,
+	// and OpenRouter. On OpenRouter, an explicit session ID takes routing precedence.
 	// It does not enable caching, specify retention, or identify a stored cache
 	// resource. Other providers ignore it. It is never derived from SafetyIdentifier.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty" yaml:"prompt_cache_key,omitempty"`
@@ -302,14 +323,6 @@ func textInstructions(instructions Message) ([]string, error) {
 		parts = append(parts, block.Content.String())
 	}
 	return parts, nil
-}
-
-func joinedTextInstructions(instructions Message) (string, error) {
-	parts, err := textInstructions(instructions)
-	if err != nil {
-		return "", err
-	}
-	return strings.Join(parts, "\n\n"), nil
 }
 
 // FinishReason classifies why generation stopped. It is normalized across

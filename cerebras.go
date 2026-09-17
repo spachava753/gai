@@ -26,29 +26,15 @@ const CerebrasDefaultBaseURL = "https://api.cerebras.ai/v1"
 type CerebrasGenerator struct{ client *OpenAiGenerator }
 
 const (
-	// CerebrasGenerationOptionLogitBias is the map[string]float64 key set by
-	// [WithCerebrasLogitBias].
-	CerebrasGenerationOptionLogitBias = "cerebras_logit_bias"
-	// CerebrasGenerationOptionLogprobs is the bool key set by
-	// [WithCerebrasLogprobs].
-	CerebrasGenerationOptionLogprobs = "cerebras_logprobs"
-	// CerebrasGenerationOptionParallelToolCalls is the bool key set by
-	// [WithCerebrasParallelToolCalls].
-	CerebrasGenerationOptionParallelToolCalls = "cerebras_parallel_tool_calls"
 	// CerebrasGenerationOptionPrediction is the string key set by
 	// [WithCerebrasPrediction].
 	CerebrasGenerationOptionPrediction = "cerebras_prediction"
 	// CerebrasGenerationOptionResponseFormat is the map[string]any key set by
 	// [WithCerebrasResponseFormat].
 	CerebrasGenerationOptionResponseFormat = "cerebras_response_format"
-	// CerebrasGenerationOptionSeed is the int key set by [WithCerebrasSeed].
-	CerebrasGenerationOptionSeed = "cerebras_seed"
 	// CerebrasGenerationOptionServiceTier is the string key set by
 	// [WithCerebrasServiceTier].
 	CerebrasGenerationOptionServiceTier = "cerebras_service_tier"
-	// CerebrasGenerationOptionTopLogprobs is the int key set by
-	// [WithCerebrasTopLogprobs].
-	CerebrasGenerationOptionTopLogprobs = "cerebras_top_logprobs"
 )
 
 // CerebrasServiceTier selects request prioritization for
@@ -66,31 +52,6 @@ const (
 	CerebrasServiceTierFlex CerebrasServiceTier = "flex"
 )
 
-// WithCerebrasLogitBias stores a copy of value under
-// [CerebrasGenerationOptionLogitBias].
-func WithCerebrasLogitBias(value map[string]float64) GenerationOption {
-	return func(options GenerationOptions) {
-		options[CerebrasGenerationOptionLogitBias] = maps.Clone(value)
-	}
-}
-
-// WithCerebrasLogprobs stores enabled under
-// [CerebrasGenerationOptionLogprobs]. Returned log probabilities use
-// [OpenAIExtraFieldChoice].
-func WithCerebrasLogprobs(enabled bool) GenerationOption {
-	return func(options GenerationOptions) {
-		options[CerebrasGenerationOptionLogprobs] = enabled
-	}
-}
-
-// WithCerebrasParallelToolCalls stores enabled under
-// [CerebrasGenerationOptionParallelToolCalls].
-func WithCerebrasParallelToolCalls(enabled bool) GenerationOption {
-	return func(options GenerationOptions) {
-		options[CerebrasGenerationOptionParallelToolCalls] = enabled
-	}
-}
-
 // WithCerebrasPrediction stores content under
 // [CerebrasGenerationOptionPrediction] as known predicted output.
 func WithCerebrasPrediction(content string) GenerationOption {
@@ -107,27 +68,11 @@ func WithCerebrasResponseFormat(value map[string]any) GenerationOption {
 	}
 }
 
-// WithCerebrasSeed stores value under [CerebrasGenerationOptionSeed] for
-// best-effort deterministic sampling.
-func WithCerebrasSeed(value int) GenerationOption {
-	return func(options GenerationOptions) {
-		options[CerebrasGenerationOptionSeed] = value
-	}
-}
-
 // WithCerebrasServiceTier stores value under
 // [CerebrasGenerationOptionServiceTier].
 func WithCerebrasServiceTier(value CerebrasServiceTier) GenerationOption {
 	return func(options GenerationOptions) {
 		options[CerebrasGenerationOptionServiceTier] = string(value)
-	}
-}
-
-// WithCerebrasTopLogprobs stores value under
-// [CerebrasGenerationOptionTopLogprobs].
-func WithCerebrasTopLogprobs(value int) GenerationOption {
-	return func(options GenerationOptions) {
-		options[CerebrasGenerationOptionTopLogprobs] = value
 	}
 }
 
@@ -201,26 +146,15 @@ func (g *CerebrasGenerator) prepareRequest(request GenerationRequest) (Generatio
 	}
 	request.SafetyIdentifier = ""
 	for _, option := range []struct{ key, field string }{
-		{CerebrasGenerationOptionLogitBias, "logit_bias"},
-		{CerebrasGenerationOptionLogprobs, "logprobs"},
-		{CerebrasGenerationOptionParallelToolCalls, "parallel_tool_calls"},
 		{CerebrasGenerationOptionPrediction, "prediction"},
 		{CerebrasGenerationOptionResponseFormat, "response_format"},
-		{CerebrasGenerationOptionSeed, "seed"},
 		{CerebrasGenerationOptionServiceTier, "service_tier"},
-		{CerebrasGenerationOptionTopLogprobs, "top_logprobs"},
 	} {
 		var value any
 		var present bool
 		switch option.key {
-		case CerebrasGenerationOptionLogitBias:
-			value, present, err = generationOption[map[string]float64](options, option.key)
-		case CerebrasGenerationOptionLogprobs, CerebrasGenerationOptionParallelToolCalls:
-			value, present, err = generationOption[bool](options, option.key)
 		case CerebrasGenerationOptionResponseFormat:
 			value, present, err = generationOption[map[string]any](options, option.key)
-		case CerebrasGenerationOptionSeed, CerebrasGenerationOptionTopLogprobs:
-			value, present, err = generationOption[int](options, option.key)
 		default:
 			value, present, err = generationOption[string](options, option.key)
 		}

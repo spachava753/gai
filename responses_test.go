@@ -15,7 +15,45 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
+func testResponsesCommonLogprobOptions(t *testing.T) {
+	generator := &ResponsesGenerator{}
+	for _, enabled := range []bool{false, true} {
+		values := NewGenerationOptions(WithLogprobs(enabled), WithTopLogprobs(0), WithParallelToolCalls(enabled))
+		params, err := generator.buildParams(nil, GenerationRequest{Model: "model", Options: values})
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(data, &body); err != nil {
+			t.Fatal(err)
+		}
+		if body["parallel_tool_calls"] != enabled || body["top_logprobs"] != float64(0) {
+			t.Fatalf("body: %s", data)
+		}
+		if strings.Contains(string(data), "message.output_text.logprobs") != enabled {
+			t.Fatalf("include: %s", data)
+		}
+		if !strings.Contains(string(data), "reasoning.encrypted_content") {
+			t.Fatalf("lost reasoning include: %s", data)
+		}
+		if values[GenerationOptionLogprobs] != enabled || len(values) != 3 {
+			t.Fatal("modified options")
+		}
+	}
+	for _, key := range []string{GenerationOptionLogprobs, GenerationOptionTopLogprobs, GenerationOptionParallelToolCalls} {
+		if _, err := generator.buildParams(nil, GenerationRequest{Options: GenerationOptions{key: "invalid"}}); err == nil {
+			t.Fatalf("accepted invalid %s", key)
+		}
+	}
+}
+
 func TestEventAPIAdapterScenarios(t *testing.T) {
+	t.Run("CommonLogprobOptions", func(t *testing.T) { testResponsesCommonLogprobOptions(t) })
+	t.Run("LogprobMetadata", func(t *testing.T) { testResponsesLogprobMetadata(t) })
 	t.Run("ResponsesErrorEventClassification", func(t *testing.T) { testResponsesErrorEventClassification(t) })
 	t.Run("ResponsesFailureClassification", func(t *testing.T) { testResponsesFailureClassification(t) })
 	t.Run("ResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase", func(t *testing.T) { testResponsesGeneratorBuildInputItemsPreservesAssistantMessagePhase(t) })
