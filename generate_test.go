@@ -1,77 +1,10 @@
 package gai
 
 import (
-	"context"
 	"errors"
 	"reflect"
 	"testing"
-
-	oai "github.com/openai/openai-go/v3"
 )
-
-func testNewGenerationOptions(t *testing.T) {
-	stops := []string{"END", "STOP"}
-	modalities := []Modality{Text, Audio}
-	audio := OpenAIAudioConfig{VoiceName: "alloy", Format: "wav"}
-	bias := map[string]float64{"42": -1.5}
-
-	options := NewGenerationOptions(
-		WithLogitBias(bias), WithLogprobs(false), WithTopLogprobs(0),
-		WithParallelToolCalls(false), WithSeed(0), WithOpenRouterMinP(0.05),
-		WithOpenRouterTopA(0.2), WithOpenRouterRepetitionPenalty(1.1),
-		WithTemperature(0.2),
-		WithTopP(0.8),
-		WithTopK(40),
-		WithFrequencyPenalty(0.1),
-		WithPresencePenalty(0.3),
-		WithCandidateCount(2),
-		WithMaxGenerationTokens(512),
-		WithToolChoice(ToolChoiceAuto),
-		WithStopSequences(stops...),
-		WithOpenAIOutputModalities(modalities...),
-		WithOpenAIAudioConfig(audio),
-		WithReasoningEffort("medium"),
-	)
-
-	want := GenerationOptions{
-		GenerationOptionLogitBias:                   map[string]float64{"42": -1.5},
-		GenerationOptionLogprobs:                    false,
-		GenerationOptionTopLogprobs:                 0,
-		GenerationOptionParallelToolCalls:           false,
-		GenerationOptionSeed:                        0,
-		OpenRouterGenerationOptionMinP:              0.05,
-		OpenRouterGenerationOptionTopA:              0.2,
-		OpenRouterGenerationOptionRepetitionPenalty: 1.1,
-		GenerationOptionTemperature:                 0.2,
-		GenerationOptionTopP:                        0.8,
-		GenerationOptionTopK:                        uint(40),
-		GenerationOptionFrequencyPenalty:            0.1,
-		GenerationOptionPresencePenalty:             0.3,
-		GenerationOptionCandidateCount:              uint(2),
-		GenerationOptionMaxGenerationTokens:         512,
-		GenerationOptionToolChoice:                  ToolChoiceAuto,
-		GenerationOptionStopSequences:               []string{"END", "STOP"},
-		OpenAIGenerationOptionOutputModalities:      []Modality{Text, Audio},
-		OpenAIGenerationOptionAudioConfig:           audio,
-		GenerationOptionReasoningEffort:             "medium",
-	}
-	if !reflect.DeepEqual(options, want) {
-		t.Fatalf("NewGenerationOptions() = %#v, want %#v", options, want)
-	}
-
-	bias["42"] = 99
-	if options[GenerationOptionLogitBias].(map[string]float64)["42"] != -1.5 {
-		t.Fatal("logit bias changed after mutating input")
-	}
-	stops[0] = "changed"
-	modalities[0] = Video
-	if !reflect.DeepEqual(options[GenerationOptionStopSequences], []string{"END", "STOP"}) {
-		t.Fatalf("stop sequences changed after mutating input: %#v", options[GenerationOptionStopSequences])
-	}
-	if !reflect.DeepEqual(options[OpenAIGenerationOptionOutputModalities], []Modality{Text, Audio}) {
-		t.Fatalf("output modalities changed after mutating input: %#v", options[OpenAIGenerationOptionOutputModalities])
-	}
-}
 
 func TestGeneratedProviderConstructors(t *testing.T) {
 	constructors := []struct {
@@ -261,55 +194,5 @@ func TestProviderOptionParsersIgnoreUnknownOptions(t *testing.T) {
 				t.Fatalf("unknown option returned error: %v", err)
 			}
 		})
-	}
-}
-
-func testOpenAiGeneratorUsesRequestScopedState(t *testing.T) {
-	client := &mockChatCompletionService{response: &oai.ChatCompletion{
-		Choices: []oai.ChatCompletionChoice{{
-			FinishReason: "stop",
-			Message:      oai.ChatCompletionMessage{Role: "assistant", Content: "ok"},
-		}},
-	}}
-	generator := newTestOpenAIGenerator(t, client)
-	dialog := Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}
-
-	_, err := generator.Generate(context.Background(), GenerationRequest{
-		Model:        "first-model",
-		Instructions: SystemMessage(TextBlock("first instructions")),
-		Dialog:       dialog,
-		Tools:        []Tool{{Name: "lookup"}},
-	})
-	if err != nil {
-		t.Fatalf("first Generate() error = %v", err)
-	}
-	_, err = generator.Generate(context.Background(), GenerationRequest{
-		Model:  "second-model",
-		Dialog: dialog,
-	})
-	if err != nil {
-		t.Fatalf("second Generate() error = %v", err)
-	}
-
-	if len(client.requests) != 2 {
-		t.Fatalf("captured requests = %d, want 2", len(client.requests))
-	}
-	if got := string(client.requests[0].Model); got != "first-model" {
-		t.Fatalf("first model = %q", got)
-	}
-	if got := string(client.requests[1].Model); got != "second-model" {
-		t.Fatalf("second model = %q", got)
-	}
-	if got := len(client.requests[0].Tools); got != 1 {
-		t.Fatalf("first request tools = %d, want 1", got)
-	}
-	if got := len(client.requests[1].Tools); got != 0 {
-		t.Fatalf("second request tools = %d, want 0", got)
-	}
-	if got := len(client.requests[0].Messages); got != 2 {
-		t.Fatalf("first request messages = %d, want system + user", got)
-	}
-	if got := len(client.requests[1].Messages); got != 1 {
-		t.Fatalf("second request messages = %d, want only user", got)
 	}
 }

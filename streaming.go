@@ -261,7 +261,7 @@ type StreamingAdapter struct {
 // Separator blocks are valid only as streaming boundary markers. They are not
 // returned in the compressed block list.
 //
-// See the unit test in streaming_test.go for expected scenarios.
+// See the unit tests in streaming_adapter_test.go for expected scenarios.
 func compressStreamingBlocks(blocks []Block) ([]Block, error) {
 	var (
 		result []Block

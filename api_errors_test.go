@@ -1,18 +1,11 @@
 package gai
 
 import (
-	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	anthropicshared "github.com/anthropics/anthropic-sdk-go/shared"
-	oai "github.com/openai/openai-go/v3"
-	oairesponses "github.com/openai/openai-go/v3/responses"
 )
 
 type trackingReadCloser struct {
@@ -126,7 +119,22 @@ func TestTransportFailureScenarios(t *testing.T) {
 			}
 		}
 	})
-	t.Run("ClassifyOpenRouterErrorCurrentTypedCodes", func(t *testing.T) { testClassifyOpenRouterErrorCurrentTypedCodes(t) })
+	t.Run("ClassifyOpenRouterErrorCurrentTypedCodes", func(t *testing.T) {
+		tests := []struct {
+			errorType string
+			want      APIErrorKind
+		}{
+			{errorType: "invalid_prompt", want: APIErrorKindInvalidRequest},
+			{errorType: "image_too_large", want: APIErrorKindRequestTooLarge},
+		}
+		for _, tt := range tests {
+			t.Run(tt.errorType, func(t *testing.T) {
+				if got := classifyOpenRouterError(http.StatusBadRequest, tt.errorType); got != tt.want {
+					t.Fatalf("classifyOpenRouterError() = %q, want %q", got, tt.want)
+				}
+			})
+		}
+	})
 	t.Run("HTTPAPIErrorNormalization", func(t *testing.T) {
 		tests := []struct {
 			name          string
@@ -261,138 +269,6 @@ func TestRetryAfterFromResponseValidation(t *testing.T) {
 			}
 			if !tt.ok || *got != tt.want {
 				t.Fatalf("retryAfterFromResponse() = %s, want (%s, %t)", *got, tt.want, tt.ok)
-			}
-		})
-	}
-}
-
-func testAnthropicErrorClassification(t *testing.T) {
-	tests := []struct {
-		name       string
-		statusCode int
-		typeCode   anthropicshared.ErrorType
-		want       APIErrorKind
-	}{
-		{
-			name:     "SDK overload type without status",
-			typeCode: anthropicshared.ErrorTypeOverloadedError,
-			want:     APIErrorKindOverloaded,
-		},
-		{
-			name:       "Anthropic overload status without type",
-			statusCode: 529,
-			want:       APIErrorKindOverloaded,
-		},
-		{
-			name:       "HTTP fallback",
-			statusCode: http.StatusUnauthorized,
-			want:       APIErrorKindAuthentication,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := classifyAnthropicError(tt.statusCode, tt.typeCode); got != tt.want {
-				t.Fatalf("classifyAnthropicError() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func testOpenAIErrorMappingUsesHTTPStatus(t *testing.T) {
-	var cause oai.Error
-	if err := json.Unmarshal([]byte(`{"code":"invalid_api_key","message":"Invalid API key"}`), &cause); err != nil {
-		t.Fatalf("unmarshal SDK error: %v", err)
-	}
-	cause.StatusCode = http.StatusServiceUnavailable
-	cause.Response = &http.Response{Header: http.Header{"Retry-After": []string{"9"}}}
-
-	got := mapOpenAISDKError(ProviderOpenAI, &cause)
-	if got == nil {
-		t.Fatal("mapOpenAISDKError() = nil, want *ApiErr")
-	}
-	if got.Kind != APIErrorKindServiceUnavailable {
-		t.Fatalf("Kind = %q, want %q", got.Kind, APIErrorKindServiceUnavailable)
-	}
-	if delay, ok := got.RetryAfter(); !ok || delay != 9*time.Second {
-		t.Fatalf("RetryAfter() = (%s, %t), want (9s, true)", delay, ok)
-	}
-	if !errors.Is(got, &cause) {
-		t.Fatal("mapped error does not wrap the SDK error")
-	}
-}
-
-func testOpenRouterHTTPOverloadMapping(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "11")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = io.WriteString(w, `{"error":{"code":503,"message":"Upstream request failed","metadata":{"error_type":"provider_overloaded"}}}`)
-	}))
-	defer server.Close()
-	g, err := NewOpenRouterGenerator(server.Client(), server.URL, "test-key")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = g.Generate(t.Context(), GenerationRequest{Model: "test", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}})
-	var got *ApiErr
-	if !errors.As(err, &got) {
-		t.Fatalf("Generate() = %T %v, want *ApiErr", err, err)
-	}
-	if got.Kind != APIErrorKindOverloaded {
-		t.Fatalf("Kind = %q, want %q", got.Kind, APIErrorKindOverloaded)
-	}
-	if !got.Retryable() {
-		t.Fatal("Retryable() = false, want true")
-	}
-	if delay, ok := got.RetryAfter(); !ok || delay != 11*time.Second {
-		t.Fatalf("RetryAfter() = (%s, %t), want (11s, true)", delay, ok)
-	}
-	if got.Provider != ProviderOpenRouter || got.StatusCode != http.StatusServiceUnavailable || !strings.Contains(got.RawBody, "provider_overloaded") {
-		t.Fatalf("error details lost: %+v", got)
-	}
-}
-
-func testResponsesFailureClassification(t *testing.T) {
-	tests := []struct {
-		code oairesponses.ResponseErrorCode
-		want APIErrorKind
-	}{
-		{code: oairesponses.ResponseErrorCodeServerError, want: APIErrorKindServer},
-		{code: oairesponses.ResponseErrorCodeRateLimitExceeded, want: APIErrorKindRateLimit},
-		{code: oairesponses.ResponseErrorCodeVectorStoreTimeout, want: APIErrorKindTimeout},
-		{code: oairesponses.ResponseErrorCodeBioPolicy, want: APIErrorKindContentPolicy},
-		{code: oairesponses.ResponseErrorCodeImageContentPolicyViolation, want: APIErrorKindContentPolicy},
-		{code: oairesponses.ResponseErrorCodeImageFileNotFound, want: APIErrorKindNotFound},
-		{code: oairesponses.ResponseErrorCodeImageFileTooLarge, want: APIErrorKindRequestTooLarge},
-		{code: oairesponses.ResponseErrorCodeInvalidImageMode, want: APIErrorKindInvalidRequest},
-		{code: oairesponses.ResponseErrorCode("unknown"), want: APIErrorKindUnknown},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.code), func(t *testing.T) {
-			got := mapResponsesFailure(oairesponses.ResponseError{Code: tt.code, Message: "request failed"}, "")
-			if got.Kind != tt.want {
-				t.Fatalf("Kind = %q, want %q", got.Kind, tt.want)
-			}
-		})
-	}
-}
-
-func testResponsesErrorEventClassification(t *testing.T) {
-	tests := []struct {
-		code string
-		want APIErrorKind
-	}{
-		{code: "invalid_api_key", want: APIErrorKindAuthentication},
-		{code: string(oairesponses.ResponseErrorCodeRateLimitExceeded), want: APIErrorKindRateLimit},
-		{code: "content_policy", want: APIErrorKindContentPolicy},
-		{code: "unknown", want: APIErrorKindUnknown},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.code, func(t *testing.T) {
-			if got := mapResponsesErrorEvent(tt.code, "request failed", ""); got.Kind != tt.want {
-				t.Fatalf("Kind = %q, want %q", got.Kind, tt.want)
 			}
 		})
 	}

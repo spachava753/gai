@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
-
 	"github.com/spachava753/gai"
 )
 
@@ -118,77 +117,71 @@ func TestOpenAISDKRequestBodies(t *testing.T) {
 					t.Parallel()
 					for _, wrapper := range []bool{false, true} {
 						t.Run(fmt.Sprintf("wrapper=%t", wrapper), func(t *testing.T) {
-							runSDKRequestCase(t, scenario, test, exchanges, target, wrapper)
+
+							transport := &sdkReplayTransport{stream: test.Stream}
+							for _, exchange := range exchanges[:target+1] {
+								transport.responses = append(transport.responses, exchange.Response)
+							}
+							var generator interface {
+								gai.Generator
+								gai.StreamingGenerator
+							}
+							var err error
+							client := &http.Client{Transport: transport}
+							if wrapper {
+								switch test.Provider {
+								case "zai":
+									generator, err = gai.NewZaiGenerator(client, test.BaseURL, "offline-fixture-key")
+								case "deepseek":
+									generator, err = gai.NewDeepSeekGenerator(client, test.BaseURL, "offline-fixture-key")
+								case "kimi":
+									generator, err = gai.NewMoonshotGenerator(client, test.BaseURL, "offline-fixture-key")
+								case "openai":
+									generator, err = gai.NewOpenAiGenerator(client, test.BaseURL, "offline-fixture-key")
+								default:
+									t.Fatalf("unknown provider %s", test.Provider)
+								}
+							} else {
+								generator, err = gai.NewOpenAiGenerator(client, test.BaseURL, "offline-fixture-key")
+							}
+							if err != nil {
+								t.Fatal(err)
+							}
+							var executor gai.Generator = generator
+							if test.Stream {
+								executor = &gai.StreamingAdapter{S: generator}
+							}
+							var dialog gai.Dialog
+							var previous gai.Message
+							for index, step := range scenario.Steps[:target+1] {
+								inputs, err := scenario.inputMessages(step, previous)
+								if err != nil {
+									t.Fatalf("prepare %s: %v", step.Name, err)
+								}
+								dialog = append(dialog, inputs...)
+								request := scenario.generationRequest(t, test, step)
+								request.Dialog = dialog
+								response, generationErr := executor.Generate(t.Context(), request)
+								if len(transport.requests) != index+1 {
+									t.Fatalf("%s: got %d HTTP requests, want %d (generation error: %v)", step.Name, len(transport.requests), index+1, generationErr)
+								}
+								actual, want := transport.requests[index], exchanges[index].Request
+								if difference := sdkRequestBodyDifference(want, actual); difference != "" {
+									t.Fatalf("%s request body: %s", step.Name, difference)
+								}
+								if generationErr != nil {
+									t.Fatalf("step %s: %v", step.Name, generationErr)
+								}
+								scenario.checkResponse(t, step, response, request.Options)
+								previous = response.Candidates[0]
+								dialog = append(dialog, previous)
+							}
+
 						})
 					}
 				})
 			}
 		})
-	}
-}
-
-// runSDKRequestCase drives the conversation up to one target send. Request
-// mismatches take precedence over response errors. Every response, including
-// the target, must complete successfully and satisfy the scenario's behavior.
-func runSDKRequestCase(t *testing.T, scenario sdkConversation, test sdkRequestCase, exchanges []sdkHTTPExchange, target int, wrapper bool) {
-	t.Helper()
-	transport := &sdkReplayTransport{stream: test.Stream}
-	for _, exchange := range exchanges[:target+1] {
-		transport.responses = append(transport.responses, exchange.Response)
-	}
-	var generator interface {
-		gai.Generator
-		gai.StreamingGenerator
-	}
-	var err error
-	client := &http.Client{Transport: transport}
-	if wrapper {
-		switch test.Provider {
-		case "zai":
-			generator, err = gai.NewZaiGenerator(client, test.BaseURL, "offline-fixture-key")
-		case "deepseek":
-			generator, err = gai.NewDeepSeekGenerator(client, test.BaseURL, "offline-fixture-key")
-		case "kimi":
-			generator, err = gai.NewMoonshotGenerator(client, test.BaseURL, "offline-fixture-key")
-		case "openai":
-			generator, err = gai.NewOpenAiGenerator(client, test.BaseURL, "offline-fixture-key")
-		default:
-			t.Fatalf("unknown provider %s", test.Provider)
-		}
-	} else {
-		generator, err = gai.NewOpenAiGenerator(client, test.BaseURL, "offline-fixture-key")
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var executor gai.Generator = generator
-	if test.Stream {
-		executor = &gai.StreamingAdapter{S: generator}
-	}
-	var dialog gai.Dialog
-	var previous gai.Message
-	for index, step := range scenario.Steps[:target+1] {
-		inputs, err := scenario.inputMessages(step, previous)
-		if err != nil {
-			t.Fatalf("prepare %s: %v", step.Name, err)
-		}
-		dialog = append(dialog, inputs...)
-		request := scenario.generationRequest(t, test, step)
-		request.Dialog = dialog
-		response, generationErr := executor.Generate(t.Context(), request)
-		if len(transport.requests) != index+1 {
-			t.Fatalf("%s: got %d HTTP requests, want %d (generation error: %v)", step.Name, len(transport.requests), index+1, generationErr)
-		}
-		actual, want := transport.requests[index], exchanges[index].Request
-		if difference := sdkRequestBodyDifference(want, actual); difference != "" {
-			t.Fatalf("%s request body: %s", step.Name, difference)
-		}
-		if generationErr != nil {
-			t.Fatalf("step %s: %v", step.Name, generationErr)
-		}
-		scenario.checkResponse(t, step, response, request.Options)
-		previous = response.Candidates[0]
-		dialog = append(dialog, previous)
 	}
 }
 
@@ -718,79 +711,6 @@ func sdkJSONDifference(path string, want, got any) string {
 	return ""
 }
 
-// These local checks cover image input construction before live SDK captures
-// are approved. They do not claim provider acceptance of tool-role images.
-func testSDKMediaInputs(t *testing.T) {
-	t.Helper()
-	matrix := loadSDKRequestMatrix(t)
-	for _, name := range []string{"user_images", "tool_images", "pdf_inputs"} {
-		t.Run(name, func(t *testing.T) {
-			scenario := matrix.Scenarios[name]
-			previous := gai.Message{Role: gai.Assistant, Blocks: []gai.Block{{
-				ID: "actual-tool-id", BlockType: gai.ToolCall,
-				Content: gai.Str(`{"name":"get_image","parameters":{}}`),
-			}}}
-			for _, step := range scenario.Steps {
-				if len(step.Images) == 0 && len(step.PDFs) == 0 {
-					continue
-				}
-				messages, err := scenario.inputMessages(step, previous)
-				if err != nil {
-					t.Fatal(err)
-				}
-				transport := &sdkReplayTransport{responses: []string{`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`}}
-				generator, err := gai.NewOpenAiGenerator(&http.Client{Transport: transport}, "http://offline.invalid", "dummy")
-				if err != nil {
-					t.Fatal(err)
-				}
-				if step.Input == "tool_results" {
-					messages = append(gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Retrieve an image.")}}, previous}, messages...)
-				}
-				imageMessageIndex := len(messages) - 1
-				// Keep the image-bearing message in history before another user turn.
-				messages = append(messages, gai.Message{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Follow up.")}})
-				if _, err := generator.Generate(t.Context(), gai.GenerationRequest{Model: "offline", Dialog: messages}); err != nil {
-					t.Fatal(err)
-				}
-				body, err := decodeSDKRequestJSON(transport.requests[0])
-				if err != nil {
-					t.Fatal(err)
-				}
-				message := body.(map[string]any)["messages"].([]any)[imageMessageIndex].(map[string]any)
-				role := "user"
-				if step.Input == "tool_results" {
-					role = "tool"
-					if message["tool_call_id"] != "actual-tool-id" {
-						t.Fatal("image tool result lost its call ID")
-					}
-				}
-				want := []any{map[string]any{"type": "text", "text": step.Text}}
-				for _, path := range step.Images {
-					data, err := os.ReadFile(path)
-					if err != nil {
-						t.Fatal(err)
-					}
-					mime := "image/png"
-					if filepath.Ext(path) == ".jpg" {
-						mime = "image/jpeg"
-					}
-					want = append(want, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)}})
-				}
-				for _, path := range step.PDFs {
-					data, err := os.ReadFile(path)
-					if err != nil {
-						t.Fatal(err)
-					}
-					want = append(want, map[string]any{"type": "file", "file": map[string]any{"filename": filepath.Base(path), "file_data": "data:application/pdf;base64," + base64.StdEncoding.EncodeToString(data)}})
-				}
-				if message["role"] != role || !reflect.DeepEqual(message["content"], want) {
-					t.Fatalf("%s: image role, content order, MIME type, or bytes changed", step.Name)
-				}
-			}
-		})
-	}
-}
-
 func TestSDKRequestHarness(t *testing.T) {
 	t.Run("top-level reasoning effort", func(t *testing.T) {
 		for _, effort := range []string{"low", "high", "max", "none"} {
@@ -806,7 +726,74 @@ func TestSDKRequestHarness(t *testing.T) {
 		}
 	})
 	t.Run("media inputs", func(t *testing.T) {
-		testSDKMediaInputs(t)
+
+		matrix := loadSDKRequestMatrix(t)
+		for _, name := range []string{"user_images", "tool_images", "pdf_inputs"} {
+			t.Run(name, func(t *testing.T) {
+				scenario := matrix.Scenarios[name]
+				previous := gai.Message{Role: gai.Assistant, Blocks: []gai.Block{{
+					ID: "actual-tool-id", BlockType: gai.ToolCall,
+					Content: gai.Str(`{"name":"get_image","parameters":{}}`),
+				}}}
+				for _, step := range scenario.Steps {
+					if len(step.Images) == 0 && len(step.PDFs) == 0 {
+						continue
+					}
+					messages, err := scenario.inputMessages(step, previous)
+					if err != nil {
+						t.Fatal(err)
+					}
+					transport := &sdkReplayTransport{responses: []string{`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`}}
+					generator, err := gai.NewOpenAiGenerator(&http.Client{Transport: transport}, "http://offline.invalid", "dummy")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if step.Input == "tool_results" {
+						messages = append(gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Retrieve an image.")}}, previous}, messages...)
+					}
+					imageMessageIndex := len(messages) - 1
+					// Keep the image-bearing message in history before another user turn.
+					messages = append(messages, gai.Message{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Follow up.")}})
+					if _, err := generator.Generate(t.Context(), gai.GenerationRequest{Model: "offline", Dialog: messages}); err != nil {
+						t.Fatal(err)
+					}
+					body, err := decodeSDKRequestJSON(transport.requests[0])
+					if err != nil {
+						t.Fatal(err)
+					}
+					message := body.(map[string]any)["messages"].([]any)[imageMessageIndex].(map[string]any)
+					role := "user"
+					if step.Input == "tool_results" {
+						role = "tool"
+						if message["tool_call_id"] != "actual-tool-id" {
+							t.Fatal("image tool result lost its call ID")
+						}
+					}
+					want := []any{map[string]any{"type": "text", "text": step.Text}}
+					for _, path := range step.Images {
+						data, err := os.ReadFile(path)
+						if err != nil {
+							t.Fatal(err)
+						}
+						mime := "image/png"
+						if filepath.Ext(path) == ".jpg" {
+							mime = "image/jpeg"
+						}
+						want = append(want, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)}})
+					}
+					for _, path := range step.PDFs {
+						data, err := os.ReadFile(path)
+						if err != nil {
+							t.Fatal(err)
+						}
+						want = append(want, map[string]any{"type": "file", "file": map[string]any{"filename": filepath.Base(path), "file_data": "data:application/pdf;base64," + base64.StdEncoding.EncodeToString(data)}})
+					}
+					if message["role"] != role || !reflect.DeepEqual(message["content"], want) {
+						t.Fatalf("%s: image role, content order, MIME type, or bytes changed", step.Name)
+					}
+				}
+			})
+		}
 	})
 	t.Run("body comparison", func(t *testing.T) {
 		for _, test := range []struct {

@@ -103,6 +103,7 @@ Provider-specific metadata placement
 
 - Use `go test ./...` locally and in CI
 - Structure tests as table-driven where relevant
+- Keep each scenario's setup, execution, and assertions in its inline `t.Run` callback. Do not hide entire test bodies in lowercase `test...` functions or single-use runners behind thin callbacks to bypass LAAS teststructure. Shared fixtures and focused assertion helpers are fine; whole-scenario forwarding is not.
 - Prefer live tests, that is, actually making network calls with SDKs and our packages, mocks cannot provide the same testing gaurantees
 - Gate every test that makes a live API call with `requireLiveAPIKey`; live tests run only when `LIVE_TESTS` and the relevant provider API key are both set
 - Never run live tests unless the user explicitly asks for them, even when `LIVE_TESTS` and provider credentials are already set in the environment

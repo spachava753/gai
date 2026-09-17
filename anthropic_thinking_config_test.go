@@ -8,67 +8,65 @@ import (
 	a "github.com/anthropics/anthropic-sdk-go"
 )
 
-func testAnthropicParallelToolCalls(t *testing.T) {
-	for _, allow := range []bool{false, true} {
-		for _, choice := range []a.ToolChoiceUnionParam{
-			{}, {OfAuto: &a.ToolChoiceAutoParam{}}, {OfAny: &a.ToolChoiceAnyParam{}}, {OfTool: &a.ToolChoiceToolParam{Name: "lookup"}},
-		} {
-			applyAnthropicParallelToolCalls(&choice, &allow, true)
-			data, err := json.Marshal(choice)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var body map[string]any
-			if err := json.Unmarshal(data, &body); err != nil {
-				t.Fatal(err)
-			}
-			if body["disable_parallel_tool_use"] != !allow {
-				t.Fatalf("choice: %s", data)
-			}
-		}
-	}
-	for _, stream := range []bool{false, true} {
+func TestAnthropicRequestControls(t *testing.T) {
+	t.Run("parallel tool calls", func(t *testing.T) {
 		for _, allow := range []bool{false, true} {
-			service := &mockAnthropicSvc{response: &a.Message{StopReason: a.StopReasonEndTurn}}
-			generator := NewAnthropicGenerator(service)
-			request := GenerationRequest{Model: "model", Tools: []Tool{{Name: "lookup"}}, Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(WithParallelToolCalls(allow))}
-			if stream {
-				for chunk := range generator.Stream(t.Context(), request) {
-					if chunk.Err != nil {
-						t.Fatal(chunk.Err)
-					}
-				}
-			} else {
-				if _, err := generator.Generate(t.Context(), request); err != nil {
+			for _, choice := range []a.ToolChoiceUnionParam{
+				{}, {OfAuto: &a.ToolChoiceAutoParam{}}, {OfAny: &a.ToolChoiceAnyParam{}}, {OfTool: &a.ToolChoiceToolParam{Name: "lookup"}},
+			} {
+				applyAnthropicParallelToolCalls(&choice, &allow, true)
+				data, err := json.Marshal(choice)
+				if err != nil {
 					t.Fatal(err)
 				}
-			}
-			if service.lastParams.ToolChoice.OfAuto == nil || service.lastParams.ToolChoice.OfAuto.DisableParallelToolUse.Value != !allow {
-				t.Fatalf("choice: %#v", service.lastParams.ToolChoice)
-			}
-			if len(request.Options) != 1 || request.Options[GenerationOptionParallelToolCalls] != allow {
-				t.Fatal("mutated request options")
+				var body map[string]any
+				if err := json.Unmarshal(data, &body); err != nil {
+					t.Fatal(err)
+				}
+				if body["disable_parallel_tool_use"] != !allow {
+					t.Fatalf("choice: %s", data)
+				}
 			}
 		}
-	}
-	allow := false
-	choice := a.ToolChoiceUnionParam{}
-	applyAnthropicParallelToolCalls(&choice, &allow, false)
-	if choice.OfAuto != nil {
-		t.Fatal("introduced tool choice without tools")
-	}
-	choice.OfNone = &a.ToolChoiceNoneParam{}
-	applyAnthropicParallelToolCalls(&choice, &allow, true)
-	if choice.OfAuto != nil {
-		t.Fatal("changed none choice")
-	}
-	if _, err := parseAnthropicGenerationOptions(GenerationOptions{GenerationOptionParallelToolCalls: "false"}); err == nil {
-		t.Fatal("accepted non-bool")
-	}
-}
-
-func TestAnthropicRequestControls(t *testing.T) {
-	t.Run("parallel tool calls", func(t *testing.T) { testAnthropicParallelToolCalls(t) })
+		for _, stream := range []bool{false, true} {
+			for _, allow := range []bool{false, true} {
+				service := &mockAnthropicSvc{response: &a.Message{StopReason: a.StopReasonEndTurn}}
+				generator := NewAnthropicGenerator(service)
+				request := GenerationRequest{Model: "model", Tools: []Tool{{Name: "lookup"}}, Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(WithParallelToolCalls(allow))}
+				if stream {
+					for chunk := range generator.Stream(t.Context(), request) {
+						if chunk.Err != nil {
+							t.Fatal(chunk.Err)
+						}
+					}
+				} else {
+					if _, err := generator.Generate(t.Context(), request); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if service.lastParams.ToolChoice.OfAuto == nil || service.lastParams.ToolChoice.OfAuto.DisableParallelToolUse.Value != !allow {
+					t.Fatalf("choice: %#v", service.lastParams.ToolChoice)
+				}
+				if len(request.Options) != 1 || request.Options[GenerationOptionParallelToolCalls] != allow {
+					t.Fatal("mutated request options")
+				}
+			}
+		}
+		allow := false
+		choice := a.ToolChoiceUnionParam{}
+		applyAnthropicParallelToolCalls(&choice, &allow, false)
+		if choice.OfAuto != nil {
+			t.Fatal("introduced tool choice without tools")
+		}
+		choice.OfNone = &a.ToolChoiceNoneParam{}
+		applyAnthropicParallelToolCalls(&choice, &allow, true)
+		if choice.OfAuto != nil {
+			t.Fatal("changed none choice")
+		}
+		if _, err := parseAnthropicGenerationOptions(GenerationOptions{GenerationOptionParallelToolCalls: "false"}); err == nil {
+			t.Fatal("accepted non-bool")
+		}
+	})
 	for _, value := range []any{"5", int(5), ^uint(0)} {
 		if _, err := parseAnthropicGenerationOptions(GenerationOptions{GenerationOptionTopK: value}); err == nil {
 			t.Fatalf("accepted top_k %#v", value)

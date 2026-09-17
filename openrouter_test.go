@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -37,10 +39,189 @@ func newLiveOpenRouterGenerator(t *testing.T, apiKey string) *OpenRouterGenerato
 }
 
 func TestRouterAdapterScenarios(t *testing.T) {
-	t.Run("RequestIdentity", func(t *testing.T) { testOpenRouterRequestIdentity(t) })
-	t.Run("WireReplay", func(t *testing.T) { testOpenRouterWireReplay(t) })
-	t.Run("NativeOptionsServerValidated", func(t *testing.T) { testOpenRouterNativeOptionsServerValidated(t) })
-	t.Run("OptionTypesAndConflicts", func(t *testing.T) { testOpenRouterOptionTypesAndConflicts(t) })
+	t.Run("RequestIdentity", func(t *testing.T) {
+		for _, tc := range []struct{ name, user, cache string }{
+			{"absent", "", ""}, {"user only", "end-user", ""},
+			{"cache only", "", "conversation"}, {"both", "end-user", "conversation"},
+		} {
+			for _, streaming := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/stream=%v", tc.name, streaming), func(t *testing.T) {
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						var body map[string]json.RawMessage
+						if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+							t.Error(err)
+							return
+						}
+						for key, want := range map[string]string{"user": tc.user, "prompt_cache_key": tc.cache} {
+							if want == "" {
+								if _, exists := body[key]; exists {
+									t.Errorf("unexpected %s", key)
+								}
+								continue
+							}
+							var got string
+							if err := json.Unmarshal(body[key], &got); err != nil || got != want {
+								t.Errorf("%s = %s, want %q", key, body[key], want)
+							}
+						}
+						if _, exists := body["safety_identifier"]; exists {
+							t.Error("OpenAI identity field leaked")
+						}
+						if streaming {
+							w.Header().Set("Content-Type", "text/event-stream")
+							fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+						} else {
+							w.Header().Set("Content-Type", "application/json")
+							fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+						}
+					}))
+					defer server.Close()
+					g := newOpenRouterTestGenerator(t, server)
+					request := GenerationRequest{Model: "test", SafetyIdentifier: tc.user, PromptCacheKey: tc.cache, Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}}
+					if streaming {
+						for chunk := range g.Stream(t.Context(), request) {
+							if chunk.Err != nil {
+								t.Fatal(chunk.Err)
+							}
+						}
+					} else if _, err := g.Generate(t.Context(), request); err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
+		}
+	})
+	t.Run("WireReplay", func(t *testing.T) {
+		var requests []map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Invocation") != "router" {
+				t.Error("missing invocation header")
+			}
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			requests = append(requests, request)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"replay","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"Checking.","reasoning_details":[{"type":"reasoning.text","text":"private reasoning","id":"reasoning_1","format":"anthropic-claude-v1","index":3,"signature":"signed","future":null}],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]}}]}`))
+		}))
+		defer server.Close()
+		generator := newOpenRouterTestGenerator(t, server)
+		request := GenerationRequest{
+			Model: "test/model", Headers: http.Header{"X-Invocation": {"router"}},
+			Instructions:     SystemMessage(TextBlock("Never reveal secrets."), TextBlock("Answer concisely.")),
+			SafetyIdentifier: "end-user", PromptCacheKey: "conversation",
+			Dialog:  Dialog{{Role: User, Blocks: []Block{TextBlock("What is shown?"), ImageBlock([]byte("image"), "image/png"), AudioBlock([]byte("audio"), "audio/wav"), PDFBlock([]byte("pdf"), "paper.pdf")}}},
+			Options: NewGenerationOptions(WithReasoningEffort("future-effort")),
+		}
+		response, err := generator.Generate(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Dialog = append(request.Dialog, response.Candidates[0], ToolResultMessage("call_1", TextBlock("sunny")))
+		if _, err := generator.Generate(t.Context(), request); err != nil {
+			t.Fatal(err)
+		}
+		wire := requests[1]
+		if wire["user"] != "end-user" || wire["safety_identifier"] != nil || wire["prompt_cache_key"] != "conversation" || wire["reasoning_effort"] != nil {
+			t.Fatalf("identity/cache/effort mapping: %v", wire)
+		}
+		if wire["reasoning"].(map[string]any)["effort"] != "future-effort" {
+			t.Fatalf("reasoning: %v", wire)
+		}
+		messages := wire["messages"].([]any)
+		if len(messages) != 4 {
+			t.Fatalf("messages: %v", messages)
+		}
+		if got := messages[0].(map[string]any)["content"]; got != "Never reveal secrets.\n\nAnswer concisely." {
+			t.Fatalf("instruction block boundaries lost: %q", got)
+		}
+		parts := messages[1].(map[string]any)["content"].([]any)
+		if len(parts) != 4 || parts[1].(map[string]any)["image_url"].(map[string]any)["url"] != "data:image/png;base64,aW1hZ2U=" || parts[2].(map[string]any)["type"] != "input_audio" || parts[3].(map[string]any)["type"] != "file" {
+			t.Fatalf("multimodal parts: %v", parts)
+		}
+		assistant := messages[2].(map[string]any)
+		details := assistant["reasoning_details"].([]any)
+		detail := details[0].(map[string]any)
+		if detail["signature"] != "signed" || detail["index"] != float64(3) || detail["id"] != "reasoning_1" || detail["text"] != "private reasoning" {
+			t.Fatalf("reasoning replay: %v", details)
+		}
+		if _, present := detail["future"]; !present {
+			t.Fatal("lost opaque null")
+		}
+		if assistant["content"] != "Checking." || len(assistant["tool_calls"].([]any)) != 1 {
+			t.Fatalf("assistant: %v", assistant)
+		}
+		result := messages[3].(map[string]any)
+		if result["tool_call_id"] != "call_1" || result["content"] != "sunny" {
+			t.Fatalf("tool result: %v", result)
+		}
+	})
+	t.Run("NativeOptionsServerValidated", func(t *testing.T) {
+		for _, streaming := range []bool{false, true} {
+			t.Run(fmt.Sprint(streaming), func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+					}
+					if body["top_logprobs"] != float64(30) || body["service_tier"] != "future-tier" || body["session_id"] != strings.Repeat("x", 257) || body["max_tokens"] != float64(64) {
+						t.Errorf("native fields: %v", body)
+					}
+					if format, ok := body["response_format"].(map[string]any); !ok || format["schema"] == nil || format["type"] != nil {
+						t.Errorf("server-validated response format: %v", body["response_format"])
+					}
+					if body["min_p"] != 0.9 || body["reasoning"].(map[string]any)["effort"] != "explicit" {
+						t.Errorf("explicit override: %v", body)
+					}
+					if body["user"] != "native-user" || body["prompt_cache_key"] != "native-cache" {
+						t.Errorf("native identity: %v", body)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					if streaming {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = w.Write([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+						return
+					}
+					_, _ = w.Write([]byte(`{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+				}))
+				defer server.Close()
+				options := NewGenerationOptions(WithTopLogprobs(30), WithOpenRouterServiceTier("future-tier"), WithOpenRouterSessionID(strings.Repeat("x", 257)), WithOpenRouterResponseFormat(map[string]any{"schema": map[string]any{}}), WithOpenRouterMinP(-1), WithThinkingBudget(-10), WithMaxGenerationTokens(64), WithOpenAIExtraBody(map[string]json.RawMessage{"min_p": json.RawMessage(`0.9`), "reasoning": json.RawMessage(`{"effort":"explicit"}`), "user": json.RawMessage(`"native-user"`), "prompt_cache_key": json.RawMessage(`"native-cache"`)}))
+				request := GenerationRequest{Model: "test/model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: options, SafetyIdentifier: "end-user", PromptCacheKey: "conversation"}
+				generator := newOpenRouterTestGenerator(t, server)
+				if streaming {
+					for chunk := range generator.Stream(t.Context(), request) {
+						if chunk.Err != nil {
+							t.Fatal(chunk.Err)
+						}
+					}
+				} else if _, err := generator.Generate(t.Context(), request); err != nil {
+					t.Fatal(err)
+				}
+				if _, present := options[OpenAIGenerationOptionTokenLimitField]; present {
+					t.Fatal("mutated caller options")
+				}
+				if options[GenerationOptionThinkingBudget] != -10 {
+					t.Fatal("mutated budget")
+				}
+			})
+		}
+	})
+	t.Run("OptionTypesAndConflicts", func(t *testing.T) {
+		for _, options := range []GenerationOptions{
+			{OpenRouterGenerationOptionModels: "wrong"},
+			{OpenRouterGenerationOptionMinP: "wrong"},
+			{OpenRouterGenerationOptionProvider: true},
+			{GenerationOptionThinkingBudget: "4096"},
+			NewGenerationOptions(WithThinkingBudget(4096), WithReasoningEffort("high")),
+		} {
+			_, err := (&OpenRouterGenerator{}).prepareRequest(GenerationRequest{Options: options})
+			var invalid *InvalidParameterErr
+			if !errors.As(err, &invalid) {
+				t.Fatalf("options %v: expected invalid parameter, got %v", options, err)
+			}
+		}
+	})
 	t.Run("OpenRouterGenerateReturnsContentPolicyErrorForContentFilter", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -93,8 +274,114 @@ func TestRouterAdapterScenarios(t *testing.T) {
 			t.Fatalf("Generate error = %q, want refusal message", policyErr)
 		}
 	})
-	t.Run("OpenRouterHTTPOverloadMapping", func(t *testing.T) { testOpenRouterHTTPOverloadMapping(t) })
-	t.Run("OpenRouterGeneratorSurfacesProviderOverload", func(t *testing.T) { testOpenRouterGeneratorSurfacesProviderOverload(t) })
+	t.Run("OpenRouterHTTPOverloadMapping", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Retry-After", "11")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":{"code":503,"message":"Upstream request failed","metadata":{"error_type":"provider_overloaded"}}}`)
+		}))
+		defer server.Close()
+		g, err := NewOpenRouterGenerator(server.Client(), server.URL, "test-key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = g.Generate(t.Context(), GenerationRequest{Model: "test", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}})
+		var got *ApiErr
+		if !errors.As(err, &got) {
+			t.Fatalf("Generate() = %T %v, want *ApiErr", err, err)
+		}
+		if got.Kind != APIErrorKindOverloaded {
+			t.Fatalf("Kind = %q, want %q", got.Kind, APIErrorKindOverloaded)
+		}
+		if !got.Retryable() {
+			t.Fatal("Retryable() = false, want true")
+		}
+		if delay, ok := got.RetryAfter(); !ok || delay != 11*time.Second {
+			t.Fatalf("RetryAfter() = (%s, %t), want (11s, true)", delay, ok)
+		}
+		if got.Provider != ProviderOpenRouter || got.StatusCode != http.StatusServiceUnavailable || !strings.Contains(got.RawBody, "provider_overloaded") {
+			t.Fatalf("error details lost: %+v", got)
+		}
+	})
+	t.Run("OpenRouterGeneratorSurfacesProviderOverload", func(t *testing.T) {
+		tests := []struct {
+			name        string
+			body        string
+			wantPartial bool
+		}{
+			{
+				name: "top-level error_type",
+				body: `{"error":{"code":503,"message":"Upstream request failed","error_type":"provider_overloaded"}}`,
+			},
+			{
+				name: "metadata takes precedence",
+				body: `{"error":{"code":503,"message":"Upstream request failed","error_type":"authentication","metadata":{"error_type":"provider_overloaded"}}}`,
+			},
+			{
+				name: "top-level error",
+				body: `{"error":{"code":503,"message":"Invalid API key","metadata":{"error_type":"provider_overloaded"}}}`,
+			},
+			{
+				name:        "choice error with interrupted tool arguments",
+				body:        `{"choices":[{"index":0,"message":{"role":"assistant","content":"partial output","tool_calls":[{"id":"call","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":"error","error":{"code":503,"message":"Upstream request failed","metadata":{"error_type":"provider_overloaded"}}}]}`,
+				wantPartial: true,
+			},
+			{
+				name:        "top-level error with interrupted tool arguments",
+				body:        `{"error":{"code":503,"message":"Upstream request failed","metadata":{"error_type":"provider_overloaded"}},"choices":[{"index":0,"message":{"role":"assistant","content":"partial output","tool_calls":[{"id":"call","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":"error"}]}`,
+				wantPartial: true,
+			},
+			{
+				name:        "choice error after partial output",
+				body:        `{"id":"gen-123","object":"chat.completion","created":1,"model":"test/model","choices":[{"index":0,"message":{"role":"assistant","content":"partial output"},"finish_reason":"error","error":{"code":503,"message":"Upstream request failed","metadata":{"error_type":"provider_overloaded"}}}]}`,
+				wantPartial: true,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(tt.body))
+				}))
+				defer server.Close()
+
+				generator := newOpenRouterTestGenerator(t, server)
+				response, err := generator.Generate(context.Background(), GenerationRequest{
+					Model: "test/model",
+					Dialog: Dialog{{
+						Role:   User,
+						Blocks: []Block{TextBlock("hello")},
+					}},
+				})
+				if tt.wantPartial {
+					if len(response.Candidates) != 1 || len(response.Candidates[0].Blocks) != 1 ||
+						response.Candidates[0].Blocks[0].Content.String() != "partial output" {
+						t.Fatalf("partial response = %+v", response)
+					}
+				} else if len(response.Candidates) != 0 {
+					t.Fatalf("top-level error response = %+v", response)
+				}
+
+				var apiErr *ApiErr
+				if !errors.As(err, &apiErr) {
+					t.Fatalf("Generate() error = %v, want *ApiErr", err)
+				}
+				if apiErr.Provider != ProviderOpenRouter {
+					t.Fatalf("Provider = %q, want %q", apiErr.Provider, ProviderOpenRouter)
+				}
+				if apiErr.StatusCode != http.StatusServiceUnavailable {
+					t.Fatalf("StatusCode = %d, want %d", apiErr.StatusCode, http.StatusServiceUnavailable)
+				}
+				if apiErr.Kind != APIErrorKindOverloaded {
+					t.Fatalf("Kind = %q, want %q", apiErr.Kind, APIErrorKindOverloaded)
+				}
+				if !apiErr.Retryable() {
+					t.Fatal("Retryable() = false, want true")
+				}
+			})
+		}
+	})
 	t.Run("OpenRouterGeneratorUsesSharedJSONClient", func(t *testing.T) {
 		requests := make(chan map[string]any, 1)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -722,191 +1009,4 @@ func routerRawObject(t *testing.T, value any) map[string]any {
 		t.Fatal(err)
 	}
 	return result
-}
-
-func testOpenRouterWireReplay(t *testing.T) {
-	var requests []map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Invocation") != "router" {
-			t.Error("missing invocation header")
-		}
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		requests = append(requests, request)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"replay","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"Checking.","reasoning_details":[{"type":"reasoning.text","text":"private reasoning","id":"reasoning_1","format":"anthropic-claude-v1","index":3,"signature":"signed","future":null}],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]}}]}`))
-	}))
-	defer server.Close()
-	generator := newOpenRouterTestGenerator(t, server)
-	request := GenerationRequest{
-		Model: "test/model", Headers: http.Header{"X-Invocation": {"router"}},
-		Instructions:     SystemMessage(TextBlock("Never reveal secrets."), TextBlock("Answer concisely.")),
-		SafetyIdentifier: "end-user", PromptCacheKey: "conversation",
-		Dialog:  Dialog{{Role: User, Blocks: []Block{TextBlock("What is shown?"), ImageBlock([]byte("image"), "image/png"), AudioBlock([]byte("audio"), "audio/wav"), PDFBlock([]byte("pdf"), "paper.pdf")}}},
-		Options: NewGenerationOptions(WithReasoningEffort("future-effort")),
-	}
-	response, err := generator.Generate(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Dialog = append(request.Dialog, response.Candidates[0], ToolResultMessage("call_1", TextBlock("sunny")))
-	if _, err := generator.Generate(t.Context(), request); err != nil {
-		t.Fatal(err)
-	}
-	wire := requests[1]
-	if wire["user"] != "end-user" || wire["safety_identifier"] != nil || wire["prompt_cache_key"] != "conversation" || wire["reasoning_effort"] != nil {
-		t.Fatalf("identity/cache/effort mapping: %v", wire)
-	}
-	if wire["reasoning"].(map[string]any)["effort"] != "future-effort" {
-		t.Fatalf("reasoning: %v", wire)
-	}
-	messages := wire["messages"].([]any)
-	if len(messages) != 4 {
-		t.Fatalf("messages: %v", messages)
-	}
-	if got := messages[0].(map[string]any)["content"]; got != "Never reveal secrets.\n\nAnswer concisely." {
-		t.Fatalf("instruction block boundaries lost: %q", got)
-	}
-	parts := messages[1].(map[string]any)["content"].([]any)
-	if len(parts) != 4 || parts[1].(map[string]any)["image_url"].(map[string]any)["url"] != "data:image/png;base64,aW1hZ2U=" || parts[2].(map[string]any)["type"] != "input_audio" || parts[3].(map[string]any)["type"] != "file" {
-		t.Fatalf("multimodal parts: %v", parts)
-	}
-	assistant := messages[2].(map[string]any)
-	details := assistant["reasoning_details"].([]any)
-	detail := details[0].(map[string]any)
-	if detail["signature"] != "signed" || detail["index"] != float64(3) || detail["id"] != "reasoning_1" || detail["text"] != "private reasoning" {
-		t.Fatalf("reasoning replay: %v", details)
-	}
-	if _, present := detail["future"]; !present {
-		t.Fatal("lost opaque null")
-	}
-	if assistant["content"] != "Checking." || len(assistant["tool_calls"].([]any)) != 1 {
-		t.Fatalf("assistant: %v", assistant)
-	}
-	result := messages[3].(map[string]any)
-	if result["tool_call_id"] != "call_1" || result["content"] != "sunny" {
-		t.Fatalf("tool result: %v", result)
-	}
-}
-
-func testOpenRouterNativeOptionsServerValidated(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Error(err)
-				}
-				if body["top_logprobs"] != float64(30) || body["service_tier"] != "future-tier" || body["session_id"] != strings.Repeat("x", 257) || body["max_tokens"] != float64(64) {
-					t.Errorf("native fields: %v", body)
-				}
-				if format, ok := body["response_format"].(map[string]any); !ok || format["schema"] == nil || format["type"] != nil {
-					t.Errorf("server-validated response format: %v", body["response_format"])
-				}
-				if body["min_p"] != 0.9 || body["reasoning"].(map[string]any)["effort"] != "explicit" {
-					t.Errorf("explicit override: %v", body)
-				}
-				if body["user"] != "native-user" || body["prompt_cache_key"] != "native-cache" {
-					t.Errorf("native identity: %v", body)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				if streaming {
-					w.Header().Set("Content-Type", "text/event-stream")
-					_, _ = w.Write([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
-					return
-				}
-				_, _ = w.Write([]byte(`{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
-			}))
-			defer server.Close()
-			options := NewGenerationOptions(WithTopLogprobs(30), WithOpenRouterServiceTier("future-tier"), WithOpenRouterSessionID(strings.Repeat("x", 257)), WithOpenRouterResponseFormat(map[string]any{"schema": map[string]any{}}), WithOpenRouterMinP(-1), WithThinkingBudget(-10), WithMaxGenerationTokens(64), WithOpenAIExtraBody(map[string]json.RawMessage{"min_p": json.RawMessage(`0.9`), "reasoning": json.RawMessage(`{"effort":"explicit"}`), "user": json.RawMessage(`"native-user"`), "prompt_cache_key": json.RawMessage(`"native-cache"`)}))
-			request := GenerationRequest{Model: "test/model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: options, SafetyIdentifier: "end-user", PromptCacheKey: "conversation"}
-			generator := newOpenRouterTestGenerator(t, server)
-			if streaming {
-				for chunk := range generator.Stream(t.Context(), request) {
-					if chunk.Err != nil {
-						t.Fatal(chunk.Err)
-					}
-				}
-			} else if _, err := generator.Generate(t.Context(), request); err != nil {
-				t.Fatal(err)
-			}
-			if _, present := options[OpenAIGenerationOptionTokenLimitField]; present {
-				t.Fatal("mutated caller options")
-			}
-			if options[GenerationOptionThinkingBudget] != -10 {
-				t.Fatal("mutated budget")
-			}
-		})
-	}
-}
-
-func testOpenRouterRequestIdentity(t *testing.T) {
-	for _, tc := range []struct{ name, user, cache string }{
-		{"absent", "", ""}, {"user only", "end-user", ""},
-		{"cache only", "", "conversation"}, {"both", "end-user", "conversation"},
-	} {
-		for _, streaming := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/stream=%v", tc.name, streaming), func(t *testing.T) {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					var body map[string]json.RawMessage
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-						t.Error(err)
-						return
-					}
-					for key, want := range map[string]string{"user": tc.user, "prompt_cache_key": tc.cache} {
-						if want == "" {
-							if _, exists := body[key]; exists {
-								t.Errorf("unexpected %s", key)
-							}
-							continue
-						}
-						var got string
-						if err := json.Unmarshal(body[key], &got); err != nil || got != want {
-							t.Errorf("%s = %s, want %q", key, body[key], want)
-						}
-					}
-					if _, exists := body["safety_identifier"]; exists {
-						t.Error("OpenAI identity field leaked")
-					}
-					if streaming {
-						w.Header().Set("Content-Type", "text/event-stream")
-						fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-					} else {
-						w.Header().Set("Content-Type", "application/json")
-						fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
-					}
-				}))
-				defer server.Close()
-				g := newOpenRouterTestGenerator(t, server)
-				request := GenerationRequest{Model: "test", SafetyIdentifier: tc.user, PromptCacheKey: tc.cache, Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}}
-				if streaming {
-					for chunk := range g.Stream(t.Context(), request) {
-						if chunk.Err != nil {
-							t.Fatal(chunk.Err)
-						}
-					}
-				} else if _, err := g.Generate(t.Context(), request); err != nil {
-					t.Fatal(err)
-				}
-			})
-		}
-	}
-}
-
-func testOpenRouterOptionTypesAndConflicts(t *testing.T) {
-	for _, options := range []GenerationOptions{
-		{OpenRouterGenerationOptionModels: "wrong"},
-		{OpenRouterGenerationOptionMinP: "wrong"},
-		{OpenRouterGenerationOptionProvider: true},
-		{GenerationOptionThinkingBudget: "4096"},
-		NewGenerationOptions(WithThinkingBudget(4096), WithReasoningEffort("high")),
-	} {
-		_, err := (&OpenRouterGenerator{}).prepareRequest(GenerationRequest{Options: options})
-		var invalid *InvalidParameterErr
-		if !errors.As(err, &invalid) {
-			t.Fatalf("options %v: expected invalid parameter, got %v", options, err)
-		}
-	}
 }
