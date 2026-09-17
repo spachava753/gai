@@ -349,7 +349,21 @@ Data chunks use the same `Block` type as messages. The stream protocol adds a fe
 
 ### Shared Chat Completions streaming
 
-The shared parser handles SSE framing and maintains separate candidate/tool-call state for each invocation. Parallel tool-call fragments are assembled by index, validated, and emitted in index order after reading the stream. Reasoning fields and structured `reasoning_details` are retained for replay, including signature-only fragments.
+The shared parser reads SSE events and tracks each candidate and tool call separately. Parallel tool-call fragments are assembled by index, checked, and emitted in index order after reading the stream.
+
+Callers display reasoning by reading `Thinking` blocks. These can come from `reasoning_content`, `reasoning`, or the text and string summaries inside `reasoning_details`. Encrypted data, unknown detail types, and summaries that are not strings stay in metadata; they are not presented as readable thoughts. When a later fragment omits its type, the adapter uses the type already received for that item.
+
+Some providers return the same reasoning in several fields. The adapter avoids showing that text twice:
+
+- Receiving `"First step"` after `"First "` adds only `"step"` to the stream.
+- Receiving `"First step"` again adds nothing.
+- Receiving `"A different approach"` adds a separate thinking block. Previously streamed text cannot be replaced.
+
+Each candidate has its own reasoning state. Chunks from separate answers do not share displayed text or saved reasoning details, even when they use the same reasoning-detail index. Callers handling multiple candidates must consume `Stream` directly; `StreamingAdapter` currently accepts only candidate 0. Within an answer, readable details are joined in item order. There is no special handling for an earlier item's text resuming after a later item starts: neither the provider documentation checked nor the live GLM/DeepSeek probes established that behavior. If separate reasoning fields contain different text with a shared beginning, both are kept, so that beginning may appear twice.
+
+To continue a conversation, append the returned assistant message to the dialog, including all message and block `ExtraFields`. The adapter sends the original reasoning data back to the provider; it does not reconstruct signatures or encrypted data from the displayed text. `OpenAIExtraFieldReasoningSource` records which response field supplied each thinking block so the text is not sent a second time under another field name.
+
+Editing only a thinking block's text does not replace the original reasoning kept in message metadata. If that original field is removed, the block's text is sent through `reasoning_content` instead, unless it is already present at the start of a retained reasoning string. Caller-created thinking blocks also use `reasoning_content`; an empty or null `reasoning_details` field does not discard them. These conversions do not modify the caller's message.
 
 `[DONE]` does not immediately end reading: the parser consumes through EOF to retain trailing metadata such as gateway cost. Callers should supply a context deadline. EOF without `[DONE]` or a finish reason is treated as incomplete output. There are no automatic POST retries or stream reconnects in this adapter; retry policy belongs to a wrapper.
 

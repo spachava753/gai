@@ -108,6 +108,16 @@ const (
 	// metadata in Block.ExtraFields, excluding its ID and binary data. Replay
 	// sends the block's audio ID rather than the output-only metadata.
 	OpenAIExtraFieldAudio = "openai_audio"
+	// OpenAIExtraFieldReasoningSource records which response field supplied a
+	// [Thinking] block's text. It is stored in [Block.ExtraFields] as a string:
+	// "reasoning_details", "reasoning_content", or "reasoning".
+	//
+	// The generator sets this automatically. Keep it and the returned message's
+	// [OpenAIExtraFieldWireFields] when adding an assistant response to a dialog.
+	// This lets the next request send the provider's original reasoning data
+	// rather than another copy made from the displayed text. Editing only the
+	// block's text does not change the original data sent back to the provider.
+	OpenAIExtraFieldReasoningSource = "openai_reasoning_source"
 	// OpenAIResponseExtraFieldHeaders holds a cloned http.Header in Response.ExtraFields.
 	OpenAIResponseExtraFieldHeaders = "openai_headers"
 	// OpenAIResponseExtraFieldWireFields holds response-level map[string]json.RawMessage
@@ -152,19 +162,40 @@ func WithOpenAIStreamUsage(enabled bool) GenerationOption {
 	return func(options GenerationOptions) { options[OpenAIGenerationOptionStreamUsage] = enabled }
 }
 
-// OpenAiGenerator adapts Chat Completions to Generator, StreamingGenerator, and
-// TokenCounter. It borrows only a client; model, history, tools, and options are
-// supplied on each call. It supports text, image/PDF and audio input, text/audio
-// output, function tools, and reasoning replay. Provider fields are retained at
-// message/block scope under OpenAIExtraFieldWireFields.
+// OpenAiGenerator sends Chat Completions requests to OpenAI or a compatible
+// endpoint. Pass the model, conversation, tools, and options in each
+// [GenerationRequest]. Supported inputs include text, images, PDFs, and audio;
+// supported outputs include text, audio, and function calls. Actual support
+// depends on the endpoint and model. It implements [Generator],
+// [StreamingGenerator], and [TokenCounter].
 //
-// Common generation options are supported. [WithOpenAIExtraBody] supplies
-// explicit native fields; [WithOpenAIStreamUsage] controls the usage request
-// switch. Full provider usage is retained under [OpenAIResponseExtraFieldUsage].
-// WithMaxGenerationTokens uses
-// max_completion_tokens unless WithOpenAITokenLimitField selects max_tokens.
-// Stream parses SSE without reconnecting; callers should supply a context
-// deadline. It consumes through EOF to retain metadata after [DONE].
+// To display model reasoning, read the Content of blocks whose BlockType is
+// [Thinking]. The generator creates these blocks from reasoning_content,
+// reasoning, and readable text or summaries in reasoning_details. Encrypted
+// reasoning and summaries that are not strings are kept as metadata, not shown
+// as thinking text.
+//
+// A provider may return the same reasoning in more than one field. Identical
+// text is shown once. If a later field starts with text already sent, Stream
+// emits only the added text. If the fields contain different text, both are
+// kept. Streaming text follows the order it arrives, which can differ from
+// the order returned by Generate.
+//
+// To continue the conversation, append the returned assistant [Message] to
+// [GenerationRequest.Dialog], keeping its message and block ExtraFields.
+// These fields preserve the original reasoning, signatures, and other data
+// the provider may need on the next turn. You do not need to parse or rebuild
+// reasoning_details yourself. See [OpenAIExtraFieldReasoningSource].
+//
+// Use [WithOpenAIExtraBody] for native request fields and [WithOpenAIStreamUsage]
+// to control whether streaming requests ask for usage. The full usage object is
+// available under [OpenAIResponseExtraFieldUsage]. [WithMaxGenerationTokens]
+// sends max_completion_tokens by default; [WithOpenAITokenLimitField] can select
+// max_tokens instead.
+//
+// Stream does not reconnect or retry. It continues reading after [DONE] until
+// the server closes the stream, so it can retain trailing metadata. Supply a
+// context deadline to bound the wait.
 type OpenAiGenerator struct{ client *wire.Client }
 
 // NewOpenAiGenerator constructs a stateless Chat Completions adapter. A nil
@@ -338,6 +369,10 @@ func toOpenAIMessage(msg Message) (wire.Message, error) {
 	var parts []wire.ContentPart
 	var calls []wire.ToolCall
 	var reasoning strings.Builder
+	readableThinkingSources := make(map[string]bool)
+	for _, view := range openAIThinkingViews(fields) {
+		readableThinkingSources[view.source] = true
+	}
 	for _, block := range msg.Blocks {
 		switch block.BlockType {
 		case Content:
@@ -395,7 +430,10 @@ func toOpenAIMessage(msg Message) (wire.Message, error) {
 			if msg.Role != Assistant {
 				return result, fmt.Errorf("reasoning requires assistant role")
 			}
-			reasoning.WriteString(block.Content.String())
+			source, _ := block.ExtraFields[OpenAIExtraFieldReasoningSource].(string)
+			if !readableThinkingSources[source] {
+				reasoning.WriteString(block.Content.String())
+			}
 		default:
 			return result, fmt.Errorf("unsupported block type for %s: %s", msg.Role, block.BlockType)
 		}
@@ -425,8 +463,18 @@ func toOpenAIMessage(msg Message) (wire.Message, error) {
 	if len(calls) > 0 {
 		result.ToolCalls = nullable.NewNullableWithValue(calls)
 	}
-	if reasoning.Len() > 0 && fields["reasoning_content"] == nil && fields["reasoning"] == nil {
-		result.ReasoningContent = nullable.NewNullableWithValue(reasoning.String())
+	if reasoning.Len() > 0 {
+		text := reasoning.String()
+		var existing, alternate string
+		_ = json.Unmarshal(fields["reasoning_content"], &existing)
+		_ = json.Unmarshal(fields["reasoning"], &alternate)
+		if !strings.HasPrefix(existing, text) && !strings.HasPrefix(alternate, text) {
+			if existing != "" && !strings.HasPrefix(text, existing) {
+				text = existing + text
+			}
+			result.ReasoningContent = nullable.NewNullableWithValue(text)
+			delete(fields, "reasoning_content")
+		}
 	}
 	return result, nil
 }
@@ -596,6 +644,93 @@ func openAIUsage(usage wire.Usage) Metadata {
 	return result
 }
 
+type openAIThinkingView struct{ source, text string }
+
+// openAIThinkingDetails extracts text and string summaries from reasoning_details.
+// Each result has the same position as its input item. Encrypted data, unknown
+// types, and items without a type produce an empty string, not display text.
+func openAIThinkingDetails(fields map[string]json.RawMessage) []string {
+	var details []wire.ReasoningDetail
+	if json.Unmarshal(fields["reasoning_details"], &details) != nil {
+		return nil
+	}
+	texts := make([]string, len(details))
+	for i, detail := range details {
+		if detail.Type == nil {
+			continue
+		}
+		switch *detail.Type {
+		case "reasoning.text":
+			texts[i], _ = detail.Text.Get()
+		case "reasoning.summary":
+			if raw, err := detail.Summary.Get(); err == nil {
+				_ = json.Unmarshal(raw, &texts[i])
+			}
+		}
+	}
+	return texts
+}
+
+// openAIThinkingViews collects the readable text from each reasoning field.
+// A provider can include the same text in several fields; this function leaves
+// duplicate removal to the display code and does not change the original data.
+func openAIThinkingViews(fields map[string]json.RawMessage) []openAIThinkingView {
+	var views []openAIThinkingView
+	if text := strings.Join(openAIThinkingDetails(fields), ""); text != "" {
+		views = append(views, openAIThinkingView{"reasoning_details", text})
+	}
+	for _, source := range []string{"reasoning_content", "reasoning"} {
+		var text string
+		if json.Unmarshal(fields[source], &text) == nil && text != "" {
+			views = append(views, openAIThinkingView{source, text})
+		}
+	}
+	return views
+}
+
+// openAIThinkingDisplay tracks reasoning text already sent to the caller for
+// one candidate. It avoids repeating text returned in several fields without
+// dropping additional text that arrives later. It never changes the original
+// reasoning data kept for the next request.
+type openAIThinkingDisplay struct {
+	views []string
+}
+
+// update returns thinking blocks for newly received text. For example, after
+// emitting "First ", receiving "First step" adds only "step". If another field
+// instead contains "A different approach", that text gets its own block.
+func (d *openAIThinkingDisplay) update(fields map[string]json.RawMessage) []Block {
+	var blocks []Block
+	for _, view := range openAIThinkingViews(fields) {
+		if text := d.unseen(view.text); text != "" {
+			blocks = append(blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(text), ExtraFields: map[string]interface{}{OpenAIExtraFieldReasoningSource: view.source}})
+		}
+	}
+	return blocks
+}
+
+// unseen skips repeated text and returns only the added part when a field grows.
+// Different text is returned in full; a stream cannot replace earlier output.
+func (d *openAIThinkingDisplay) unseen(text string) string {
+	longest := 0
+	for _, previous := range d.views {
+		if strings.HasPrefix(previous, text) {
+			return ""
+		}
+		if strings.HasPrefix(text, previous) {
+			longest = max(longest, len(previous))
+		}
+	}
+	kept := d.views[:0]
+	for _, previous := range d.views {
+		if !strings.HasPrefix(text, previous) {
+			kept = append(kept, previous)
+		}
+	}
+	d.views = append(kept, text)
+	return text[longest:]
+}
+
 // openAIResponseMessage normalizes text, audio, reasoning, and function calls
 // without decoding arbitrary argument numbers through float64. Remaining wire
 // fields stay at their original message or block scope for explicit replay.
@@ -628,11 +763,8 @@ func openAIResponseMessage(message wire.ResponseMessage, audioFormat string) (Me
 			delete(fields, "content")
 		}
 	}
-	for _, value := range []nullable.Nullable[string]{message.ReasoningContent, message.Reasoning} {
-		if text, err := value.Get(); err == nil && text != "" {
-			result.Blocks = append(result.Blocks, Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(text)})
-		}
-	}
+	var thinking openAIThinkingDisplay
+	result.Blocks = append(result.Blocks, thinking.update(fields)...)
 	if audio, err := message.Audio.Get(); err == nil && audio.Id != nil && *audio.Id != "" {
 		block := Block{ID: *audio.Id, BlockType: Content, ModalityType: Audio, MimeType: "audio/" + audioFormat,
 			ExtraFields: map[string]interface{}{OpenAIExtraFieldAudio: openAIRawFields(audio, "id", "data")}}

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -524,7 +525,283 @@ func testOpenAIStreamAudioAndCandidates(t *testing.T) {
 	}
 }
 
+func BenchmarkOpenAIThinkingReplay(b *testing.B) {
+	for _, count := range []int{1000, 4000, 8000} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			blocks := make([]Block, count)
+			for i := range blocks {
+				blocks[i] = Block{BlockType: Thinking, ModalityType: Text, Content: Str("part"), ExtraFields: map[string]interface{}{OpenAIExtraFieldReasoningSource: "reasoning_details"}}
+			}
+			details, err := json.Marshal([]map[string]any{{"type": "reasoning.text", "text": strings.Repeat("part", count)}, {"type": "reasoning.encrypted", "data": strings.Repeat("x", 64*1024)}})
+			if err != nil {
+				b.Fatal(err)
+			}
+			message := Message{Role: Assistant, Blocks: blocks, ExtraFields: map[string]interface{}{OpenAIExtraFieldWireFields: map[string]json.RawMessage{"reasoning_details": details}}}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := toOpenAIMessage(message); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestGenerate(t *testing.T) {
+	t.Run("PartialThinkingMetadataRemoval", func(t *testing.T) {
+		for _, scalar := range []string{"reasoning", "reasoning_content"} {
+			t.Run(scalar, func(t *testing.T) {
+				fields := map[string]json.RawMessage{scalar: json.RawMessage(`"First "`), "reasoning_details": json.RawMessage(`[{"type":"reasoning.text","text":"First step"}]`)}
+				var display openAIThinkingDisplay
+				blocks := append(display.update(fields), TextBlock("answer"))
+				delete(fields, "reasoning_details")
+				message := Message{Role: Assistant, Blocks: blocks, ExtraFields: map[string]interface{}{OpenAIExtraFieldWireFields: fields}}
+				encoded, err := toOpenAIMessage(message)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, _ := encoded.ReasoningContent.Get()
+				if got != "First step" {
+					t.Fatalf("remaining %s: synthesized thinking = %q", scalar, got)
+				}
+				if string(fields[scalar]) != `"First "` {
+					t.Fatal("mutated original wire metadata")
+				}
+			})
+		}
+	})
+	t.Run("ThinkingReplayOwnership", func(t *testing.T) {
+		for _, raw := range []string{`[]`, `null`, `[{"type":"reasoning.encrypted","data":"cipher"}]`, `[{"type":"reasoning.text","text":"derived"}]`} {
+			t.Run(raw, func(t *testing.T) {
+				fields := map[string]json.RawMessage{"reasoning_details": json.RawMessage(raw)}
+				var display openAIThinkingDisplay
+				blocks := append(display.update(fields), Block{BlockType: Thinking, ModalityType: Text, Content: Str("manual")}, TextBlock("answer"))
+				message := Message{Role: Assistant, Blocks: blocks, ExtraFields: map[string]interface{}{OpenAIExtraFieldWireFields: fields}}
+				encoded, err := toOpenAIMessage(message)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, _ := encoded.ReasoningContent.Get()
+				if got != "manual" {
+					t.Fatalf("manual reasoning = %q", got)
+				}
+				// Round-trip the block metadata where the source tag lives, as
+				// well as message-level wire fields.
+				for i := range message.Blocks {
+					data, err := json.Marshal(message.Blocks[i].ExtraFields)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := json.Unmarshal(data, &message.Blocks[i].ExtraFields); err != nil {
+						t.Fatal(err)
+					}
+				}
+				metadata, err := json.Marshal(message.ExtraFields)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(metadata, &message.ExtraFields); err != nil {
+					t.Fatal(err)
+				}
+				encoded, err = toOpenAIMessage(message)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, _ = encoded.ReasoningContent.Get()
+				if got != "manual" {
+					t.Fatalf("round-trip reasoning = %q", got)
+				}
+				message.ExtraFields = nil
+				encoded, err = toOpenAIMessage(message)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "manual"
+				if strings.Contains(raw, `"reasoning.text"`) {
+					want = "derivedmanual"
+				}
+				got, _ = encoded.ReasoningContent.Get()
+				if got != want {
+					t.Fatalf("metadata removed: %q, want %q", got, want)
+				}
+			})
+		}
+	})
+	t.Run("ThinkingAcrossCandidates", func(t *testing.T) {
+		// A local protocol test, not a recorded multi-candidate provider response.
+		// Both answers start alike so shared display state would lose text.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			for _, fragment := range []struct {
+				candidate int
+				text      string
+			}{{0, "First "}, {1, "First "}, {1, "answer B"}, {0, "answer A"}} {
+				fmt.Fprintf(w, "data: {\"choices\":[{\"index\":%d,\"delta\":{\"reasoning\":%q,\"reasoning_details\":[{\"index\":0,\"type\":\"reasoning.text\",\"text\":%q}]}}]}\n\n", fragment.candidate, fragment.text, fragment.text)
+			}
+			fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"},{\"index\":1,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+		}))
+		defer server.Close()
+		g, err := NewOpenAiGenerator(server.Client(), server.URL, "test-key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// StreamingAdapter accepts only candidate 0. Consume Stream directly
+		// to check the generator's support for separate candidate indices.
+		candidates := []Message{{Role: Assistant}, {Role: Assistant}}
+		for chunk := range g.Stream(t.Context(), GenerationRequest{Model: "test", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}}) {
+			if chunk.Err != nil {
+				t.Fatal(chunk.Err)
+			}
+			if chunk.CandidatesIndex < 0 || chunk.CandidatesIndex >= len(candidates) {
+				t.Fatalf("unexpected candidate index %d", chunk.CandidatesIndex)
+			}
+			candidate := &candidates[chunk.CandidatesIndex]
+			if chunk.Block.BlockType == Thinking {
+				candidate.Blocks = append(candidate.Blocks, chunk.Block)
+			}
+			if len(chunk.MessageExtraFields) > 0 {
+				if candidate.ExtraFields == nil {
+					candidate.ExtraFields = make(map[string]interface{})
+				}
+				for key, value := range chunk.MessageExtraFields {
+					candidate.ExtraFields[key] = value
+				}
+			}
+		}
+		for i, want := range []string{"First answer A", "First answer B"} {
+			var thought strings.Builder
+			for _, block := range candidates[i].Blocks {
+				if block.BlockType == Thinking {
+					thought.WriteString(block.Content.String())
+				}
+			}
+			if thought.String() != want {
+				t.Errorf("candidate %d thinking = %q, want %q", i, thought.String(), want)
+			}
+			replay, err := toOpenAIMessage(candidates[i])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got string
+			err = json.Unmarshal(replay.AdditionalProperties["reasoning"], &got)
+			if err != nil || got != want {
+				t.Errorf("candidate %d replay reasoning = %q, %v; want %q", i, got, err, want)
+			}
+			if got := strings.Join(openAIThinkingDetails(replay.AdditionalProperties), ""); got != want {
+				t.Errorf("candidate %d reasoning details = %q, want %q", i, got, want)
+			}
+		}
+	})
+	t.Run("StructuredThinking", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			deltas  []string
+			message string
+			want    string
+		}{
+			{"text and summary", []string{
+				`{"reasoning_details":[{"index":0,"type":"reasoning.text","text":"First "}]}`,
+				`{"reasoning_details":[{"index":0,"text":"step","signature":"sig"},{"index":1,"type":"reasoning.summary","summary":"Summary "}]}`,
+				`{"reasoning_details":[{"index":1,"summary":"done"},{"index":2,"type":"reasoning.encrypted","data":"secret"}]}`,
+			}, `{"reasoning_details":[{"index":0,"type":"reasoning.text","text":"First step","signature":"sig"},{"index":1,"type":"reasoning.summary","summary":"Summary done"},{"index":2,"type":"reasoning.encrypted","data":"secret"}]}`, "First stepSummary done"},
+			{"duplicate representations", []string{`{"reasoning":"thought","reasoning_content":"thought","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought"}]}`}, `{"reasoning":"thought","reasoning_content":"thought","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought"}]}`, "thought"},
+			{"encrypted only", []string{`{"reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"secret","signature":"sig"}]}`}, `{"reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"secret","signature":"sig"}]}`, ""},
+			{"opaque summary", []string{`{"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":{"opaque":true}}]}`}, `{"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":{"opaque":true}}]}`, ""},
+			{"encrypted with scalar", []string{`{"reasoning":"readable","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"secret"}]}`}, `{"reasoning":"readable","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"secret"}]}`, "readable"},
+			// The live GLM and DeepSeek probes returned matching reasoning and
+			// reasoning_details text in every reasoning chunk.
+			{"duplicate fields across chunks", []string{`{"reasoning":"First ","reasoning_details":[{"index":0,"type":"reasoning.text","text":"First "}]}`, `{"reasoning":"step","reasoning_details":[{"index":0,"type":"reasoning.text","text":"step"}]}`}, `{"reasoning":"First step","reasoning_details":[{"index":0,"type":"reasoning.text","text":"First step"}]}`, "First step"},
+			{"nullable text fragments", []string{`{"reasoning_details":[{"index":0,"type":"reasoning.text","text":null,"signature":null,"data":null}]}`, `{"reasoning_details":[{"index":0,"text":"hello","signature":"sig","data":"cipher"}]}`, `{"reasoning_details":[{"index":0,"text":null,"signature":null,"data":null}]}`, `{"reasoning_details":[{"index":0,"text":" world","signature":"2","data":"2"}]}`}, `{"reasoning_details":[{"index":0,"type":"reasoning.text","text":"hello world","signature":"sig2","data":"cipher2"}]}`, "hello world"},
+			{"nullable summary fragments", []string{`{"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":null}]}`, `{"reasoning_details":[{"index":0,"summary":"hello"}]}`, `{"reasoning_details":[{"index":0,"summary":null}]}`, `{"reasoning_details":[{"index":0,"summary":" world"}]}`}, `{"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":"hello world"}]}`, "hello world"},
+			{"repeated null summary", []string{`{"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":null}]}`, `{"reasoning_details":[{"index":0,"summary":null}]}`}, `{"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":null}]}`, ""},
+			{"partial overlap", []string{`{"reasoning":"First "}`, `{"reasoning_details":[{"index":0,"type":"reasoning.text","text":"First step"}]}`}, `{"reasoning":"First ","reasoning_details":[{"index":0,"type":"reasoning.text","text":"First step"}]}`, "First step"},
+			{"divergent representations", []string{`{"reasoning":"abc"}`, `{"reasoning_details":[{"index":0,"type":"reasoning.text","text":"abX"}]}`}, `{"reasoning":"abc","reasoning_details":[{"index":0,"type":"reasoning.text","text":"abX"}]}`, ""},
+			{"unknown continuation", []string{`{"reasoning_details":[{"index":0,"type":"vendor.opaque","text":"hidden "}]}`, `{"reasoning_details":[{"index":0,"text":"payload"}]}`}, `{"reasoning_details":[{"index":0,"type":"vendor.opaque","text":"hidden payload"}]}`, ""},
+			{"encrypted continuation", []string{`{"reasoning_details":[{"index":0,"type":"reasoning.encrypted","text":"hidden "}]}`, `{"reasoning_details":[{"index":0,"text":"payload"}]}`}, `{"reasoning_details":[{"index":0,"type":"reasoning.encrypted","text":"hidden payload"}]}`, ""},
+			{"late duplicate", []string{`{"reasoning":"thought"}`, `{"reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought"}]}`}, `{"reasoning":"thought","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought"}]}`, "thought"},
+			{"signature before text", []string{`{"reasoning_details":[{"index":0,"type":"reasoning.text","signature":"sig"}]}`, `{"reasoning_details":[{"index":0,"text":"readable"}]}`}, `{"reasoning_details":[{"index":0,"type":"reasoning.text","signature":"sig","text":"readable"}]}`, "readable"},
+		}
+		for _, tc := range cases {
+			for _, stream := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/stream=%v", tc.name, stream), func(t *testing.T) {
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if stream {
+							w.Header().Set("Content-Type", "text/event-stream")
+							for _, delta := range tc.deltas {
+								fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":%s}]}\n\n", delta)
+							}
+							fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+						} else {
+							w.Header().Set("Content-Type", "application/json")
+							fmt.Fprintf(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":"answer",%s},"finish_reason":"stop"}]}`, tc.message[1:len(tc.message)-1])
+						}
+					}))
+					defer server.Close()
+					g, err := NewOpenAiGenerator(server.Client(), server.URL, "test-key")
+					if err != nil {
+						t.Fatal(err)
+					}
+					request := GenerationRequest{Model: "test", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}}
+					var response Response
+					if stream {
+						response, err = (&StreamingAdapter{S: g}).Generate(t.Context(), request)
+					} else {
+						response, err = g.Generate(t.Context(), request)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					var thought strings.Builder
+					for _, block := range response.Candidates[0].Blocks {
+						if block.BlockType == Thinking {
+							thought.WriteString(block.Content.String())
+						}
+					}
+					wantThought := tc.want
+					if tc.name == "divergent representations" {
+						wantThought = "abXabc"
+						if stream {
+							wantThought = "abcabX"
+						}
+					}
+					if thought.String() != wantThought {
+						t.Fatalf("thinking = %q, want %q", thought.String(), wantThought)
+					}
+					replay, err := toOpenAIMessage(response.Candidates[0])
+					if err != nil {
+						t.Fatal(err)
+					}
+					data, err := json.Marshal(replay)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var got, want map[string]json.RawMessage
+					if err := json.Unmarshal(data, &got); err != nil {
+						t.Fatal(err)
+					}
+					if err := json.Unmarshal([]byte(tc.message), &want); err != nil {
+						t.Fatal(err)
+					}
+					for _, key := range []string{"reasoning", "reasoning_content", "reasoning_details"} {
+						var gotValue, wantValue any
+						if got[key] != nil {
+							if err := json.Unmarshal(got[key], &gotValue); err != nil {
+								t.Fatal(err)
+							}
+						}
+						if want[key] != nil {
+							if err := json.Unmarshal(want[key], &wantValue); err != nil {
+								t.Fatal(err)
+							}
+						}
+						if !reflect.DeepEqual(gotValue, wantValue) {
+							t.Errorf("replayed %s = %s, want %s", key, got[key], want[key])
+						}
+					}
+				})
+			}
+		}
+	})
 	// Create a simple test dialog
 	testDialog := Dialog{
 		{

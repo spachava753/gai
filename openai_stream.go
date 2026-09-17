@@ -99,10 +99,16 @@ func openAIMergeStreamFields(target map[string]json.RawMessage, update map[strin
 				for _, existing := range a {
 					if detail["index"] != nil && bytes.Equal(existing["index"], detail["index"]) {
 						for field, fragment := range detail {
-							if field == "text" || field == "data" || field == "signature" {
-								var before, after string
+							if field == "text" || field == "summary" || field == "data" || field == "signature" {
+								var before, after *string
 								if json.Unmarshal(existing[field], &before) == nil && json.Unmarshal(fragment, &after) == nil {
-									existing[field], _ = json.Marshal(before + after)
+									switch {
+									case before != nil && after != nil:
+										existing[field], _ = json.Marshal(*before + *after)
+									case after != nil:
+										existing[field] = bytes.Clone(fragment)
+									}
+									// A null fragment adds no text; repeated nulls retain null.
 									continue
 								}
 							}
@@ -163,10 +169,11 @@ type openAIStreamTool struct {
 	arguments strings.Builder
 }
 type openAIStreamCandidate struct {
-	tools   map[int64]*openAIStreamTool
-	fields  map[string]json.RawMessage
-	reason  string
-	refused string
+	thinking openAIThinkingDisplay
+	tools    map[int64]*openAIStreamTool
+	fields   map[string]json.RawMessage
+	reason   string
+	refused  string
 }
 
 // Stream emits incremental text and reasoning. Indexed tool deltas are buffered
@@ -268,18 +275,22 @@ func (g *OpenAiGenerator) Stream(ctx context.Context, request GenerationRequest)
 						return
 					}
 				}
-				for _, value := range []nullable.Nullable[string]{delta.ReasoningContent, delta.Reasoning} {
-					if text, err := value.Get(); err == nil && text != "" {
-						if !yield(StreamChunk{Block: Block{BlockType: Thinking, ModalityType: Text, MimeType: "text/plain", Content: Str(text)}, CandidatesIndex: int(index)}) {
-							return
-						}
-					}
-				}
 				// Delta fields can repeat or grow. Publish only their assembled value at
 				// completion rather than conflicting snapshots on successive chunks.
 				if err := openAIMergeStreamFields(candidate.fields, openAIRawFields(delta, "role", "content", "tool_calls")); err != nil {
 					yield(StreamChunk{Err: err})
 					return
+				}
+				for _, block := range candidate.thinking.update(candidate.fields) {
+					// Keep each block's source field attached to its own text.
+					// Otherwise StreamingAdapter could join blocks from different
+					// fields and keep only one source, breaking the next request.
+					if !yield(StreamChunk{Block: SeparatorBlock(), CandidatesIndex: int(index)}) {
+						return
+					}
+					if !yield(StreamChunk{Block: block, CandidatesIndex: int(index)}) {
+						return
+					}
 				}
 				calls, _ := delta.ToolCalls.Get()
 				for _, call := range calls {
