@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/spachava753/gai"
-	"github.com/spachava753/gai/agent"
 )
 
 // GenerateStep defines one expected ScriptedGenerator call.
@@ -132,49 +131,4 @@ func (g *ScriptedStreamingGenerator) Requests() []gai.GenerationRequest {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.requests
-}
-
-// RecordingObserver records event headers and borrowed payload references and can
-// fail at one sequence number. It is intended for deterministic tests whose event
-// data stays unchanged through inspection; it does not create event snapshots.
-type RecordingObserver struct {
-	mu           sync.Mutex
-	events       []agent.Event
-	fail         bool
-	failSequence uint64
-	failErr      error
-}
-
-// NewRecordingObserver returns an observer that records every delivered event.
-func NewRecordingObserver() *RecordingObserver {
-	return &RecordingObserver{}
-}
-
-// NewFailingObserver returns an observer that fails when sequence is delivered.
-func NewFailingObserver(sequence uint64, err error) *RecordingObserver {
-	if err == nil {
-		err = errors.New("agenttest: observer failure")
-	}
-	return &RecordingObserver{fail: true, failSequence: sequence, failErr: err}
-}
-
-// Observe records the event header and borrowed payload references and returns the
-// configured failure.
-func (o *RecordingObserver) Observe(_ context.Context, event agent.Event) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.events = append(o.events, event)
-	if o.fail && event.Sequence == o.failSequence {
-		return o.failErr
-	}
-	return nil
-}
-
-// Events returns the internal recorded slice. Call it after observation is
-// complete and do not mutate it. Payload references are not snapshots and may
-// reflect later changes to the values that produced an event.
-func (o *RecordingObserver) Events() []agent.Event {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.events
 }

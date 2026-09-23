@@ -40,10 +40,11 @@ func TestTerminalResponseCompletesRun(t *testing.T) {
 		Response: textResponse("done", gai.EndTurn, gai.Metadata{
 			gai.UsageMetricInputTokens:      4,
 			gai.UsageMetricGenerationTokens: 2,
-			"provider_detail":               "kept on event only",
+			"provider_detail":               "available to AfterGeneration",
 		}),
 	})
 	configuredInstructions := gai.SystemMessage(gai.TextBlock("system"))
+
 	a, err := agent.New(agent.Config{
 		Generator:    generator,
 		Model:        "test-model",
@@ -52,14 +53,12 @@ func TestTerminalResponseCompletesRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 	starting := gai.Dialog{userMessage("prior")}
 	input := userMessage("new")
 
-	result, err := a.Run(context.Background(), agent.RunRequest{
-		Dialog: starting,
-		Input:  input,
-	}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: append(starting,
+		input),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,12 +74,7 @@ func TestTerminalResponseCompletesRun(t *testing.T) {
 	if _, ok := result.Usage["provider_detail"]; ok {
 		t.Fatal("provider-specific usage entered RunResult")
 	}
-	assertEventKinds(t, observer.Events(),
-		agent.EventKindRunStarted,
-		agent.EventKindGenerationStarted,
-		agent.EventKindGenerationCompleted,
-		agent.EventKindRunCompleted,
-	)
+
 	if len(starting) != 1 || textOf(starting[0]) != "prior" || textOf(input) != "new" {
 		t.Fatal("caller input was modified")
 	}
@@ -102,6 +96,7 @@ func TestLastingDialogReplacementPrecedesTemporaryRequestChange(t *testing.T) {
 	replacement := gai.Dialog{userMessage("summary")}
 	prepareCalls := 0
 	beforeCalls := 0
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "base-model",
@@ -125,18 +120,16 @@ func TestLastingDialogReplacementPrecedesTemporaryRequestChange(t *testing.T) {
 			changed.Dialog = append(gai.Dialog(nil), changed.Dialog...)
 			changed.Dialog = append(changed.Dialog, userMessage("retrieved"))
 			changed.Options = gai.GenerationOptions{"retrieval": true}
-			return agent.BeforeGenerationDecision{Request: changed}, nil
+			return agent.BeforeGenerationDecision{Request: &changed}, nil
 		}),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	recording := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{
-		Dialog: gai.Dialog{userMessage("prior")},
-		Input:  userMessage("question"),
-	}, recording)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: append(gai.Dialog{userMessage("prior")},
+		userMessage("question")),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,17 +145,12 @@ func TestLastingDialogReplacementPrecedesTemporaryRequestChange(t *testing.T) {
 	if got, _ := gai.OutputTokens(result.Usage); got != 5 {
 		t.Fatalf("output tokens = %d", got)
 	}
-	assertEventKinds(t, recording.Events(),
-		agent.EventKindRunStarted,
-		agent.EventKindDialogReplaced,
-		agent.EventKindGenerationStarted,
-		agent.EventKindGenerationCompleted,
-		agent.EventKindRunCompleted,
-	)
+
 }
 
 func TestCostBudgetHookStopsWithoutProviderCall(t *testing.T) {
 	generator := agenttest.NewScriptedGenerator()
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "test-model",
@@ -173,9 +161,8 @@ func TestCostBudgetHookStopsWithoutProviderCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("hello")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("hello")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +172,7 @@ func TestCostBudgetHookStopsWithoutProviderCall(t *testing.T) {
 	if len(generator.Requests()) != 0 {
 		t.Fatal("generator was called")
 	}
-	assertEventKinds(t, observer.Events(), agent.EventKindRunStarted, agent.EventKindRunCompleted)
+
 }
 
 func TestToolRoundUsesHookArgumentsAndResult(t *testing.T) {
@@ -219,6 +206,7 @@ func TestToolRoundUsesHookArgumentsAndResult(t *testing.T) {
 	handlerCalls := 0
 	beforeStatus := agent.RunStatus{}
 	afterStatus := agent.RunStatus{}
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "test-model",
@@ -238,49 +226,30 @@ func TestToolRoundUsesHookArgumentsAndResult(t *testing.T) {
 		}),
 		AfterTool: agent.AfterToolFunc(func(_ context.Context, request agent.AfterToolRequest) (agent.AfterToolDecision, error) {
 			afterStatus = request.Status
-			return agent.AfterToolDecision{Result: gai.ToolResultMessage("also-wrong", gai.TextBlock("after"))}, nil
+			return agent.AfterToolDecision{Result: new(gai.ToolResultMessage("also-wrong", gai.TextBlock("after")))}, nil
 		}),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("use tool")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("use tool")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if handlerCalls != 1 {
 		t.Fatalf("handler calls = %d", handlerCalls)
 	}
-	if beforeStatus.GenerationCalls != 1 || beforeStatus.ToolExecutions != 0 {
+	if beforeStatus.AcceptedGenerations != 1 || beforeStatus.AcceptedToolResults != 0 {
 		t.Fatalf("before status = %#v", beforeStatus)
 	}
-	if afterStatus.GenerationCalls != 1 || afterStatus.ToolExecutions != 0 {
+	if afterStatus.AcceptedGenerations != 1 || afterStatus.AcceptedToolResults != 0 {
 		t.Fatalf("after status = %#v", afterStatus)
 	}
 	if got := dialogTexts(result.Dialog); !reflect.DeepEqual(got, []string{"use tool", "echo", "after", "finished"}) {
 		t.Fatalf("dialog = %v", got)
 	}
-	events := observer.Events()
-	assertEventKinds(t, events,
-		agent.EventKindRunStarted,
-		agent.EventKindGenerationStarted,
-		agent.EventKindGenerationCompleted,
-		agent.EventKindToolStarted,
-		agent.EventKindToolCompleted,
-		agent.EventKindGenerationStarted,
-		agent.EventKindGenerationCompleted,
-		agent.EventKindRunCompleted,
-	)
-	toolStarted := events[3].Payload.(agent.ToolStartedEvent)
-	if toolStarted.Generation != 0 || toolStarted.ToolIndex != 0 {
-		t.Fatalf("tool position = generation %d, index %d", toolStarted.Generation, toolStarted.ToolIndex)
-	}
-	secondGeneration := events[5].Payload.(agent.GenerationStartedEvent)
-	if secondGeneration.Generation != 1 {
-		t.Fatalf("second generation index = %d", secondGeneration.Generation)
-	}
+
 }
 
 func TestRecoverableToolErrorsReturnResultsToModel(t *testing.T) {
@@ -365,7 +334,7 @@ func TestRecoverableToolErrorsReturnResultsToModel(t *testing.T) {
 				t.Fatal(newErr)
 			}
 
-			result, runErr := a.Run(context.Background(), agent.RunRequest{Input: userMessage("go")}, nil)
+			result, runErr := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
 			if runErr != nil {
 				t.Fatal(runErr)
 			}
@@ -388,6 +357,7 @@ func TestRejectedBatchCompletesBeforeHookStop(t *testing.T) {
 		{Definition: gai.Tool{Name: "one"}, Handler: countingHandler(&handlerCalls)},
 		{Definition: gai.Tool{Name: "two"}, Handler: countingHandler(&handlerCalls)},
 	}
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "test-model",
@@ -403,9 +373,8 @@ func TestRejectedBatchCompletesBeforeHookStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("run both")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("run both")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,16 +392,7 @@ func TestRejectedBatchCompletesBeforeHookStop(t *testing.T) {
 			t.Fatalf("result is not marked as error: %#v", message)
 		}
 	}
-	assertEventKinds(t, observer.Events(),
-		agent.EventKindRunStarted,
-		agent.EventKindGenerationStarted,
-		agent.EventKindGenerationCompleted,
-		agent.EventKindToolStarted,
-		agent.EventKindToolCompleted,
-		agent.EventKindToolStarted,
-		agent.EventKindToolCompleted,
-		agent.EventKindRunCompleted,
-	)
+
 }
 
 func TestFinishReasonAndUsageCannotBeChangedByHook(t *testing.T) {
@@ -461,26 +421,27 @@ func TestFinishReasonAndUsageCannotBeChangedByHook(t *testing.T) {
 			generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{
 				Response: textResponse("answer", gai.EndTurn, gai.Metadata{gai.UsageMetricInputTokens: 1}),
 			})
+
 			a, err := agent.New(agent.Config{
 				Generator: generator,
 				Model:     "test-model",
-				AfterGeneration: agent.AfterGenerationFunc(func(_ context.Context, request agent.AfterGenerationRequest) (gai.Response, error) {
-					return test.change(request.Response), nil
+				AfterGeneration: agent.AfterGenerationFunc(func(_ context.Context, request agent.AfterGenerationRequest) (*gai.Response, error) {
+					changed := test.change(request.Response)
+					return &changed, nil
 				}),
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			observer := agenttest.NewRecordingObserver()
 
-			result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("question")}, observer)
+			result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("question")}})
 			if err == nil {
 				t.Fatal("expected hook validation error")
 			}
 			if len(result.Dialog) != 1 {
 				t.Fatalf("dialog length = %d", len(result.Dialog))
 			}
-			failed := lastFailure(t, observer.Events())
+			failed := runFailure(t, err)
 			if failed.Phase != agent.RunPhaseAfterGenerationHook {
 				t.Fatalf("failure phase = %q", failed.Phase)
 			}
@@ -495,6 +456,7 @@ func TestDuplicateToolCallIDFailsBeforeSecondResponseIsAccepted(t *testing.T) {
 		agenttest.GenerateStep{Response: toolResponse(first)},
 		agenttest.GenerateStep{Response: toolResponse(second)},
 	)
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "test-model",
@@ -508,62 +470,59 @@ func TestDuplicateToolCallIDFailsBeforeSecondResponseIsAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("go")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
 	if err == nil {
 		t.Fatal("expected duplicate ID error")
 	}
 	if len(result.Dialog) != 3 {
 		t.Fatalf("dialog length = %d", len(result.Dialog))
 	}
-	if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseValidation {
+	if phase := runFailure(t, err).Phase; phase != agent.RunPhaseValidation {
 		t.Fatalf("phase = %q", phase)
 	}
 }
 
-func TestRequestValidationPrecedesRunEvents(t *testing.T) {
+func TestRequestValidationPrecedesExecution(t *testing.T) {
 	tests := []struct {
 		name    string
 		request agent.RunRequest
 	}{
-		{name: "empty input", request: agent.RunRequest{}},
-		{name: "input without role", request: agent.RunRequest{
-			Input: gai.Message{Blocks: []gai.Block{gai.TextBlock("missing role")}},
-		}},
-		{name: "assistant input", request: agent.RunRequest{Input: assistantMessage("wrong")}},
+		{name: "empty dialog", request: agent.RunRequest{}},
+		{name: "message without role", request: agent.RunRequest{Dialog: gai.Dialog{gai.Message{Blocks: []gai.Block{gai.TextBlock("missing role")}}}}},
+
 		{name: "candidate count", request: agent.RunRequest{
-			Input:   userMessage("hello"),
-			Options: gai.NewGenerationOptions(gai.WithCandidateCount(2)),
+			Options: gai.NewGenerationOptions(gai.WithCandidateCount(2)), Dialog: gai.Dialog{userMessage("hello")},
 		}},
-		{name: "system in dialog", request: agent.RunRequest{
-			Dialog: gai.Dialog{gai.SystemMessage(gai.TextBlock("wrong"))},
-			Input:  userMessage("hello"),
+		{name: "system in dialog", request: agent.RunRequest{Dialog: append(gai.Dialog{gai.SystemMessage(gai.TextBlock("wrong"))},
+			userMessage("hello")),
 		}},
-		{name: "empty assistant in dialog", request: agent.RunRequest{
-			Dialog: gai.Dialog{{Role: gai.Assistant}},
-			Input:  userMessage("hello"),
+		{name: "empty assistant in dialog", request: agent.RunRequest{Dialog: append(gai.Dialog{{Role: gai.Assistant}},
+			userMessage("hello")),
 		}},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			generator := agenttest.NewScriptedGenerator()
-			a, err := agent.New(agent.Config{Generator: generator, Model: "test-model"})
+
+			a, err := agent.New(agent.Config{
+				Generator: generator,
+				Model:     "test-model",
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			observer := agenttest.NewRecordingObserver()
 
-			result, err := a.Run(context.Background(), test.request, observer)
+			result, err := a.Run(context.Background(), test.request)
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
 			if !reflect.DeepEqual(result, agent.RunResult{}) {
 				t.Fatalf("result = %#v", result)
 			}
-			if len(observer.Events()) != 0 {
-				t.Fatal("observer received pre-run event")
+			if len(generator.Requests()) != 0 || runFailure(t, err).Phase != agent.RunPhaseValidation {
+				t.Fatal("invalid input reached execution")
 			}
 		})
 	}
@@ -582,13 +541,29 @@ func TestStreamingForwardsChunksBeforeCollectingResponse(t *testing.T) {
 			gai.UsageMetricGenerationTokens: 1,
 		})},
 	}})
-	a, err := agent.New(agent.Config{Generator: generator, Model: "test-model"})
+
+	var chunks []agent.GenerationChunkEvent
+	var response gai.Response
+	a, err := agent.New(agent.Config{
+		Generator: generator,
+		Model:     "test-model",
+		GenerationChunk: agent.GenerationChunkFunc(func(_ context.Context, event agent.GenerationChunkEvent) error {
+			chunks = append(chunks, event)
+			return nil
+		}),
+		AfterGeneration: agent.AfterGenerationFunc(func(_ context.Context, r agent.AfterGenerationRequest) (*gai.Response, error) {
+			if len(chunks) != 3 {
+				t.Fatalf("chunks before response = %d", len(chunks))
+			}
+			response = r.Response
+			return nil, nil
+		}),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("hello")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("hello")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,21 +573,17 @@ func TestStreamingForwardsChunksBeforeCollectingResponse(t *testing.T) {
 	if got, _ := gai.InputTokens(result.Usage); got != 2 {
 		t.Fatalf("input tokens = %d", got)
 	}
-	assertEventKinds(t, observer.Events(),
-		agent.EventKindRunStarted,
-		agent.EventKindGenerationStarted,
-		agent.EventKindGenerationChunk,
-		agent.EventKindGenerationChunk,
-		agent.EventKindGenerationChunk,
-		agent.EventKindGenerationCompleted,
-		agent.EventKindRunCompleted,
-	)
-	completed := observer.Events()[5].Payload.(agent.GenerationCompletedEvent)
-	if completed.Response.ExtraFields["response_id"] != "resp-1" {
-		t.Fatalf("response extra fields = %#v", completed.Response.ExtraFields)
+
+	for _, event := range chunks {
+		if event.Generation != 0 {
+			t.Fatalf("generation = %d", event.Generation)
+		}
 	}
-	if completed.Response.Candidates[0].ExtraFields["message_id"] != "msg-1" {
-		t.Fatalf("message extra fields = %#v", completed.Response.Candidates[0].ExtraFields)
+	if response.ExtraFields["response_id"] != "resp-1" {
+		t.Fatalf("response extra fields = %#v", response.ExtraFields)
+	}
+	if response.Candidates[0].ExtraFields["message_id"] != "msg-1" {
+		t.Fatalf("message extra fields = %#v", response.Candidates[0].ExtraFields)
 	}
 }
 
@@ -622,114 +593,25 @@ func TestStreamErrorLeavesChunksOutOfActiveDialog(t *testing.T) {
 		{Block: gai.Block{BlockType: gai.Content, ModalityType: gai.Text, MimeType: "text/plain", Content: gai.Str("partial")}},
 		{Err: streamErr},
 	}})
-	a, err := agent.New(agent.Config{Generator: generator, Model: "test-model"})
+
+	a, err := agent.New(agent.Config{
+		Generator: generator,
+		Model:     "test-model",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("hello")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("hello")}})
 	if !errors.Is(err, streamErr) {
 		t.Fatalf("error = %v", err)
 	}
 	if len(result.Dialog) != 1 {
 		t.Fatalf("dialog length = %d", len(result.Dialog))
 	}
-	assertEventKinds(t, observer.Events(),
-		agent.EventKindRunStarted,
-		agent.EventKindGenerationStarted,
-		agent.EventKindGenerationChunk,
-		agent.EventKindGenerationChunk,
-		agent.EventKindRunFailed,
-	)
-	if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseGeneration {
+
+	if phase := runFailure(t, err).Phase; phase != agent.RunPhaseGeneration {
 		t.Fatalf("phase = %q", phase)
-	}
-}
-
-func TestGenerationErrorLeavesResponseOutOfActiveDialog(t *testing.T) {
-	generationErr := errors.New("generation failed")
-	generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{
-		Response: textResponse("partial", gai.EndTurn, gai.Metadata{gai.UsageMetricInputTokens: 4}),
-		Err:      generationErr,
-	})
-	a, err := agent.New(agent.Config{Generator: generator, Model: "test-model"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	observer := agenttest.NewRecordingObserver()
-
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("hello")}, observer)
-	if !errors.Is(err, generationErr) {
-		t.Fatalf("error = %v", err)
-	}
-	if len(result.Dialog) != 1 || len(result.Usage) != 0 {
-		t.Fatalf("result = %#v", result)
-	}
-	if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseGeneration {
-		t.Fatalf("phase = %q", phase)
-	}
-}
-
-func TestObserverFailureStopsLaterWorkAndReturnsCurrentState(t *testing.T) {
-	observerErr := errors.New("observer failed")
-	tests := []struct {
-		name             string
-		failSequence     uint64
-		toolRound        bool
-		wantDialogSize   int
-		wantCalls        int
-		wantHandlerCalls int
-	}{
-		{name: "run started", failSequence: 0, wantDialogSize: 1, wantCalls: 0},
-		{name: "generation started", failSequence: 1, wantDialogSize: 1, wantCalls: 0},
-		{name: "generation completed", failSequence: 2, wantDialogSize: 2, wantCalls: 1},
-		{name: "run completed", failSequence: 3, wantDialogSize: 2, wantCalls: 1},
-		{name: "tool started", failSequence: 3, toolRound: true, wantDialogSize: 2, wantCalls: 1},
-		{name: "tool completed", failSequence: 4, toolRound: true, wantDialogSize: 3, wantCalls: 1, wantHandlerCalls: 1},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			response := textResponse("done", gai.EndTurn, nil)
-			if test.toolRound {
-				response = toolResponse(mustToolCallBlock(t, "call-1", "echo", map[string]any{}))
-			}
-			generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{Response: response})
-			handlerCalls := 0
-			config := agent.Config{Generator: generator, Model: "test-model"}
-			if test.toolRound {
-				config.Tools = []agent.Tool{{
-					Definition: gai.Tool{Name: "echo"},
-					Handler: agent.ToolHandlerFunc(func(context.Context, agent.ToolRequest) (gai.Message, error) {
-						handlerCalls++
-						return gai.ToolResultMessage("", gai.TextBlock("ok")), nil
-					}),
-				}}
-			}
-			a, err := agent.New(config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			observer := agenttest.NewFailingObserver(test.failSequence, observerErr)
-
-			result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("hello")}, observer)
-			if !errors.Is(err, observerErr) {
-				t.Fatalf("error = %v", err)
-			}
-			if len(result.Dialog) != test.wantDialogSize {
-				t.Fatalf("dialog length = %d", len(result.Dialog))
-			}
-			if len(generator.Requests()) != test.wantCalls {
-				t.Fatalf("generator calls = %d", len(generator.Requests()))
-			}
-			if handlerCalls != test.wantHandlerCalls {
-				t.Fatalf("handler calls = %d", handlerCalls)
-			}
-			if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseObserver {
-				t.Fatalf("phase = %q", phase)
-			}
-		})
 	}
 }
 
@@ -737,6 +619,7 @@ func TestHandlerErrorStopsWithoutInventingToolResult(t *testing.T) {
 	handlerErr := errors.New("database unavailable")
 	call := mustToolCallBlock(t, "call-1", "lookup", map[string]any{})
 	generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{Response: toolResponse(call)})
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "test-model",
@@ -750,25 +633,18 @@ func TestHandlerErrorStopsWithoutInventingToolResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("lookup")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("lookup")}})
 	if !errors.Is(err, handlerErr) {
 		t.Fatalf("error = %v", err)
 	}
 	if len(result.Dialog) != 2 {
 		t.Fatalf("dialog length = %d", len(result.Dialog))
 	}
-	if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseTool {
+	if phase := runFailure(t, err).Phase; phase != agent.RunPhaseTool {
 		t.Fatalf("phase = %q", phase)
 	}
-	assertEventKinds(t, observer.Events(),
-		agent.EventKindRunStarted,
-		agent.EventKindGenerationStarted,
-		agent.EventKindGenerationCompleted,
-		agent.EventKindToolStarted,
-		agent.EventKindRunFailed,
-	)
+
 }
 
 func TestInvalidLastingDialogDecisionsAreRejected(t *testing.T) {
@@ -776,6 +652,7 @@ func TestInvalidLastingDialogDecisionsAreRejected(t *testing.T) {
 		name     string
 		decision agent.PrepareDialogDecision
 	}{
+		{name: "unresolved replacement", decision: agent.PrepareDialogDecision{Dialog: gai.Dialog{{Role: gai.Assistant, Blocks: []gai.Block{mustToolCallBlock(t, "pending", "tool", nil)}}}}},
 		{name: "empty replacement", decision: agent.PrepareDialogDecision{Dialog: gai.Dialog{}}},
 		{name: "usage without replacement", decision: agent.PrepareDialogDecision{
 			Usage: gai.Metadata{gai.UsageMetricInputTokens: 1},
@@ -785,6 +662,7 @@ func TestInvalidLastingDialogDecisionsAreRejected(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			generator := agenttest.NewScriptedGenerator()
+
 			a, err := agent.New(agent.Config{
 				Generator: generator,
 				Model:     "test-model",
@@ -795,16 +673,15 @@ func TestInvalidLastingDialogDecisionsAreRejected(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			observer := agenttest.NewRecordingObserver()
 
-			result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("hello")}, observer)
+			result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("hello")}})
 			if err == nil {
 				t.Fatal("expected invalid replacement error")
 			}
 			if len(result.Dialog) != 1 || len(generator.Requests()) != 0 {
 				t.Fatalf("result = %#v, calls = %d", result, len(generator.Requests()))
 			}
-			if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhasePrepareDialogHook {
+			if phase := runFailure(t, err).Phase; phase != agent.RunPhasePrepareDialogHook {
 				t.Fatalf("phase = %q", phase)
 			}
 		})
@@ -846,20 +723,23 @@ func TestProviderResponseValidationPrecedesDialogUpdate(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{Response: test.response})
-			a, err := agent.New(agent.Config{Generator: generator, Model: "test-model"})
+
+			a, err := agent.New(agent.Config{
+				Generator: generator,
+				Model:     "test-model",
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			observer := agenttest.NewRecordingObserver()
 
-			result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("hello")}, observer)
+			result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("hello")}})
 			if err == nil {
 				t.Fatal("expected response validation error")
 			}
 			if len(result.Dialog) != 1 {
 				t.Fatalf("dialog length = %d", len(result.Dialog))
 			}
-			if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseValidation {
+			if phase := runFailure(t, err).Phase; phase != agent.RunPhaseValidation {
 				t.Fatalf("phase = %q", phase)
 			}
 		})
@@ -941,9 +821,9 @@ func TestInterfaceNilHandling(t *testing.T) {
 		}
 	})
 
-	t.Run("nil function hooks and observer are absent", func(t *testing.T) {
-		generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{
-			Response: textResponse("done", gai.EndTurn, nil),
+	t.Run("nil function hooks are absent", func(t *testing.T) {
+		generator := agenttest.NewScriptedStreamingGenerator(agenttest.StreamStep{
+			Chunks: []gai.StreamChunk{{Block: gai.TextBlock("done")}},
 		})
 		a, err := agent.New(agent.Config{
 			Generator:        generator,
@@ -954,12 +834,12 @@ func TestInterfaceNilHandling(t *testing.T) {
 			AfterGeneration:  agent.AfterGenerationFunc(nil),
 			BeforeTool:       agent.BeforeToolFunc(nil),
 			AfterTool:        agent.AfterToolFunc(nil),
+			GenerationChunk:  agent.GenerationChunkFunc(nil),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		var observer agent.Observer = agent.ObserverFunc(nil)
-		if _, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("go")}, observer); err != nil {
+		if _, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -981,16 +861,19 @@ func TestInterfaceNilHandling(t *testing.T) {
 
 func TestCancellationDuringGenerationReturnsCancellationPhase(t *testing.T) {
 	generator := &blockingGenerator{started: make(chan struct{})}
-	a, err := agent.New(agent.Config{Generator: generator, Model: "test-model"})
+
+	a, err := agent.New(agent.Config{
+		Generator: generator,
+		Model:     "test-model",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 	ctx, cancel := context.WithCancel(context.Background())
 	resultChannel := make(chan agent.RunResult, 1)
 	errorChannel := make(chan error, 1)
 	go func() {
-		result, runErr := a.Run(ctx, agent.RunRequest{Input: userMessage("wait")}, observer)
+		result, runErr := a.Run(ctx, agent.RunRequest{Dialog: gai.Dialog{userMessage("wait")}})
 		resultChannel <- result
 		errorChannel <- runErr
 	}()
@@ -1005,7 +888,7 @@ func TestCancellationDuringGenerationReturnsCancellationPhase(t *testing.T) {
 	if len(result.Dialog) != 1 {
 		t.Fatalf("dialog length = %d", len(result.Dialog))
 	}
-	if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseCancellation {
+	if phase := runFailure(t, runErr).Phase; phase != agent.RunPhaseCancellation {
 		t.Fatalf("phase = %q", phase)
 	}
 }
@@ -1057,8 +940,8 @@ func TestContextErrorsFromOperationsUseCancellationPhase(t *testing.T) {
 				return agent.Config{
 					Generator: agenttest.NewScriptedGenerator(agenttest.GenerateStep{Response: textResponse("done", gai.EndTurn, nil)}),
 					Model:     "model",
-					AfterGeneration: agent.AfterGenerationFunc(func(context.Context, agent.AfterGenerationRequest) (gai.Response, error) {
-						return gai.Response{}, context.Canceled
+					AfterGeneration: agent.AfterGenerationFunc(func(context.Context, agent.AfterGenerationRequest) (*gai.Response, error) {
+						return nil, context.Canceled
 					}),
 				}
 			},
@@ -1118,25 +1001,149 @@ func TestContextErrorsFromOperationsUseCancellationPhase(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			a, err := agent.New(test.config())
+			config := test.config()
+
+			a, err := agent.New(config)
 			if err != nil {
 				t.Fatal(err)
 			}
-			observer := agenttest.NewRecordingObserver()
 
-			_, err = a.Run(context.Background(), agent.RunRequest{Input: userMessage("go")}, observer)
+			_, err = a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("error = %v", err)
 			}
-			if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseCancellation {
+			if phase := runFailure(t, err).Phase; phase != agent.RunPhaseCancellation {
 				t.Fatalf("phase = %q", phase)
 			}
 		})
 	}
+	for _, test := range []struct {
+		name       string
+		want       []string
+		dialogSize int
+	}{
+		{"prepare dialog", nil, 1},
+		{"before generation", []string{"prepare"}, 1},
+		{"after generation", []string{"prepare", "before generation"}, 1},
+		{"before tool", []string{"prepare", "before generation", "after generation"}, 2},
+		{"tool handler", []string{"prepare", "before generation", "after generation", "before tool"}, 2},
+		{"after tool", []string{"prepare", "before generation", "after generation", "before tool", "handler"}, 2},
+		{"first chunk", []string{"prepare", "before generation"}, 1},
+		{"next chunk", []string{"prepare", "before generation", "chunk"}, 1},
+	} {
+		t.Run("canceled before "+test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var called []string
+			response := textResponse("done", gai.EndTurn, nil)
+			if test.name == "before tool" || test.name == "after tool" || test.name == "tool handler" {
+				call := mustToolCallBlock(t, "call", "tool", map[string]any{})
+				if test.name == "before tool" {
+					// Decoding can take time after the batch's cancellation check.
+					// Cancel at that boundary without a timer or scheduler race.
+					call.Content = cancelingContent{Str: gai.Str(call.Content.String()), cancel: cancel}
+				}
+				response = toolResponse(call)
+			}
+			generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{
+				Check: func(gai.GenerationRequest) error {
+					if test.name == "after generation" {
+						cancel()
+					}
+					return nil
+				},
+				Response: response,
+			})
+			config := agent.Config{
+				Generator: generator,
+				Model:     "model",
+				PrepareDialog: agent.PrepareDialogFunc(func(context.Context, agent.PrepareDialogRequest) (agent.PrepareDialogDecision, error) {
+					called = append(called, "prepare")
+					if test.name == "before generation" {
+						cancel()
+					}
+					return agent.PrepareDialogDecision{}, nil
+				}),
+				BeforeGeneration: agent.BeforeGenerationFunc(func(context.Context, agent.BeforeGenerationRequest) (agent.BeforeGenerationDecision, error) {
+					called = append(called, "before generation")
+					return agent.BeforeGenerationDecision{}, nil
+				}),
+				AfterGeneration: agent.AfterGenerationFunc(func(context.Context, agent.AfterGenerationRequest) (*gai.Response, error) {
+					called = append(called, "after generation")
+					return nil, nil
+				}),
+				BeforeTool: agent.BeforeToolFunc(func(context.Context, agent.BeforeToolRequest) (agent.BeforeToolDecision, error) {
+					called = append(called, "before tool")
+					if test.name == "tool handler" {
+						cancel()
+					}
+					return agent.BeforeToolDecision{}, nil
+				}),
+				AfterTool: agent.AfterToolFunc(func(context.Context, agent.AfterToolRequest) (agent.AfterToolDecision, error) {
+					called = append(called, "after tool")
+					return agent.AfterToolDecision{}, nil
+				}),
+				GenerationChunk: agent.GenerationChunkFunc(func(context.Context, agent.GenerationChunkEvent) error {
+					called = append(called, "chunk")
+					if test.name == "next chunk" {
+						cancel()
+					}
+					return nil
+				}),
+				Tools: []agent.Tool{{Definition: gai.Tool{Name: "tool"}, Handler: agent.ToolHandlerFunc(func(context.Context, agent.ToolRequest) (gai.Message, error) {
+					called = append(called, "handler")
+					if test.name == "after tool" {
+						cancel()
+					}
+					return gai.ToolResultMessage("", gai.TextBlock("receipt")), nil
+				})}},
+			}
+			providerErr := errors.New("provider stream failed")
+			if test.name == "first chunk" || test.name == "next chunk" {
+				chunks := []gai.StreamChunk{{Block: gai.TextBlock("partial")}, {Block: gai.TextBlock("later")}}
+				if test.name == "first chunk" {
+					chunks[0].Err = providerErr
+				}
+				config.Generator = agenttest.NewScriptedStreamingGenerator(agenttest.StreamStep{
+					Check: func(gai.GenerationRequest) error {
+						if test.name == "first chunk" {
+							cancel()
+						}
+						return nil
+					},
+					Chunks: chunks,
+				})
+			}
+			a, err := agent.New(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.name == "prepare dialog" {
+				cancel()
+			}
+			result, err := a.Run(ctx, agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
+			if !errors.Is(err, context.Canceled) || runFailure(t, err).Phase != agent.RunPhaseCancellation {
+				t.Fatalf("error = %v", err)
+			}
+			if !reflect.DeepEqual(called, test.want) {
+				t.Fatalf("invocations = %v, want %v", called, test.want)
+			}
+			if len(result.Dialog) != test.dialogSize || result.StopReason != "" {
+				t.Fatalf("result = %#v", result)
+			}
+			if test.name == "first chunk" && !errors.Is(err, providerErr) {
+				t.Fatalf("provider error lost: %v", err)
+			}
+		})
+	}
+
 }
 
 func TestImmutableAgentSupportsConcurrentRuns(t *testing.T) {
-	a, err := agent.New(agent.Config{Generator: echoGenerator{}, Model: "test-model"})
+	a, err := agent.New(agent.Config{
+		Generator: echoGenerator{},
+		Model:     "test-model",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1145,7 +1152,9 @@ func TestImmutableAgentSupportsConcurrentRuns(t *testing.T) {
 	for i := range runs {
 		go func() {
 			input := fmt.Sprintf("input-%d", i)
-			result, runErr := a.Run(context.Background(), agent.RunRequest{Input: userMessage(input)}, nil)
+
+			ctx := context.Background()
+			result, runErr := a.Run(ctx, agent.RunRequest{Dialog: gai.Dialog{userMessage(input)}})
 			if runErr != nil {
 				errorsChannel <- runErr
 				return
@@ -1231,7 +1240,7 @@ func TestCallOnlyGenerationChangesResetBeforeNextRound(t *testing.T) {
 		}},
 		BeforeGeneration: agent.BeforeGenerationFunc(func(_ context.Context, request agent.BeforeGenerationRequest) (agent.BeforeGenerationDecision, error) {
 			if request.Generation != 0 {
-				return agent.BeforeGenerationDecision{Request: request.Request}, nil
+				return agent.BeforeGenerationDecision{Request: &request.Request}, nil
 			}
 			changed := request.Request
 			changed.Model = "temporary-model"
@@ -1239,7 +1248,7 @@ func TestCallOnlyGenerationChangesResetBeforeNextRound(t *testing.T) {
 			changed.Dialog = append(gai.Dialog(nil), changed.Dialog...)
 			changed.Dialog = append(changed.Dialog, userMessage("temporary context"))
 			changed.Options = gai.GenerationOptions{"temporary": true}
-			return agent.BeforeGenerationDecision{Request: changed}, nil
+			return agent.BeforeGenerationDecision{Request: &changed}, nil
 		}),
 	})
 	if err != nil {
@@ -1247,9 +1256,8 @@ func TestCallOnlyGenerationChangesResetBeforeNextRound(t *testing.T) {
 	}
 
 	result, err := a.Run(context.Background(), agent.RunRequest{
-		Input:   userMessage("question"),
-		Options: originalOptions,
-	}, nil)
+		Options: originalOptions, Dialog: gai.Dialog{userMessage("question")},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1265,44 +1273,44 @@ func TestCandidateFieldsCanBeChangedByGenerationHook(t *testing.T) {
 	generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{
 		Response: textResponse("provider", gai.EndTurn, gai.Metadata{gai.UsageMetricInputTokens: 2}),
 	})
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "test-model",
-		AfterGeneration: agent.AfterGenerationFunc(func(_ context.Context, request agent.AfterGenerationRequest) (gai.Response, error) {
+		AfterGeneration: agent.AfterGenerationFunc(func(_ context.Context, request agent.AfterGenerationRequest) (*gai.Response, error) {
 			changed := request.Response
 			changed.Candidates = append([]gai.Message(nil), changed.Candidates...)
 			changed.Candidates[0].Blocks = append([]gai.Block(nil), changed.Candidates[0].Blocks...)
 			changed.Candidates[0].Blocks[0] = gai.TextBlock("changed")
 			changed.Candidates[0].ExtraFields = map[string]any{"reviewed": true}
 			changed.ExtraFields = map[string]any{"hook": "after"}
-			return changed, nil
+			return &changed, nil
 		}),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("hello")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("hello")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := textOf(result.Dialog[len(result.Dialog)-1]); got != "changed" {
 		t.Fatalf("assistant text = %q", got)
 	}
-	completed := observer.Events()[2].Payload.(agent.GenerationCompletedEvent)
-	if completed.Response.ExtraFields["hook"] != "after" || completed.Response.Candidates[0].ExtraFields["reviewed"] != true {
-		t.Fatalf("completed response = %#v", completed.Response)
+	if result.Dialog[1].ExtraFields["reviewed"] != true {
+		t.Fatal("replacement message metadata was lost")
 	}
 	if got, _ := gai.InputTokens(result.Usage); got != 2 {
 		t.Fatalf("input tokens = %d", got)
 	}
 }
 
-func TestConflictingToolDecisionFailsBeforeStartedEvent(t *testing.T) {
+func TestConflictingToolDecisionFailsBeforeHandler(t *testing.T) {
 	call := mustToolCallBlock(t, "call-1", "echo", map[string]any{})
 	generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{Response: toolResponse(call)})
 	handlerCalls := 0
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "test-model",
@@ -1317,22 +1325,16 @@ func TestConflictingToolDecisionFailsBeforeStartedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("go")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
 	if err == nil {
 		t.Fatal("expected conflicting decision error")
 	}
 	if handlerCalls != 0 || len(result.Dialog) != 2 {
 		t.Fatalf("handler calls = %d, dialog = %#v", handlerCalls, result.Dialog)
 	}
-	assertEventKinds(t, observer.Events(),
-		agent.EventKindRunStarted,
-		agent.EventKindGenerationStarted,
-		agent.EventKindGenerationCompleted,
-		agent.EventKindRunFailed,
-	)
-	if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseBeforeToolHook {
+
+	if phase := runFailure(t, err).Phase; phase != agent.RunPhaseBeforeToolHook {
 		t.Fatalf("phase = %q", phase)
 	}
 }
@@ -1350,6 +1352,7 @@ func TestUsageOverflowLeavesPriorTotalUnchanged(t *testing.T) {
 		agenttest.GenerateStep{Response: first},
 		agenttest.GenerateStep{Response: second},
 	)
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "test-model",
@@ -1363,9 +1366,8 @@ func TestUsageOverflowLeavesPriorTotalUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("go")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
 	if err == nil {
 		t.Fatal("expected usage overflow")
 	}
@@ -1375,7 +1377,7 @@ func TestUsageOverflowLeavesPriorTotalUnchanged(t *testing.T) {
 	if output, ok := gai.OutputTokens(result.Usage); !ok || output != maxInt {
 		t.Fatalf("output usage = %d, %v", output, ok)
 	}
-	if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseValidation {
+	if phase := runFailure(t, err).Phase; phase != agent.RunPhaseValidation {
 		t.Fatalf("phase = %q", phase)
 	}
 }
@@ -1398,6 +1400,7 @@ func TestRunStatusAndContextReachEveryHook(t *testing.T) {
 		}
 		return nil
 	}
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "test-model",
@@ -1422,14 +1425,14 @@ func TestRunStatusAndContextReachEveryHook(t *testing.T) {
 				return agent.BeforeGenerationDecision{}, err
 			}
 			statuses[fmt.Sprintf("before-generation-%d", request.Generation)] = request.Status
-			return agent.BeforeGenerationDecision{Request: request.Request}, nil
+			return agent.BeforeGenerationDecision{}, nil
 		}),
-		AfterGeneration: agent.AfterGenerationFunc(func(ctx context.Context, request agent.AfterGenerationRequest) (gai.Response, error) {
+		AfterGeneration: agent.AfterGenerationFunc(func(ctx context.Context, request agent.AfterGenerationRequest) (*gai.Response, error) {
 			if err := checkContext(ctx); err != nil {
-				return gai.Response{}, err
+				return nil, err
 			}
 			statuses[fmt.Sprintf("after-generation-%d", request.Generation)] = request.Status
-			return request.Response, nil
+			return nil, nil
 		}),
 		BeforeTool: agent.BeforeToolFunc(func(ctx context.Context, request agent.BeforeToolRequest) (agent.BeforeToolDecision, error) {
 			if err := checkContext(ctx); err != nil {
@@ -1443,18 +1446,15 @@ func TestRunStatusAndContextReachEveryHook(t *testing.T) {
 				return agent.AfterToolDecision{}, err
 			}
 			statuses["after-tool"] = request.Status
-			return agent.AfterToolDecision{Result: request.Result}, nil
+			return agent.AfterToolDecision{}, nil
 		}),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.WithValue(context.Background(), key, value)
-	observer := agent.ObserverFunc(func(observed context.Context, _ agent.Event) error {
-		return checkContext(observed)
-	})
 
-	if _, err := a.Run(ctx, agent.RunRequest{Input: userMessage("go")}, observer); err != nil {
+	if _, err := a.Run(ctx, agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}}); err != nil {
 		t.Fatal(err)
 	}
 	assertStatusCounts(t, statuses["prepare-0"], 0, 0)
@@ -1501,8 +1501,8 @@ func TestHookErrorsReportTheirOwningPhase(t *testing.T) {
 			phase: agent.RunPhaseAfterGenerationHook,
 			steps: []agenttest.GenerateStep{{Response: textResponse("done", gai.EndTurn, nil)}},
 			build: func(generator *agenttest.ScriptedGenerator) agent.Config {
-				return agent.Config{Generator: generator, Model: "model", AfterGeneration: agent.AfterGenerationFunc(func(context.Context, agent.AfterGenerationRequest) (gai.Response, error) {
-					return gai.Response{}, marker
+				return agent.Config{Generator: generator, Model: "model", AfterGeneration: agent.AfterGenerationFunc(func(context.Context, agent.AfterGenerationRequest) (*gai.Response, error) {
+					return nil, marker
 				})}
 			},
 		},
@@ -1524,20 +1524,35 @@ func TestHookErrorsReportTheirOwningPhase(t *testing.T) {
 		},
 	}
 
+	t.Run("nested RunError preserves outer boundary", func(t *testing.T) {
+		inner := &agent.RunError{Phase: agent.RunPhaseTool, Err: marker}
+		generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{Err: inner})
+		a, err := agent.New(agent.Config{Generator: generator, Model: "model"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
+		outer := runFailure(t, err)
+		if outer.Phase != agent.RunPhaseGeneration || outer.Err != inner || !errors.Is(err, marker) {
+			t.Fatalf("error=%#v", outer)
+		}
+	})
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			generator := agenttest.NewScriptedGenerator(test.steps...)
-			a, err := agent.New(test.build(generator))
+
+			config := test.build(generator)
+
+			a, err := agent.New(config)
 			if err != nil {
 				t.Fatal(err)
 			}
-			observer := agenttest.NewRecordingObserver()
 
-			_, err = a.Run(context.Background(), agent.RunRequest{Input: userMessage("go")}, observer)
+			_, err = a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
 			if !errors.Is(err, marker) {
 				t.Fatalf("error = %v", err)
 			}
-			if phase := lastFailure(t, observer.Events()).Phase; phase != test.phase {
+			if phase := runFailure(t, err).Phase; phase != test.phase {
 				t.Fatalf("phase = %q, want %q", phase, test.phase)
 			}
 		})
@@ -1546,6 +1561,7 @@ func TestHookErrorsReportTheirOwningPhase(t *testing.T) {
 
 func TestFixedToolSetRejectsGenerationHookChanges(t *testing.T) {
 	generator := agenttest.NewScriptedGenerator()
+
 	a, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "test-model",
@@ -1555,22 +1571,21 @@ func TestFixedToolSetRejectsGenerationHookChanges(t *testing.T) {
 		}},
 		BeforeGeneration: agent.BeforeGenerationFunc(func(_ context.Context, request agent.BeforeGenerationRequest) (agent.BeforeGenerationDecision, error) {
 			request.Request.Tools = nil
-			return agent.BeforeGenerationDecision{Request: request.Request}, nil
+			return agent.BeforeGenerationDecision{Request: &request.Request}, nil
 		}),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := agenttest.NewRecordingObserver()
 
-	result, err := a.Run(context.Background(), agent.RunRequest{Input: userMessage("go")}, observer)
+	result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
 	if err == nil {
 		t.Fatal("expected fixed-tool validation error")
 	}
 	if len(result.Dialog) != 1 || len(generator.Requests()) != 0 {
 		t.Fatalf("result = %#v, calls = %d", result, len(generator.Requests()))
 	}
-	if phase := lastFailure(t, observer.Events()).Phase; phase != agent.RunPhaseBeforeGenerationHook {
+	if phase := runFailure(t, err).Phase; phase != agent.RunPhaseBeforeGenerationHook {
 		t.Fatalf("phase = %q", phase)
 	}
 }
@@ -1615,7 +1630,7 @@ func (g contextCheckingGenerator) Generate(ctx context.Context, request gai.Gene
 
 func assertStatusCounts(t *testing.T, status agent.RunStatus, generations, tools uint) {
 	t.Helper()
-	if status.GenerationCalls != generations || status.ToolExecutions != tools {
+	if status.AcceptedGenerations != generations || status.AcceptedToolResults != tools {
 		t.Fatalf("status = %#v, want generations=%d tools=%d", status, generations, tools)
 	}
 }
@@ -1681,29 +1696,283 @@ func countingHandler(calls *int) agent.ToolHandler {
 	})
 }
 
-func assertEventKinds(t *testing.T, events []agent.Event, want ...agent.EventKind) {
+func runFailure(t *testing.T, err error) *agent.RunError {
 	t.Helper()
-	if len(events) != len(want) {
-		t.Fatalf("event count = %d, want %d: %#v", len(events), len(want), events)
+	var failure *agent.RunError
+	if !errors.As(err, &failure) {
+		t.Fatalf("expected RunError, got %T: %v", err, err)
 	}
-	for i := range events {
-		if events[i].Sequence != uint64(i) {
-			t.Fatalf("event %d sequence = %d", i, events[i].Sequence)
-		}
-		if events[i].Kind() != want[i] {
-			t.Fatalf("event %d kind = %q, want %q", i, events[i].Kind(), want[i])
-		}
-	}
+	return failure
 }
 
-func lastFailure(t *testing.T, events []agent.Event) agent.RunFailedEvent {
-	t.Helper()
-	if len(events) == 0 {
-		t.Fatal("no events")
+func TestDialogContinuation(t *testing.T) {
+	first := mustToolCallBlock(t, "old-1", "charge", map[string]any{})
+	second := mustToolCallBlock(t, "old-2", "charge", map[string]any{})
+	calls := gai.Message{Role: gai.Assistant, Blocks: []gai.Block{first, second}}
+	one := gai.ToolResultMessage("old-1", gai.TextBlock("receipt"), gai.TextBlock("details"))
+	two := gai.ToolResultMessage("old-2", gai.TextBlock("receipt"))
+	for _, test := range []struct {
+		name   string
+		dialog gai.Dialog
+		valid  bool
+	}{
+		{"user turn", gai.Dialog{userMessage("go")}, true},
+		{"assistant continuation", gai.Dialog{assistantMessage("continue")}, true},
+		{"completed batch", gai.Dialog{calls, one, two}, true},
+		{"reordered complete results", gai.Dialog{calls, two, one}, true},
+		{"unresolved batch", gai.Dialog{calls}, false},
+		{"partially resolved batch", gai.Dialog{calls, one}, false},
+		{"new user cannot hide pending call", gai.Dialog{calls, one, userMessage("go")}, false},
+		{"new assistant cannot hide pending call", gai.Dialog{calls, assistantMessage("done")}, false},
+		{"orphan result", gai.Dialog{one}, false},
+		{"duplicate result", gai.Dialog{calls, one, one, two}, false},
+		{"unknown result", gai.Dialog{calls, one, gai.ToolResultMessage("other", gai.TextBlock("bad"))}, false},
+		{"duplicate call", gai.Dialog{{Role: gai.Assistant, Blocks: []gai.Block{first, first}}, one}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{
+				Check: func(r gai.GenerationRequest) error {
+					if !reflect.DeepEqual(r.Dialog, test.dialog) {
+						return errors.New("dialog changed before generation")
+					}
+					return nil
+				},
+				Response: textResponse("continued", gai.EndTurn, nil),
+			})
+			hooks, handlers := 0, 0
+			a, err := agent.New(agent.Config{Generator: generator, Model: "model",
+				PrepareDialog: agent.PrepareDialogFunc(func(_ context.Context, r agent.PrepareDialogRequest) (agent.PrepareDialogDecision, error) {
+					hooks++
+					if r.Status.AcceptedGenerations != 0 || r.Status.AcceptedToolResults != 0 {
+						t.Fatal("historical work entered run counters")
+					}
+					return agent.PrepareDialogDecision{}, nil
+				}),
+				Tools: []agent.Tool{{Definition: gai.Tool{Name: "charge"}, Handler: countingHandler(&handlers)}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := a.Run(context.Background(), agent.RunRequest{Dialog: test.dialog})
+			if handlers != 0 {
+				t.Fatal("historical tool executed")
+			}
+			if test.valid {
+				if err != nil || hooks != 1 || len(generator.Requests()) != 1 || len(result.Dialog) != len(test.dialog)+1 {
+					t.Fatalf("result=%#v error=%v hooks=%d", result, err, hooks)
+				}
+			} else {
+				if runFailure(t, err).Phase != agent.RunPhaseValidation || hooks != 0 || len(generator.Requests()) != 0 || len(result.Dialog) != 0 {
+					t.Fatalf("invalid history admitted: %#v, %v", result, err)
+				}
+			}
+		})
 	}
-	failed, ok := events[len(events)-1].Payload.(agent.RunFailedEvent)
-	if !ok {
-		t.Fatalf("last event = %T", events[len(events)-1].Payload)
+	t.Run("new call cannot reuse historical ID", func(t *testing.T) {
+		generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{Response: toolResponse(first)})
+		handlers := 0
+		a, err := agent.New(agent.Config{Generator: generator, Model: "model", Tools: []agent.Tool{{Definition: gai.Tool{Name: "charge"}, Handler: countingHandler(&handlers)}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{calls, one, two}})
+		if runFailure(t, err).Phase != agent.RunPhaseValidation || handlers != 0 || len(result.Dialog) != 3 {
+			t.Fatalf("result=%#v error=%v", result, err)
+		}
+	})
+	t.Run("reconcile successful handler after failed hook", func(t *testing.T) {
+		marker := errors.New("review service unavailable")
+		effectCalls := 0
+		var receipt gai.Message
+		generator := agenttest.NewScriptedGenerator(
+			agenttest.GenerateStep{Response: toolResponse(first)},
+			agenttest.GenerateStep{Response: textResponse("paid", gai.EndTurn, nil)},
+		)
+		a, err := agent.New(agent.Config{Generator: generator, Model: "model",
+			Tools: []agent.Tool{{Definition: gai.Tool{Name: "charge"}, Handler: agent.ToolHandlerFunc(func(_ context.Context, r agent.ToolRequest) (gai.Message, error) {
+				effectCalls++
+				receipt = gai.ToolResultMessage(r.Block.ID, gai.TextBlock("confirmed receipt"))
+				return receipt, nil
+			})}},
+			AfterTool: agent.AfterToolFunc(func(context.Context, agent.AfterToolRequest) (agent.AfterToolDecision, error) {
+				return agent.AfterToolDecision{}, marker
+			}),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		partial, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("pay")}})
+		if !errors.Is(err, marker) || runFailure(t, err).Phase != agent.RunPhaseAfterToolHook || effectCalls != 1 {
+			t.Fatalf("error=%v effects=%d", err, effectCalls)
+		}
+		if _, err := a.Run(context.Background(), agent.RunRequest{Dialog: partial.Dialog}); runFailure(t, err).Phase != agent.RunPhaseValidation {
+			t.Fatal(err)
+		}
+		// The application reconciles its external receipt and supplies the result.
+		completed, err := a.Run(context.Background(), agent.RunRequest{Dialog: append(partial.Dialog, receipt)})
+		if err != nil || effectCalls != 1 || textOf(completed.Dialog[len(completed.Dialog)-1]) != "paid" {
+			t.Fatalf("result=%#v error=%v effects=%d", completed, err, effectCalls)
+		}
+	})
+}
+
+func TestOptionalReplacements(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		configure func(*agent.Config)
+		phase     agent.RunPhase
+	}{
+		{"empty generation request", func(c *agent.Config) {
+			c.BeforeGeneration = agent.BeforeGenerationFunc(func(context.Context, agent.BeforeGenerationRequest) (agent.BeforeGenerationDecision, error) {
+				return agent.BeforeGenerationDecision{Request: &gai.GenerationRequest{}}, nil
+			})
+		}, agent.RunPhaseBeforeGenerationHook},
+		{"empty response", func(c *agent.Config) {
+			c.AfterGeneration = agent.AfterGenerationFunc(func(context.Context, agent.AfterGenerationRequest) (*gai.Response, error) {
+				return &gai.Response{}, nil
+			})
+		}, agent.RunPhaseAfterGenerationHook},
+		{"empty result", func(c *agent.Config) {
+			c.AfterTool = agent.AfterToolFunc(func(context.Context, agent.AfterToolRequest) (agent.AfterToolDecision, error) {
+				return agent.AfterToolDecision{Result: &gai.Message{}}, nil
+			})
+		}, agent.RunPhaseAfterToolHook},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			call := mustToolCallBlock(t, "call", "tool", map[string]any{})
+			generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{Response: toolResponse(call)})
+			config := agent.Config{Generator: generator, Model: "model", Tools: []agent.Tool{{Definition: gai.Tool{Name: "tool"}, Handler: agent.ToolHandlerFunc(func(context.Context, agent.ToolRequest) (gai.Message, error) {
+				return gai.ToolResultMessage("", gai.TextBlock("ok")), nil
+			})}}}
+			test.configure(&config)
+			a, err := agent.New(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
+			if runFailure(t, err).Phase != test.phase {
+				t.Fatalf("error=%v", err)
+			}
+		})
 	}
-	return failed
+	t.Run("nil result preserves handler output when stopping", func(t *testing.T) {
+		call := mustToolCallBlock(t, "call", "tool", map[string]any{})
+		generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{Response: toolResponse(call)})
+		a, err := agent.New(agent.Config{Generator: generator, Model: "model",
+			Tools: []agent.Tool{{Definition: gai.Tool{Name: "tool"}, Handler: agent.ToolHandlerFunc(func(context.Context, agent.ToolRequest) (gai.Message, error) {
+				return gai.ToolResultMessage("", gai.TextBlock("kept")), nil
+			})}},
+			BeforeGeneration: agent.BeforeGenerationFunc(func(context.Context, agent.BeforeGenerationRequest) (agent.BeforeGenerationDecision, error) {
+				return agent.BeforeGenerationDecision{}, nil
+			}),
+			AfterGeneration: agent.AfterGenerationFunc(func(context.Context, agent.AfterGenerationRequest) (*gai.Response, error) { return nil, nil }),
+			AfterTool: agent.AfterToolFunc(func(context.Context, agent.AfterToolRequest) (agent.AfterToolDecision, error) {
+				return agent.AfterToolDecision{StopAfterBatch: "review"}, nil
+			}),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
+		if err != nil || result.StopReason != "review" || len(result.Dialog) != 3 || textOf(result.Dialog[2]) != "kept" || result.Dialog[2].Blocks[0].ID != "call" {
+			t.Fatalf("result=%#v error=%v", result, err)
+		}
+	})
+	t.Run("stop ignores replacement request", func(t *testing.T) {
+		generator := agenttest.NewScriptedGenerator()
+		a, err := agent.New(agent.Config{Generator: generator, Model: "model", BeforeGeneration: agent.BeforeGenerationFunc(func(context.Context, agent.BeforeGenerationRequest) (agent.BeforeGenerationDecision, error) {
+			return agent.BeforeGenerationDecision{Request: &gai.GenerationRequest{}, StopReason: "budget"}, nil
+		})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
+		if err != nil || result.StopReason != "budget" || len(generator.Requests()) != 0 {
+			t.Fatalf("result=%#v error=%v", result, err)
+		}
+	})
+}
+
+func TestGeneration(t *testing.T) {
+	t.Run("generator error excludes returned response", func(t *testing.T) {
+		generationErr := errors.New("generation failed")
+		generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{
+			Response: textResponse("partial", gai.EndTurn, gai.Metadata{gai.UsageMetricInputTokens: 4}),
+			Err:      generationErr,
+		})
+
+		a, err := agent.New(agent.Config{
+			Generator: generator,
+			Model:     "test-model",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("hello")}})
+		if !errors.Is(err, generationErr) {
+			t.Fatalf("error = %v", err)
+		}
+		if len(result.Dialog) != 1 || len(result.Usage) != 0 {
+			t.Fatalf("result = %#v", result)
+		}
+		if phase := runFailure(t, err).Phase; phase != agent.RunPhaseGeneration {
+			t.Fatalf("phase = %q", phase)
+		}
+
+	})
+	for _, test := range []struct {
+		name               string
+		hookErr, streamErr error
+		phase              agent.RunPhase
+	}{
+		{"hook failure", errors.New("display failed"), nil, agent.RunPhaseGenerationChunkHook},
+		{"both failures", errors.New("display failed"), errors.New("provider failed"), agent.RunPhaseGenerationChunkHook},
+		{"cancellation", context.Canceled, nil, agent.RunPhaseCancellation},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			key := contextKey{}
+			ctx := context.WithValue(context.Background(), key, "request")
+			generator := agenttest.NewScriptedStreamingGenerator(agenttest.StreamStep{Chunks: []gai.StreamChunk{{Block: gai.TextBlock("partial"), Err: test.streamErr}, {Block: gai.TextBlock("never")}}})
+			calls, after := 0, 0
+			a, err := agent.New(agent.Config{Generator: generator, Model: "model",
+				GenerationChunk: agent.GenerationChunkFunc(func(actual context.Context, e agent.GenerationChunkEvent) error {
+					calls++
+					if actual != ctx || e.Generation != 0 || e.Chunk.Err != test.streamErr {
+						t.Fatal("wrong notification")
+					}
+					return test.hookErr
+				}),
+				AfterGeneration: agent.AfterGenerationFunc(func(context.Context, agent.AfterGenerationRequest) (*gai.Response, error) { after++; return nil, nil }),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := a.Run(ctx, agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}})
+			if !errors.Is(err, test.hookErr) || test.streamErr != nil && !errors.Is(err, test.streamErr) || runFailure(t, err).Phase != test.phase || calls != 1 || after != 0 || len(result.Dialog) != 1 {
+				t.Fatalf("error=%v calls=%d after=%d result=%#v", err, calls, after, result)
+			}
+		})
+	}
+	t.Run("nonstreaming generator has no chunk notifications", func(t *testing.T) {
+		generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{Response: textResponse("done", gai.EndTurn, nil)})
+		a, err := agent.New(agent.Config{Generator: generator, Model: "model", GenerationChunk: agent.GenerationChunkFunc(func(context.Context, agent.GenerationChunkEvent) error { t.Fatal("unexpected chunk"); return nil })})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{userMessage("go")}}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// cancelingContent cancels deterministically during tool-call decoding.
+type cancelingContent struct {
+	gai.Str
+	cancel context.CancelFunc
+}
+
+func (c cancelingContent) String() string {
+	c.cancel()
+	return c.Str.String()
 }

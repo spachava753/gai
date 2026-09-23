@@ -82,7 +82,7 @@ Key concepts
 - Provider adapters: thin wrappers that expose a unified interface over provider SDKs, generated clients, and HTTP APIs
 - Streaming: unified stream interface emitting chunks, with helpers for incremental assembly
 - Tools: typed function/tool-call support with validation and safe dispatch
-- Agent loop: package `agent` provides a reusable Agent with fixed borrowed configuration, one new user message per run, typed dialog/generation/tool hooks, borrowed ordered observer events, hook-controlled stopping, lasting dialog replacement, partial error results, and external persistence
+- Agent loop: package `agent` provides a reusable Agent with fixed borrowed configuration, a complete dialog per run, typed dialog/generation/tool hooks with nil-preserves-value replacements, a synchronous GenerationChunk notification hook for provisional streaming output, hook-controlled stopping, lasting dialog replacement, phased RunError failures with partial results, and consumer-owned persistence/reconciliation
 - Metrics and callbacks: hooks for observability, tracing, and policy checks
 
 Design principles
@@ -111,7 +111,7 @@ Provider-specific metadata placement
 - For streaming, assert on ordered chunk assembly and termination conditions
 - Include negative tests: timeouts, API errors, invalid tool payloads
 - Use sample media files for multimodal inputs to avoid external fetches
-- Use `agent/agenttest` scripted generators and recording observers for deterministic Agent tests
+- Use `agent/agenttest` scripted generators for deterministic Agent tests
 
 Naming and location
 - Unit tests live alongside implementation: `file_test.go`

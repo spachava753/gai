@@ -2,7 +2,9 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/spachava753/gai"
 	"github.com/spachava753/gai/agent"
@@ -31,12 +33,11 @@ func ExampleAgent_Run() {
 		panic(err)
 	}
 
-	result, err := chatAgent.Run(context.Background(), agent.RunRequest{
-		Input: gai.Message{
-			Role:   gai.User,
-			Blocks: []gai.Block{gai.TextBlock("Hello")},
-		},
-	}, nil)
+	result, err := chatAgent.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{{
+		Role:   gai.User,
+		Blocks: []gai.Block{gai.TextBlock("Hello")},
+	}},
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -63,18 +64,25 @@ func ExampleBeforeGenerationFunc() {
 	runner, err := agent.New(agent.Config{
 		Generator: generator,
 		Model:     "default-model",
+
 		BeforeGeneration: agent.BeforeGenerationFunc(func(_ context.Context, request agent.BeforeGenerationRequest) (agent.BeforeGenerationDecision, error) {
-			request.Request.Model = "model-for-this-call"
-			return agent.BeforeGenerationDecision{Request: request.Request}, nil
+			next := request.Request // Scalar changes affect only this struct copy.
+			next.Model = "model-for-this-call"
+			next.Options = maps.Clone(request.Request.Options) // Nested values still share references.
+			if next.Options == nil {
+				next.Options = make(gai.GenerationOptions)
+			}
+			for key, value := range gai.NewGenerationOptions(gai.WithTemperature(0.2)) {
+				next.Options[key] = value
+			}
+			return agent.BeforeGenerationDecision{Request: &next}, nil
 		}),
 	})
 	if err != nil {
 		panic(err)
 	}
 
-	_, err = runner.Run(context.Background(), agent.RunRequest{
-		Input: gai.Message{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("run")}},
-	}, nil)
+	_, err = runner.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("run")}}}})
 	if err != nil {
 		panic(err)
 	}
@@ -121,9 +129,7 @@ func ExampleToolHandlerFunc() {
 		panic(err)
 	}
 
-	result, err := weatherAgent.Run(context.Background(), agent.RunRequest{
-		Input: gai.Message{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("What is the weather?")}},
-	}, nil)
+	result, err := weatherAgent.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("What is the weather?")}}}})
 	if err != nil {
 		panic(err)
 	}
@@ -131,4 +137,49 @@ func ExampleToolHandlerFunc() {
 	fmt.Println(result.Dialog[len(result.Dialog)-1].Blocks[0].Content.String())
 	// Output:
 	// It is 18 C in Paris.
+}
+
+func ExampleAgent_Run_continue() {
+	call, err := gai.ToolCallBlock("payment-1", "pay", map[string]any{"invoice": "42"})
+	if err != nil {
+		panic(err)
+	}
+	dialog := gai.Dialog{
+		{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Pay invoice 42")}},
+		{Role: gai.Assistant, Blocks: []gai.Block{call}},
+	}
+	generator := agenttest.NewScriptedStreamingGenerator(agenttest.StreamStep{
+		Chunks: []gai.StreamChunk{{Block: gai.TextBlock("Payment confirmed.")}},
+	})
+	runner, err := agent.New(agent.Config{
+		Generator: generator,
+		Model:     "provider-model",
+		GenerationChunk: agent.GenerationChunkFunc(func(_ context.Context, event agent.GenerationChunkEvent) error {
+			if event.Chunk.Block.Content != nil {
+				fmt.Println(event.Chunk.Block.Content.String())
+			}
+			return nil
+		}),
+	})
+	if err != nil {
+		panic(err)
+	}
+	_, err = runner.Run(context.Background(), agent.RunRequest{Dialog: dialog})
+	var failure *agent.RunError
+	if errors.As(err, &failure) {
+		fmt.Println("unfinished dialog:", failure.Phase)
+	}
+
+	// Application reconciliation has confirmed the payment with its service.
+	// Supplying that receipt permits generation without executing pay again.
+	dialog = append(dialog, gai.ToolResultMessage("payment-1", gai.TextBlock("receipt-42")))
+	result, err := runner.Run(context.Background(), agent.RunRequest{Dialog: dialog})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("messages:", len(result.Dialog))
+	// Output:
+	// unfinished dialog: validation
+	// Payment confirmed.
+	// messages: 4
 }

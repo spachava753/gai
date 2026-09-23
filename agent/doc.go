@@ -1,17 +1,23 @@
 // Package agent runs reusable tool-using model loops on top of GAI.
 //
-// Construct an [Agent] with [New], then call [Agent.Run] with a prior dialog and
-// one new User message. The Agent prepares the active dialog, builds generation
-// requests, prefers streaming when available, executes its fixed
-// tools, appends results, and continues until the model or a hook stops.
+// Construct an [Agent] with [New], then call [Agent.Run] with a complete dialog
+// ready for another model call. Append user messages in application code. Every
+// historical tool call must have a result; the loop never repeats historical
+// tools or reconstructs interrupted callbacks. Persistence and reconciliation
+// belong to the application.
 //
 // [PrepareDialogHook], [BeforeGenerationHook], [AfterGenerationHook],
-// [BeforeToolHook], and [AfterToolHook] are ordered decision points. Hook input
-// values are borrowed and read-only. Values returned for use by the loop belong
-// to the loop after the hook returns. [Observer] receives synchronous, borrowed
-// events that are valid only during [Observer.Observe]. Run failures return the
-// dialog and standard usage collected before the failing operation.
+// [BeforeToolHook], and [AfterToolHook] return explicit decisions. A nil
+// replacement keeps the existing value. [GenerationChunkHook] receives borrowed,
+// provisional streaming output and returns only an error. All hooks have
+// function adapters and receive the Run context. Cancellation is checked before
+// each hook invocation; callbacks must handle cancellation during their work.
 //
-// Package agenttest provides scripted generators and a recording observer for
-// deterministic tests. See design.md for the complete behavior and rationale.
+// Inputs are borrowed and read-only. Struct copies share referenced maps,
+// slices, and pointers; callers copy only the parts they need to change.
+// Replacement data belongs to the loop after a hook returns. Failures return
+// accepted dialog and usage alongside a [RunError] identifying the failing phase.
+//
+// Package agenttest provides scripted generators for deterministic tests.
+// See design.md for ordering, ownership, and continuation contracts.
 package agent

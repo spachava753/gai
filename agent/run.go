@@ -11,24 +11,15 @@ import (
 
 const defaultToolRejectionReason = "tool call rejected"
 
-type phaseError struct {
-	phase RunPhase
-	err   error
-}
-
-func (e *phaseError) Error() string { return e.err.Error() }
-
-type observerDeliveryError struct {
+type chunkHookError struct {
 	err error
 }
 
-func (e *observerDeliveryError) Error() string { return e.err.Error() }
+func (e *chunkHookError) Error() string { return e.err.Error() }
 
 type runState struct {
 	agent           *Agent
 	ctx             context.Context
-	observer        Observer
-	sequence        uint64
 	instructions    gai.Message
 	toolDefinitions []gai.Tool
 	dialog          gai.Dialog
@@ -38,63 +29,40 @@ type runState struct {
 }
 
 // Run executes model and tool rounds until the model or a hook stops, the
-// context is canceled, or an operation fails.
-func (a *Agent) Run(ctx context.Context, request RunRequest, observer Observer) (RunResult, error) {
-	// Run validates all caller input before sending RunStartedEvent.
+// context is canceled, or an operation fails. It continues generation from the
+// supplied dialog without repeating historical tool calls or restoring prior
+// hook state. Failures return a *RunError; invalid inputs return a zero result.
+func (a *Agent) Run(ctx context.Context, request RunRequest) (RunResult, error) {
 	if a == nil {
-		return RunResult{}, errors.New("agent is nil")
+		return RunResult{}, &RunError{Phase: RunPhaseValidation, Err: errors.New("agent is nil")}
 	}
 	if ctx == nil {
-		return RunResult{}, errors.New("context is nil")
+		return RunResult{}, &RunError{Phase: RunPhaseValidation, Err: errors.New("context is nil")}
 	}
-	if request.Input.Role != gai.User {
-		return RunResult{}, gai.InvalidParameterErr{
-			Parameter: "input",
-			Reason:    fmt.Sprintf("must use the user role, got %s", request.Input.Role),
-		}
-	}
-	if err := validateMessage(request.Input); err != nil {
-		return RunResult{}, gai.InvalidParameterErr{Parameter: "input", Reason: err.Error()}
-	}
-	if err := validateDialog(request.Dialog); err != nil {
-		return RunResult{}, gai.InvalidParameterErr{Parameter: "dialog", Reason: err.Error()}
+	seen, err := validateReadyDialog(request.Dialog)
+	if err != nil {
+		return RunResult{}, &RunError{Phase: RunPhaseValidation, Err: gai.InvalidParameterErr{Parameter: "dialog", Reason: err.Error()}}
 	}
 	if err := validateOptions(request.Options); err != nil {
-		return RunResult{}, err
-	}
-
-	activeDialog := append(request.Dialog, request.Input)
-	if isNilInterface(observer) {
-		observer = nil
+		return RunResult{}, &RunError{Phase: RunPhaseValidation, Err: err}
 	}
 
 	state := &runState{
 		agent:           a,
 		ctx:             ctx,
-		observer:        observer,
 		instructions:    a.instructions,
 		toolDefinitions: a.toolDefinitions,
-		dialog:          activeDialog,
-		seenCallIDs:     make(map[string]struct{}),
-	}
-	if err := state.emit(RunStartedEvent{
-		Model:        a.model,
-		Instructions: state.instructions,
-		Dialog:       request.Dialog,
-		Input:        request.Input,
-		Tools:        state.toolDefinitions,
-		Options:      request.Options,
-	}); err != nil {
-		return state.fail(RunPhaseObserver, err)
+		dialog:          request.Dialog,
+		seenCallIDs:     seen,
 	}
 
 	for {
-		if err := state.contextError(); err != nil {
-			return state.fail(RunPhaseCancellation, err)
+		if err := ctx.Err(); err != nil {
+			return state.result(), &RunError{Phase: RunPhaseCancellation, Err: err}
 		}
-		generation := state.status.GenerationCalls
+		generation := state.status.AcceptedGenerations
 		if err := state.prepareDialogForGeneration(generation, request.Options); err != nil {
-			return state.failFrom(err)
+			return state.result(), err
 		}
 
 		baseRequest := gai.GenerationRequest{
@@ -106,25 +74,22 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, observer Observer) 
 		}
 		generationRequest, stopReason, err := state.beforeGenerationRequest(generation, baseRequest)
 		if err != nil {
-			return state.failFrom(err)
+			return state.result(), err
 		}
 		if stopReason != "" {
 			return state.complete(stopReason, gai.Unknown)
 		}
 
-		if err := state.emit(GenerationStartedEvent{Generation: generation, Request: generationRequest}); err != nil {
-			return state.fail(RunPhaseObserver, err)
-		}
 		response, err := state.generate(generation, generationRequest)
 		if err != nil {
-			return state.failFrom(err)
+			return state.result(), err
 		}
 		response, err = state.afterGenerationResponse(generation, generationRequest, response)
 		if err != nil {
-			return state.failFrom(err)
+			return state.result(), err
 		}
-		if err := state.acceptGeneration(generation, response); err != nil {
-			return state.failFrom(err)
+		if err := state.acceptGeneration(response); err != nil {
+			return state.result(), err
 		}
 
 		if response.FinishReason != gai.ToolUse {
@@ -132,7 +97,7 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, observer Observer) 
 		}
 		stopReason, err = state.handleToolBatch(generation, response.Candidates[0])
 		if err != nil {
-			return state.failFrom(err)
+			return state.result(), err
 		}
 		if stopReason != "" {
 			return state.complete(stopReason, gai.Unknown)
@@ -145,8 +110,8 @@ func (s *runState) prepareDialogForGeneration(generation uint, options gai.Gener
 	if s.agent.prepareDialog == nil {
 		return nil
 	}
-	if err := s.contextError(); err != nil {
-		return &phaseError{phase: RunPhaseCancellation, err: err}
+	if err := s.ctx.Err(); err != nil {
+		return &RunError{Phase: RunPhaseCancellation, Err: err}
 	}
 	decision, err := s.agent.prepareDialog.PrepareDialog(s.ctx, PrepareDialogRequest{
 		Generation: generation,
@@ -160,36 +125,31 @@ func (s *runState) prepareDialogForGeneration(generation uint, options gai.Gener
 		Status: s.status,
 	})
 	if err != nil {
-		return &phaseError{phase: phaseForContext(s.ctx, RunPhasePrepareDialogHook, err), err: err}
+		return &RunError{Phase: phaseForContext(s.ctx, RunPhasePrepareDialogHook, err), Err: err}
 	}
 	if decision.Dialog == nil {
 		if len(decision.Usage) != 0 {
-			return &phaseError{phase: RunPhasePrepareDialogHook, err: errors.New("PrepareDialog usage requires a dialog replacement")}
+			return &RunError{Phase: RunPhasePrepareDialogHook, Err: errors.New("PrepareDialog usage requires a dialog replacement")}
 		}
 		return nil
 	}
 	if len(decision.Dialog) == 0 {
-		return &phaseError{phase: RunPhasePrepareDialogHook, err: fmt.Errorf("invalid PrepareDialog replacement: %w", gai.ErrEmptyDialog)}
+		return &RunError{Phase: RunPhasePrepareDialogHook, Err: fmt.Errorf("invalid PrepareDialog replacement: %w", gai.ErrEmptyDialog)}
 	}
-	if err := validateDialog(decision.Dialog); err != nil {
-		return &phaseError{phase: RunPhasePrepareDialogHook, err: fmt.Errorf("invalid PrepareDialog replacement: %w", err)}
+	replacementIDs, err := validateReadyDialog(decision.Dialog)
+	if err != nil {
+		return &RunError{Phase: RunPhasePrepareDialogHook, Err: fmt.Errorf("invalid PrepareDialog replacement: %w", err)}
 	}
 	usage, err := addStandardUsage(s.usage, decision.Usage)
 	if err != nil {
-		return &phaseError{phase: RunPhasePrepareDialogHook, err: fmt.Errorf("invalid PrepareDialog usage: %w", err)}
+		return &RunError{Phase: RunPhasePrepareDialogHook, Err: fmt.Errorf("invalid PrepareDialog usage: %w", err)}
 	}
-	before := s.dialog
+	for id := range replacementIDs {
+		s.seenCallIDs[id] = struct{}{}
+	}
 	s.dialog = decision.Dialog
 	s.usage = usage
 	s.status.Usage = usage
-	if err := s.emit(DialogReplacedEvent{
-		Generation: generation,
-		Before:     before,
-		After:      s.dialog,
-		Usage:      decision.Usage,
-	}); err != nil {
-		return &phaseError{phase: RunPhaseObserver, err: err}
-	}
 	return nil
 }
 
@@ -198,8 +158,8 @@ func (s *runState) beforeGenerationRequest(generation uint, base gai.GenerationR
 	if s.agent.beforeGeneration == nil {
 		return base, "", nil
 	}
-	if err := s.contextError(); err != nil {
-		return gai.GenerationRequest{}, "", &phaseError{phase: RunPhaseCancellation, err: err}
+	if err := s.ctx.Err(); err != nil {
+		return gai.GenerationRequest{}, "", &RunError{Phase: RunPhaseCancellation, Err: err}
 	}
 	decision, err := s.agent.beforeGeneration.BeforeGeneration(s.ctx, BeforeGenerationRequest{
 		Generation: generation,
@@ -207,29 +167,32 @@ func (s *runState) beforeGenerationRequest(generation uint, base gai.GenerationR
 		Status:     s.status,
 	})
 	if err != nil {
-		return gai.GenerationRequest{}, "", &phaseError{phase: phaseForContext(s.ctx, RunPhaseBeforeGenerationHook, err), err: err}
+		return gai.GenerationRequest{}, "", &RunError{Phase: phaseForContext(s.ctx, RunPhaseBeforeGenerationHook, err), Err: err}
 	}
 	if decision.StopReason != "" {
 		if err := validateStopReason(decision.StopReason); err != nil {
-			return gai.GenerationRequest{}, "", &phaseError{phase: RunPhaseBeforeGenerationHook, err: err}
+			return gai.GenerationRequest{}, "", &RunError{Phase: RunPhaseBeforeGenerationHook, Err: err}
 		}
 		return gai.GenerationRequest{}, decision.StopReason, nil
 	}
-	if err := validateGenerationRequest(decision.Request, s.agent.toolDefinitions); err != nil {
-		return gai.GenerationRequest{}, "", &phaseError{phase: RunPhaseBeforeGenerationHook, err: fmt.Errorf("invalid BeforeGeneration request: %w", err)}
+	if decision.Request == nil {
+		return base, "", nil
 	}
-	return decision.Request, "", nil
+	if err := validateGenerationRequest(*decision.Request, s.agent.toolDefinitions); err != nil {
+		return gai.GenerationRequest{}, "", &RunError{Phase: RunPhaseBeforeGenerationHook, Err: fmt.Errorf("invalid BeforeGeneration request: %w", err)}
+	}
+	return *decision.Request, "", nil
 }
 
 func (s *runState) generate(generation uint, request gai.GenerationRequest) (gai.Response, error) {
 	// generate prefers streaming and forwards every raw chunk before assembly.
-	if err := s.contextError(); err != nil {
-		return gai.Response{}, &phaseError{phase: RunPhaseCancellation, err: err}
+	if err := s.ctx.Err(); err != nil {
+		return gai.Response{}, &RunError{Phase: RunPhaseCancellation, Err: err}
 	}
 	var response gai.Response
 	var err error
 	if s.agent.streaming != nil {
-		adapter := gai.StreamingAdapter{S: observedStreamingGenerator{
+		adapter := gai.StreamingAdapter{S: hookedStreamingGenerator{
 			source:     s.agent.streaming,
 			state:      s,
 			generation: generation,
@@ -239,11 +202,11 @@ func (s *runState) generate(generation uint, request gai.GenerationRequest) (gai
 		response, err = s.agent.generator.Generate(s.ctx, request)
 	}
 	if err != nil {
-		var observerErr *observerDeliveryError
-		if errors.As(err, &observerErr) {
-			return gai.Response{}, &phaseError{phase: RunPhaseObserver, err: observerErr.err}
+		var eventErr *chunkHookError
+		if errors.As(err, &eventErr) {
+			return gai.Response{}, &RunError{Phase: phaseForContext(s.ctx, RunPhaseGenerationChunkHook, eventErr.err), Err: eventErr.err}
 		}
-		return gai.Response{}, &phaseError{phase: phaseForContext(s.ctx, RunPhaseGeneration, err), err: err}
+		return gai.Response{}, &RunError{Phase: phaseForContext(s.ctx, RunPhaseGeneration, err), Err: err}
 	}
 	return response, nil
 }
@@ -251,13 +214,13 @@ func (s *runState) generate(generation uint, request gai.GenerationRequest) (gai
 func (s *runState) afterGenerationResponse(generation uint, request gai.GenerationRequest, response gai.Response) (gai.Response, error) {
 	// afterGenerationResponse validates provider and hook responses before acceptance.
 	if err := validateResponse(response, s.seenCallIDs); err != nil {
-		return gai.Response{}, &phaseError{phase: RunPhaseValidation, err: fmt.Errorf("invalid generator response: %w", err)}
+		return gai.Response{}, &RunError{Phase: RunPhaseValidation, Err: fmt.Errorf("invalid generator response: %w", err)}
 	}
 	if s.agent.afterGeneration == nil {
 		return response, nil
 	}
-	if err := s.contextError(); err != nil {
-		return gai.Response{}, &phaseError{phase: RunPhaseCancellation, err: err}
+	if err := s.ctx.Err(); err != nil {
+		return gai.Response{}, &RunError{Phase: RunPhaseCancellation, Err: err}
 	}
 	changed, err := s.agent.afterGeneration.AfterGeneration(s.ctx, AfterGenerationRequest{
 		Generation: generation,
@@ -266,31 +229,31 @@ func (s *runState) afterGenerationResponse(generation uint, request gai.Generati
 		Status:     s.status,
 	})
 	if err != nil {
-		return gai.Response{}, &phaseError{phase: phaseForContext(s.ctx, RunPhaseAfterGenerationHook, err), err: err}
+		return gai.Response{}, &RunError{Phase: phaseForContext(s.ctx, RunPhaseAfterGenerationHook, err), Err: err}
 	}
-	if err := validateAfterGenerationResponse(response, changed, s.seenCallIDs); err != nil {
-		return gai.Response{}, &phaseError{phase: RunPhaseAfterGenerationHook, err: fmt.Errorf("invalid AfterGeneration response: %w", err)}
+	if changed == nil {
+		return response, nil
 	}
-	return changed, nil
+	if err := validateAfterGenerationResponse(response, *changed, s.seenCallIDs); err != nil {
+		return gai.Response{}, &RunError{Phase: RunPhaseAfterGenerationHook, Err: fmt.Errorf("invalid AfterGeneration response: %w", err)}
+	}
+	return *changed, nil
 }
 
-func (s *runState) acceptGeneration(generation uint, response gai.Response) error {
-	// acceptGeneration updates dialog and usage before the completed event.
+func (s *runState) acceptGeneration(response gai.Response) error {
+	// acceptGeneration adopts a validated response and its usage.
 	usage, err := addStandardUsage(s.usage, response.UsageMetadata)
 	if err != nil {
-		return &phaseError{phase: RunPhaseValidation, err: fmt.Errorf("add response usage: %w", err)}
+		return &RunError{Phase: RunPhaseValidation, Err: fmt.Errorf("add response usage: %w", err)}
 	}
 	s.dialog = append(s.dialog, response.Candidates[0])
 	s.usage = usage
-	s.status.GenerationCalls++
+	s.status.AcceptedGenerations++
 	s.status.Usage = usage
 	for _, block := range response.Candidates[0].Blocks {
 		if block.BlockType == gai.ToolCall {
 			s.seenCallIDs[block.ID] = struct{}{}
 		}
-	}
-	if err := s.emit(GenerationCompletedEvent{Generation: generation, Response: response}); err != nil {
-		return &phaseError{phase: RunPhaseObserver, err: err}
 	}
 	return nil
 }
@@ -303,37 +266,40 @@ func (s *runState) handleToolBatch(generation uint, message gai.Message) (StopRe
 		if rawBlock.BlockType != gai.ToolCall {
 			continue
 		}
-		if err := s.contextError(); err != nil {
-			return "", &phaseError{phase: RunPhaseCancellation, err: err}
+		if err := s.ctx.Err(); err != nil {
+			return "", &RunError{Phase: RunPhaseCancellation, Err: err}
 		}
 
 		block := rawBlock
 		call, tool, reason := s.classifyToolCall(block)
 		willExecute := reason == ""
 		if willExecute && s.agent.beforeTool != nil {
+			if err := s.ctx.Err(); err != nil {
+				return "", &RunError{Phase: RunPhaseCancellation, Err: err}
+			}
 			decision, err := s.agent.beforeTool.BeforeTool(s.ctx, BeforeToolRequest{
 				Generation: generation,
 				ToolIndex:  toolIndex,
 				Block:      block,
 				Call:       *call,
-				Definition: s.toolDefinition(tool),
+				Definition: tool.definition,
 				Status:     s.status,
 			})
 			if err != nil {
-				return "", &phaseError{phase: phaseForContext(s.ctx, RunPhaseBeforeToolHook, err), err: err}
+				return "", &RunError{Phase: phaseForContext(s.ctx, RunPhaseBeforeToolHook, err), Err: err}
 			}
 			if decision.Reject && decision.Parameters != nil {
-				return "", &phaseError{phase: RunPhaseBeforeToolHook, err: errors.New("BeforeTool cannot reject and replace parameters together")}
+				return "", &RunError{Phase: RunPhaseBeforeToolHook, Err: errors.New("BeforeTool cannot reject and replace parameters together")}
 			}
 			if err := validateStopReason(decision.StopAfterBatch); err != nil {
-				return "", &phaseError{phase: RunPhaseBeforeToolHook, err: err}
+				return "", &RunError{Phase: RunPhaseBeforeToolHook, Err: err}
 			}
 			if batchStop == "" {
 				batchStop = decision.StopAfterBatch
 			}
 			if decision.Parameters != nil {
 				if err := validateToolArguments(*tool, decision.Parameters); err != nil {
-					return "", &phaseError{phase: RunPhaseBeforeToolHook, err: fmt.Errorf("invalid BeforeTool parameters: %w", err)}
+					return "", &RunError{Phase: RunPhaseBeforeToolHook, Err: fmt.Errorf("invalid BeforeTool parameters: %w", err)}
 				}
 				call.Parameters = decision.Parameters
 			}
@@ -344,19 +310,6 @@ func (s *runState) handleToolBatch(generation uint, message gai.Message) (StopRe
 					reason = defaultToolRejectionReason
 				}
 			}
-		}
-
-		started := ToolStartedEvent{
-			Generation:  generation,
-			ToolIndex:   toolIndex,
-			Block:       block,
-			Call:        call,
-			Definition:  s.toolDefinitionPointer(tool),
-			WillExecute: willExecute,
-			Reason:      reason,
-		}
-		if err := s.emit(started); err != nil {
-			return "", &phaseError{phase: RunPhaseObserver, err: err}
 		}
 
 		result, executed, stopReason, err := s.executeOrBuildToolResult(generation, toolIndex, block, call, tool, willExecute, reason)
@@ -371,18 +324,7 @@ func (s *runState) handleToolBatch(generation uint, message gai.Message) (StopRe
 		}
 		s.dialog = append(s.dialog, result)
 		if executed {
-			s.status.ToolExecutions++
-		}
-		if err := s.emit(ToolCompletedEvent{
-			Generation: generation,
-			ToolIndex:  toolIndex,
-			Block:      block,
-			Call:       call,
-			Definition: s.toolDefinitionPointer(tool),
-			Result:     result,
-			Executed:   executed,
-		}); err != nil {
-			return "", &phaseError{phase: RunPhaseObserver, err: err}
+			s.status.AcceptedToolResults++
 		}
 		toolIndex++
 	}
@@ -405,6 +347,9 @@ func (s *runState) classifyToolCall(block gai.Block) (*gai.ToolCallInput, *execu
 	return &call, tool, ""
 }
 
+// executeOrBuildToolResult synthesizes recoverable failures or executes a handler
+// and its optional after-hook. It checks cancellation at each invocation boundary
+// and validates outputs before returning a result for acceptance.
 func (s *runState) executeOrBuildToolResult(
 	generation uint,
 	toolIndex uint,
@@ -414,96 +359,59 @@ func (s *runState) executeOrBuildToolResult(
 	willExecute bool,
 	reason string,
 ) (gai.Message, bool, StopReason, error) {
-	// executeOrBuildToolResult separates handler failures from model-visible errors.
 	if !willExecute {
 		result := gai.ToolResultMessage(block.ID, gai.TextBlock(reason))
 		result.ToolResultError = true
 		return result, false, "", nil
+	}
+	if err := s.ctx.Err(); err != nil {
+		return gai.Message{}, false, "", &RunError{Phase: RunPhaseCancellation, Err: err}
 	}
 	result, err := tool.handler.Execute(s.ctx, ToolRequest{
 		Block: block,
 		Call:  *call,
 	})
 	if err != nil {
-		return gai.Message{}, false, "", &phaseError{phase: phaseForContext(s.ctx, RunPhaseTool, err), err: err}
+		return gai.Message{}, false, "", &RunError{Phase: phaseForContext(s.ctx, RunPhaseTool, err), Err: err}
 	}
 	if err := validateToolResult(result); err != nil {
-		return gai.Message{}, false, "", &phaseError{phase: RunPhaseTool, err: fmt.Errorf("invalid handler result: %w", err)}
+		return gai.Message{}, false, "", &RunError{Phase: RunPhaseTool, Err: fmt.Errorf("invalid handler result: %w", err)}
 	}
 	if s.agent.afterTool == nil {
 		return result, true, "", nil
+	}
+	if err := s.ctx.Err(); err != nil {
+		return gai.Message{}, false, "", &RunError{Phase: RunPhaseCancellation, Err: err}
 	}
 	decision, err := s.agent.afterTool.AfterTool(s.ctx, AfterToolRequest{
 		Generation: generation,
 		ToolIndex:  toolIndex,
 		Block:      block,
 		Call:       *call,
-		Definition: s.toolDefinition(tool),
+		Definition: tool.definition,
 		Result:     result,
 		Status:     s.status,
 	})
 	if err != nil {
-		return gai.Message{}, false, "", &phaseError{phase: phaseForContext(s.ctx, RunPhaseAfterToolHook, err), err: err}
+		return gai.Message{}, false, "", &RunError{Phase: phaseForContext(s.ctx, RunPhaseAfterToolHook, err), Err: err}
 	}
 	if err := validateStopReason(decision.StopAfterBatch); err != nil {
-		return gai.Message{}, false, "", &phaseError{phase: RunPhaseAfterToolHook, err: err}
+		return gai.Message{}, false, "", &RunError{Phase: RunPhaseAfterToolHook, Err: err}
 	}
-	if err := validateToolResult(decision.Result); err != nil {
-		return gai.Message{}, false, "", &phaseError{phase: RunPhaseAfterToolHook, err: fmt.Errorf("invalid AfterTool result: %w", err)}
+	if decision.Result == nil {
+		return result, true, decision.StopAfterBatch, nil
 	}
-	return decision.Result, true, decision.StopAfterBatch, nil
-}
-
-func (s *runState) toolDefinition(tool *executableTool) gai.Tool {
-	return s.toolDefinitions[s.agent.toolIndexes[tool.definition.Name]]
-}
-
-func (s *runState) toolDefinitionPointer(tool *executableTool) *gai.Tool {
-	if tool == nil {
-		return nil
+	if err := validateToolResult(*decision.Result); err != nil {
+		return gai.Message{}, false, "", &RunError{Phase: RunPhaseAfterToolHook, Err: fmt.Errorf("invalid AfterTool result: %w", err)}
 	}
-	return &s.toolDefinitions[s.agent.toolIndexes[tool.definition.Name]]
-}
-
-func (s *runState) emit(payload EventPayload) error {
-	if s.observer == nil {
-		return nil
-	}
-	event := Event{
-		Sequence: s.sequence,
-		Payload:  payload,
-	}
-	s.sequence++
-	return s.observer.Observe(s.ctx, event)
+	return *decision.Result, true, decision.StopAfterBatch, nil
 }
 
 func (s *runState) complete(reason StopReason, finishReason gai.FinishReason) (RunResult, error) {
 	result := s.result()
 	result.StopReason = reason
 	result.ModelFinishReason = finishReason
-	if err := s.emit(RunCompletedEvent{Result: result}); err != nil {
-		return s.failResult(result, RunPhaseObserver, err)
-	}
 	return result, nil
-}
-
-func (s *runState) failFrom(err error) (RunResult, error) {
-	var failed *phaseError
-	if errors.As(err, &failed) {
-		return s.fail(failed.phase, failed.err)
-	}
-	return s.fail(RunPhaseInternal, err)
-}
-
-func (s *runState) fail(phase RunPhase, err error) (RunResult, error) {
-	return s.failResult(s.result(), phase, err)
-}
-
-func (s *runState) failResult(result RunResult, phase RunPhase, err error) (RunResult, error) {
-	if eventErr := s.emit(RunFailedEvent{Result: result, Phase: phase, Err: err}); eventErr != nil {
-		err = errors.Join(err, fmt.Errorf("report run failure: %w", eventErr))
-	}
-	return result, err
 }
 
 func (s *runState) result() RunResult {
@@ -512,10 +420,6 @@ func (s *runState) result() RunResult {
 		ModelFinishReason: gai.Unknown,
 		Usage:             s.usage,
 	}
-}
-
-func (s *runState) contextError() error {
-	return s.ctx.Err()
 }
 
 func phaseForContext(ctx context.Context, fallback RunPhase, err error) RunPhase {
@@ -528,21 +432,27 @@ func phaseForContext(ctx context.Context, fallback RunPhase, err error) RunPhase
 	return fallback
 }
 
-type observedStreamingGenerator struct {
+type hookedStreamingGenerator struct {
 	source     gai.StreamingGenerator
 	state      *runState
 	generation uint
 }
 
-func (g observedStreamingGenerator) Stream(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
+func (g hookedStreamingGenerator) Stream(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
 	return func(yield func(gai.StreamChunk) bool) {
 		for chunk := range g.source.Stream(ctx, request) {
-			if err := g.state.emit(GenerationChunkEvent{Generation: g.generation, Chunk: chunk}); err != nil {
-				if chunk.Err != nil {
-					err = errors.Join(chunk.Err, err)
+			if hook := g.state.agent.generationChunk; hook != nil {
+				if err := ctx.Err(); err != nil {
+					yield(gai.StreamChunk{Err: errors.Join(err, chunk.Err)})
+					return
 				}
-				yield(gai.StreamChunk{Err: &observerDeliveryError{err: err}})
-				return
+				if err := hook.GenerationChunk(ctx, GenerationChunkEvent{Generation: g.generation, Chunk: chunk}); err != nil {
+					if chunk.Err != nil {
+						err = errors.Join(chunk.Err, err)
+					}
+					yield(gai.StreamChunk{Err: &chunkHookError{err: err}})
+					return
+				}
 			}
 			if !yield(chunk) {
 				return

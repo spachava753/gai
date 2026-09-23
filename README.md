@@ -227,7 +227,7 @@ When a response finishes with `ToolUse`, inspect its `ToolCall` blocks, execute 
 
 ## Agents
 
-Package [`agent`](https://pkg.go.dev/github.com/spachava753/gai/agent) runs a complete model and tool loop over any `gai.Generator`. An Agent has fixed instructions and executable tools, while each run supplies a prior dialog, one new user message, and generation options.
+Package [`agent`](https://pkg.go.dev/github.com/spachava753/gai/agent) runs a complete model and tool loop over any `gai.Generator`. An Agent has fixed instructions and executable tools, while each run supplies a complete dialog and generation options.
 
 ```go
 runner, err := agent.New(agent.Config{
@@ -239,15 +239,19 @@ if err != nil {
 	return err
 }
 
-result, err := runner.Run(ctx, agent.RunRequest{
-	Dialog: previousDialog,
-	Input:  gai.Message{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Continue")}},
-}, observer)
+dialog := append(previousDialog, gai.Message{
+    Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Continue")},
+})
+result, err := runner.Run(ctx, agent.RunRequest{Dialog: dialog})
 ```
 
-The loop prefers streaming when the generator supports it, validates model responses, executes tool calls one at a time, and returns the active dialog plus standard usage. `PrepareDialog`, generation, and tool hooks can make explicit changes or request a normal stop. Configuration and call inputs are borrowed read-only values. Hook and handler outputs belong to the loop after return. Observers receive ordered borrowed events, valid only during `Observe`, and can stop the run by returning an error.
+The loop prefers streaming when available, validates responses, executes tools sequentially, and returns the active dialog plus standard usage. `PrepareDialog`, generation, and tool hooks can replace data or request a normal stop. Nil replacements preserve existing values. The optional `GenerationChunk` hook receives provisional stream chunks; all hooks use interfaces with function adapters.
 
-Use [`agent/agenttest`](https://pkg.go.dev/github.com/spachava753/gai/agent/agenttest) for scripted generators and recording observers. See [`agent/design.md`](agent/design.md) for exact ordering, error, ownership, and persistence behavior.
+Configuration and call inputs are borrowed read-only values. Struct copies share maps, slices, and pointers; callers copy the parts they want to change. Hook and handler outputs belong to the loop after return. Failures return accepted state and an `*agent.RunError` with a phase and an unwrap-able cause.
+
+`Run` accepts a complete dialog without requiring a new user message. Historical tool calls must already have results; unresolved calls are rejected before execution. Applications own persistence and reconciliation, then call `Run` with the reconciled dialog to continue generation. The loop never repeats historical tools or restores interrupted hook state.
+
+Use [`agent/agenttest`](https://pkg.go.dev/github.com/spachava753/gai/agent/agenttest) for scripted generators. See [`agent/design.md`](agent/design.md) for exact ordering, errors, ownership, and continuation behavior.
 
 ## Composition
 

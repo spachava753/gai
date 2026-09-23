@@ -8,10 +8,11 @@ import (
 
 // RunStatus reports work that has already entered the active dialog.
 type RunStatus struct {
-	// GenerationCalls is the number of accepted model responses.
-	GenerationCalls uint
-	// ToolExecutions is the number of handler results added to the dialog.
-	ToolExecutions uint
+	// AcceptedGenerations is the number of accepted model responses.
+	AcceptedGenerations uint
+	// AcceptedToolResults counts handler results added to the dialog, excluding
+	// synthetic errors for unknown, invalid, or rejected calls.
+	AcceptedToolResults uint
 	// Usage contains the standard usage accumulated so far.
 	Usage gai.Metadata
 }
@@ -82,25 +83,26 @@ type BeforeGenerationRequest struct {
 
 // BeforeGenerationDecision supplies one request or asks the loop to stop.
 type BeforeGenerationDecision struct {
-	// Request is sent once when StopReason is empty.
-	Request gai.GenerationRequest
+	// Request replaces the base request when non-nil. Nil keeps the base request.
+	// It is ignored when StopReason is nonempty.
+	Request *gai.GenerationRequest
 	// StopReason asks the loop to return normally without another provider call.
 	StopReason StopReason
 }
 
 // AfterGenerationHook may change a complete response before it enters the
 // active dialog. Request fields are borrowed read-only values. The returned
-// response belongs to the loop and must preserve finish reason and usage.
+// replacement belongs to the loop and must preserve finish reason and usage.
 type AfterGenerationHook interface {
-	// AfterGeneration returns the response that the loop should accept.
-	AfterGeneration(context.Context, AfterGenerationRequest) (gai.Response, error)
+	// AfterGeneration returns a replacement, or nil to keep the original response.
+	AfterGeneration(context.Context, AfterGenerationRequest) (*gai.Response, error)
 }
 
 // AfterGenerationFunc adapts a function to AfterGenerationHook.
-type AfterGenerationFunc func(context.Context, AfterGenerationRequest) (gai.Response, error)
+type AfterGenerationFunc func(context.Context, AfterGenerationRequest) (*gai.Response, error)
 
 // AfterGeneration calls f.
-func (f AfterGenerationFunc) AfterGeneration(ctx context.Context, request AfterGenerationRequest) (gai.Response, error) {
+func (f AfterGenerationFunc) AfterGeneration(ctx context.Context, request AfterGenerationRequest) (*gai.Response, error) {
 	return f(ctx, request)
 }
 
@@ -199,8 +201,33 @@ type AfterToolRequest struct {
 
 // AfterToolDecision supplies the final tool result and an optional batch stop.
 type AfterToolDecision struct {
-	// Result is added to the active dialog after validation.
-	Result gai.Message
+	// Result replaces the handler result when non-nil. Nil keeps that result.
+	Result *gai.Message
 	// StopAfterBatch asks the loop to stop after every call has a result.
 	StopAfterBatch StopReason
+}
+
+// GenerationChunkHook receives provisional streaming output synchronously.
+// Event data is borrowed and read-only, valid only during the callback. Copy or
+// serialize anything retained. Returning an error stops streaming and the run;
+// incomplete output never enters the active dialog. Calls are serial within a
+// run, but concurrent runs may invoke the same hook concurrently.
+type GenerationChunkHook interface {
+	GenerationChunk(context.Context, GenerationChunkEvent) error
+}
+
+// GenerationChunkFunc adapts a function to GenerationChunkHook.
+type GenerationChunkFunc func(context.Context, GenerationChunkEvent) error
+
+// GenerationChunk calls f.
+func (f GenerationChunkFunc) GenerationChunk(ctx context.Context, event GenerationChunkEvent) error {
+	return f(ctx, event)
+}
+
+// GenerationChunkEvent contains one raw chunk, including possible provider errors.
+// It is not an accepted response or a durable completion record.
+type GenerationChunkEvent struct {
+	// Generation is the zero-based model-call index within this Run invocation.
+	Generation uint
+	Chunk      gai.StreamChunk
 }

@@ -66,6 +66,51 @@ func validateDialog(dialog gai.Dialog) error {
 	return nil
 }
 
+// validateReadyDialog checks that no historical external action would need to
+// be inferred or repeated. Multiple blocks may belong to one tool result.
+func validateReadyDialog(dialog gai.Dialog) (map[string]struct{}, error) {
+	if len(dialog) == 0 {
+		return nil, gai.ErrEmptyDialog
+	}
+	if err := validateDialog(dialog); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	pending := make(map[string]struct{})
+	for i, message := range dialog {
+		if message.Role == gai.ToolResult {
+			answered := make(map[string]struct{})
+			for _, block := range message.Blocks {
+				if _, ok := pending[block.ID]; !ok {
+					return nil, fmt.Errorf("dialog message %d: tool result %q has no pending call", i, block.ID)
+				}
+				answered[block.ID] = struct{}{}
+			}
+			for id := range answered {
+				delete(pending, id)
+			}
+			continue
+		}
+		if len(pending) != 0 {
+			return nil, fmt.Errorf("dialog message %d precedes results for unresolved tool calls", i)
+		}
+		for _, block := range message.Blocks {
+			if block.BlockType != gai.ToolCall {
+				continue
+			}
+			if _, duplicate := seen[block.ID]; duplicate {
+				return nil, fmt.Errorf("dialog message %d: duplicate tool-call ID %q", i, block.ID)
+			}
+			seen[block.ID] = struct{}{}
+			pending[block.ID] = struct{}{}
+		}
+	}
+	if len(pending) != 0 {
+		return nil, errors.New("dialog has unresolved tool calls; reconcile their outcomes and supply results before Run")
+	}
+	return seen, nil
+}
+
 func validateMessage(message gai.Message) error {
 	if message.ToolResultError && message.Role != gai.ToolResult {
 		return errors.New("tool-result error is set on a non-tool-result message")
@@ -199,7 +244,7 @@ func validateGenerationRequest(request gai.GenerationRequest, fixedTools []gai.T
 	if len(request.Dialog) == 0 {
 		return gai.InvalidParameterErr{Parameter: "dialog", Reason: gai.ErrEmptyDialog.Error()}
 	}
-	if err := validateDialog(request.Dialog); err != nil {
+	if _, err := validateReadyDialog(request.Dialog); err != nil {
 		return gai.InvalidParameterErr{Parameter: "dialog", Reason: err.Error()}
 	}
 	if !toolDefinitionsEqual(request.Tools, fixedTools) {

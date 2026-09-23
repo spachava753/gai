@@ -9,7 +9,7 @@ import (
 
 // StopReason identifies why an Agent run returned without an error. Hooks may
 // use any non-empty application-defined value except StopReasonModel. It is
-// empty in a RunResult returned with an error.
+// empty on failure.
 type StopReason string
 
 const (
@@ -39,6 +39,9 @@ type Config struct {
 	BeforeTool BeforeToolHook
 	// AfterTool may replace a result or request a batch stop.
 	AfterTool AfterToolHook
+	// GenerationChunk receives provisional output when the generator streams.
+	// Nil disables notifications. The hook receives the Run context.
+	GenerationChunk GenerationChunkHook
 }
 
 // Agent is a reusable definition of one tool-using model loop. It does not
@@ -56,6 +59,7 @@ type Agent struct {
 	afterGeneration  AfterGenerationHook
 	beforeTool       BeforeToolHook
 	afterTool        AfterToolHook
+	generationChunk  GenerationChunkHook
 }
 
 // New validates config and returns an Agent safe for concurrent runs when callers
@@ -92,6 +96,7 @@ func New(config Config) (*Agent, error) {
 		afterGeneration:  config.AfterGeneration,
 		beforeTool:       config.BeforeTool,
 		afterTool:        config.AfterTool,
+		generationChunk:  config.GenerationChunk,
 	}
 	if streaming, ok := config.Generator.(gai.StreamingGenerator); ok && !isNilInterface(streaming) {
 		agent.streaming = streaming
@@ -111,17 +116,19 @@ func New(config Config) (*Agent, error) {
 	if isNilInterface(agent.afterTool) {
 		agent.afterTool = nil
 	}
+	if isNilInterface(agent.generationChunk) {
+		agent.generationChunk = nil
+	}
 	return agent, nil
 }
 
-// RunRequest supplies borrowed values for one run. Callers must not change the
-// prior dialog, input message, options, or anything they reference until Run
-// returns.
+// RunRequest supplies a complete borrowed dialog ready for another model call.
+// Callers must not change the dialog, options, or referenced data until Run returns.
 type RunRequest struct {
-	// Dialog is the prior active dialog.
+	// Dialog must be nonempty and contain results for all historical tool calls.
+	// Append a user message before Run to start a new turn. Run never executes
+	// historical tool calls; applications reconcile uncertain effects themselves.
 	Dialog gai.Dialog
-	// Input is one non-empty User-role message appended before the first hook.
-	Input gai.Message
 	// Options are reused as read-only data in every base generation request.
 	Options gai.GenerationOptions
 }
