@@ -63,6 +63,19 @@ func mapAnthropicError(err error) *ApiErr {
 // [StreamingGenerator], and [TokenCounter]. It accepts text, image, and PDF
 // input, produces text, and supports function tools and extended thinking.
 //
+// Inline [System] messages remain in [GenerationRequest.Dialog], separate from
+// Instructions. This adapter supports only [Text] [Content] blocks in them;
+// ordinary text system messages require no beta header. In GAI's user and
+// function-tool history, a system section must follow a user turn (including the
+// complete tool-result batch) and precede an assistant turn or end the dialog.
+// Consecutive system messages form one section. Model support and placement are
+// server-validated.
+//
+// Anthropic also permits text after an assistant turn ending in a server tool
+// result, which GAI cannot currently represent. Native tool-change blocks have
+// separate beta requirements and are not exposed by this adapter. See Anthropic's
+// [mid-conversation system message documentation] for the complete API rules.
+//
 // Anthropic consumes [WithTemperature], [WithTopP], [WithTopK],
 // [WithMaxGenerationTokens], [WithToolChoice], [WithStopSequences],
 // [WithReasoningEffort], [WithThinkingBudget], and
@@ -78,6 +91,8 @@ func mapAnthropicError(err error) *ApiErr {
 // [EnableSystemCaching] and [EnableMultiTurnCaching]. SafetyIdentifier maps to
 // metadata.user_id (an opaque UUID/hash, at most 512 characters, used for abuse
 // detection). PromptCacheKey is ignored; it does not become cache_control.
+//
+// [mid-conversation system message documentation]: https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations
 type AnthropicGenerator struct {
 	client AnthropicSvc
 }
@@ -258,6 +273,17 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 	}
 
 	switch msg.Role {
+	case System:
+		texts, err := textSystemMessage(msg, "dialog")
+		if err != nil {
+			return a.MessageParam{}, err
+		}
+		parts := make([]a.ContentBlockParamUnion, 0, len(texts))
+		for _, text := range texts {
+			parts = append(parts, a.NewTextBlock(text))
+		}
+		return a.MessageParam{Role: a.MessageParamRoleSystem, Content: parts}, nil
+
 	case User:
 		// User messages should only have Content blocks
 		for _, block := range msg.Blocks {

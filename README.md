@@ -72,11 +72,27 @@ A request contains all semantic state for one invocation:
 
 - `Model` selects the provider model.
 - `Instructions` is either the zero message for no instructions or a `System` message outside the conversation.
-- `Dialog` contains user, assistant, and tool-result messages.
+- `Dialog` contains user, assistant, and tool-result messages, plus inline `System` messages on supporting providers.
 - `Tools` contains the complete caller-defined function set for this invocation.
 - `Options` contains common and provider-specific generation controls.
 
 Messages contain ordered blocks. Use `TextBlock`, `ImageBlock`, `AudioBlock`, `PDFBlock`, and `ToolCallBlock` rather than constructing common blocks manually.
+
+To inject instructions during a conversation, put a `SystemMessage` at the desired position in `Dialog`:
+
+```go
+request.Dialog = append(request.Dialog,
+	gai.SystemMessage(gai.TextBlock("The remaining budget is small; finish concisely.")),
+)
+```
+
+OpenAI Chat Completions and Responses preserve inline system messages in order, separately from `Instructions`. The compatible Chat Completions adapters forward them unchanged; acceptance depends on the endpoint and model.
+
+[Anthropic supports mid-conversation system messages](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations) on supporting models. GAI's adapter accepts only text content in them; ordinary text messages require no beta header. In GAI's user/function-tool history, a system section cannot be first: it must follow a user turn (including the complete tool-result batch) and precede an assistant turn or end the dialog. Consecutive system messages form one section. Do not insert one between a tool call and its result. Model support and placement are server-validated; GAI does not infer capabilities from model names. Initial instructions still belong in `Instructions`.
+
+The native Anthropic API also permits text after an assistant turn ending in a server tool result, which GAI cannot currently represent. It supports native tool-change blocks with separate beta requirements; this feature does not expose those blocks.
+
+Native Gemini does not support inline system messages and returns a conversion error. GAI never silently moves them into top-level instructions or changes them to user messages.
 
 A response contains generated candidate messages, a normalized finish reason, usage measurements, and provider-specific invocation details. Replay-critical metadata stays on the message or block that requires it in a later request.
 

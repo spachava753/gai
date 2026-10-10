@@ -150,7 +150,7 @@ type Message struct {
 
 A message has one role and an ordered list of blocks. `ToolResultError` distinguishes a failed tool result from a successful one. `ExtraFields` holds provider metadata that applies to the message as a whole.
 
-System instructions use the same `Message` representation but live in a separate request field:
+Initial system instructions use the same `Message` representation but live in a separate request field:
 
 ```go
 request := GenerationRequest{
@@ -163,7 +163,9 @@ request := GenerationRequest{
 }
 ```
 
-`RoleUnknown` is the zero value and catches populated messages whose caller forgot to choose a role. It is invalid in dialogs, inputs, responses, and tool results. The exact empty message uses `RoleUnknown` only to mean that optional `Instructions` are absent. Explicit instructions, including a message with zero blocks, must have the `System` role. System messages are not valid dialog turns because provider APIs handle instructions separately from conversation history.
+`RoleUnknown` is the zero value and catches populated messages whose caller forgot to choose a role. It is invalid in dialogs, inputs, responses, and tool results. The exact empty message uses `RoleUnknown` only to mean that optional `Instructions` are absent. Explicit instructions, including a message with zero blocks, must have the `System` role. A dialog can also contain `System` messages on providers that support inline instructions. These messages retain their position and are not merged into `Instructions` or rewritten as user messages. Chat Completions and Responses serialize them as ordered native messages. Native Gemini rejects inline system messages.
+
+GAI's Anthropic adapter accepts only text content in inline system messages. In GAI's user/function-tool history, a system section must follow a user turn (including the complete tool-result batch) and precede an assistant turn or end the dialog. Consecutive system messages form one section; the server validates placement and model support. Ordinary text messages need no beta header. The [native Anthropic rules](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations) also allow text after an assistant turn ending in a server tool result, which GAI cannot currently represent, and native tool-change blocks with separate beta requirements, which this adapter does not expose.
 
 `Instructions` is a `Message`, rather than a string, so it can preserve ordered blocks and provider metadata. This also leaves a place for images or documents if provider APIs later allow them in system instructions.
 

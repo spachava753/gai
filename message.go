@@ -26,8 +26,9 @@ const (
 	// Construct tool results with [ToolResultMessage].
 	ToolResult
 
-	// System identifies model instructions. System messages belong in
-	// [GenerationRequest.Instructions], outside [GenerationRequest.Dialog].
+	// System identifies model instructions. Use [GenerationRequest.Instructions]
+	// for initial instructions, or [GenerationRequest.Dialog] for inline
+	// instructions on providers that support them.
 	System
 )
 
@@ -138,8 +139,9 @@ type Block struct {
 }
 
 // Message is one role-scoped, ordered sequence of [Block] values. Messages in
-// [GenerationRequest.Dialog] use [User], [Assistant], or [ToolResult]. A
-// [System] message belongs in [GenerationRequest.Instructions].
+// [GenerationRequest.Dialog] use [User], [Assistant], [ToolResult], or [System]
+// where the provider supports inline instructions. Initial system instructions
+// belong in [GenerationRequest.Instructions].
 type Message struct {
 	// Role determines how providers interpret Blocks. The zero value is
 	// [RoleUnknown] and must be set for every populated message.
@@ -159,7 +161,8 @@ type Message struct {
 }
 
 // Dialog is the ordered conversation supplied in [GenerationRequest.Dialog].
-// System instructions are stored separately in [GenerationRequest.Instructions].
+// Initial system instructions are stored in [GenerationRequest.Instructions];
+// providers that support inline instructions also accept [System] messages here.
 type Dialog []Message
 
 // Str adapts a string to fmt.Stringer for use as [Block.Content].
@@ -170,8 +173,20 @@ func (s Str) String() string {
 	return string(s)
 }
 
-// SystemMessage returns a [System]-role message containing a copy of blocks.
-// Use it for [GenerationRequest.Instructions], not [GenerationRequest.Dialog].
+// SystemMessage returns a [System]-role message with a copy of the block slice.
+// Block payloads and ExtraFields remain shared; this helper does not validate them.
+//
+// Use it for [GenerationRequest.Instructions] to supply initial instructions as
+// [Text] [Content] blocks; [TextBlock] constructs portable text instructions.
+// SystemMessage() explicitly supplies empty instructions.
+//
+// For instructions at a conversation position, insert it in
+// [GenerationRequest.Dialog]. Inline messages must consist of one or more
+// [Content] blocks, so SystemMessage() is invalid there. They remain separate from
+// initial Instructions. [OpenAiGenerator] and [ResponsesGenerator] preserve their
+// position; endpoint/model support determines accepted modalities. [AnthropicGenerator]
+// accepts text-only inline messages with provider-specific placement rules.
+// [GeminiGenerator] rejects inline system messages.
 func SystemMessage(blocks ...Block) Message {
 	return Message{Role: System, Blocks: append([]Block(nil), blocks...)}
 }

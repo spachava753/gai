@@ -18,8 +18,11 @@ type RunStatus struct {
 }
 
 // PrepareDialogHook may replace the active dialog before a generation request
-// is built. Request fields are borrowed read-only values. A returned replacement
-// belongs to the loop and must not be changed after PrepareDialog returns.
+// is built. Replacements become lasting history in subsequent base requests and
+// [RunResult.Dialog]. Use it to insert inline [gai.System] instructions that must
+// survive later tool rounds; [BeforeGenerationHook] changes only one request.
+// Request fields are borrowed read-only values. A returned replacement belongs
+// to the loop and must not be changed after PrepareDialog returns.
 type PrepareDialogHook interface {
 	// PrepareDialog returns a possible lasting dialog replacement.
 	PrepareDialog(context.Context, PrepareDialogRequest) (PrepareDialogDecision, error)
@@ -47,8 +50,11 @@ type PrepareDialogRequest struct {
 
 // PrepareDialogDecision describes a possible lasting dialog replacement.
 type PrepareDialogDecision struct {
-	// Dialog replaces the active dialog when non-nil. A non-nil empty dialog is
-	// invalid.
+	// Dialog replaces the active dialog when non-nil, becoming the history used
+	// in later base requests and returned in [RunResult.Dialog], unless another
+	// lasting replacement changes it. Nil preserves the active dialog; a non-nil
+	// empty dialog is invalid. Use [BeforeGenerationDecision.Request] instead
+	// for a change visible only to one model call.
 	Dialog gai.Dialog
 	// Usage contains standard usage incurred while producing Dialog. It must be
 	// empty when Dialog is nil.
@@ -56,8 +62,11 @@ type PrepareDialogDecision struct {
 }
 
 // BeforeGenerationHook may change one generation request or stop the run
-// normally before the provider call. Request fields are borrowed read-only
-// values. A returned request belongs to the loop until its generator call ends.
+// normally before the provider call. Replacement history is visible only to
+// that call; it does not enter subsequent base requests or [RunResult.Dialog].
+// Use [PrepareDialogHook] for lasting changes, including inline [gai.System]
+// instructions. Request fields are borrowed read-only values. A returned
+// request belongs to the loop until its generator call ends.
 type BeforeGenerationHook interface {
 	// BeforeGeneration returns the request for one provider call or a stop reason.
 	BeforeGeneration(context.Context, BeforeGenerationRequest) (BeforeGenerationDecision, error)
@@ -83,8 +92,11 @@ type BeforeGenerationRequest struct {
 
 // BeforeGenerationDecision supplies one request or asks the loop to stop.
 type BeforeGenerationDecision struct {
-	// Request replaces the base request when non-nil. Nil keeps the base request.
-	// It is ignored when StopReason is nonempty.
+	// Request replaces the base request for this provider call when non-nil.
+	// Replacement fields, including Dialog and Instructions, do not enter later
+	// base requests or [RunResult.Dialog]; the accepted response still enters the
+	// active dialog. Use [PrepareDialogDecision.Dialog] for lasting history changes.
+	// Nil keeps the base request. Request is ignored when StopReason is nonempty.
 	Request *gai.GenerationRequest
 	// StopReason asks the loop to return normally without another provider call.
 	StopReason StopReason

@@ -494,9 +494,10 @@ func TestRequestValidationPrecedesExecution(t *testing.T) {
 		{name: "candidate count", request: agent.RunRequest{
 			Options: gai.NewGenerationOptions(gai.WithCandidateCount(2)), Dialog: gai.Dialog{userMessage("hello")},
 		}},
-		{name: "system in dialog", request: agent.RunRequest{Dialog: append(gai.Dialog{gai.SystemMessage(gai.TextBlock("wrong"))},
-			userMessage("hello")),
-		}},
+		{name: "empty system in dialog", request: agent.RunRequest{Dialog: gai.Dialog{userMessage("hello"), gai.SystemMessage()}}},
+		{name: "system tool-result error", request: agent.RunRequest{Dialog: gai.Dialog{userMessage("hello"), {
+			Role: gai.System, Blocks: []gai.Block{gai.TextBlock("wrong")}, ToolResultError: true,
+		}}}},
 		{name: "empty assistant in dialog", request: agent.RunRequest{Dialog: append(gai.Dialog{{Role: gai.Assistant}},
 			userMessage("hello")),
 		}},
@@ -1705,6 +1706,61 @@ func runFailure(t *testing.T, err error) *agent.RunError {
 	return failure
 }
 
+func TestSystemMessagesInDialogAndHooks(t *testing.T) {
+	for _, source := range []string{"RunRequest", "PrepareDialog", "BeforeGeneration"} {
+		t.Run(source, func(t *testing.T) {
+			instructions := gai.SystemMessage(gai.TextBlock("initial instructions"))
+			initial := gai.Dialog{userMessage("question")}
+			injected := append(gai.Dialog(nil), initial...)
+			injected = append(injected, gai.SystemMessage(gai.TextBlock("new guidance")))
+			generator := agenttest.NewScriptedGenerator(agenttest.GenerateStep{
+				Check: func(request gai.GenerationRequest) error {
+					if !reflect.DeepEqual(request.Dialog, injected) || !reflect.DeepEqual(request.Instructions, instructions) {
+						return fmt.Errorf("inline instructions moved or changed: %#v", request)
+					}
+					return nil
+				},
+				Response: textResponse("answer", gai.EndTurn, nil),
+			})
+			config := agent.Config{Generator: generator, Model: "model", Instructions: instructions}
+			request := agent.RunRequest{Dialog: initial}
+			switch source {
+			case "RunRequest":
+				request.Dialog = injected
+			case "PrepareDialog":
+				config.PrepareDialog = agent.PrepareDialogFunc(func(context.Context, agent.PrepareDialogRequest) (agent.PrepareDialogDecision, error) {
+					return agent.PrepareDialogDecision{Dialog: injected}, nil
+				})
+			case "BeforeGeneration":
+				config.BeforeGeneration = agent.BeforeGenerationFunc(func(_ context.Context, r agent.BeforeGenerationRequest) (agent.BeforeGenerationDecision, error) {
+					changed := r.Request
+					changed.Dialog = injected
+					return agent.BeforeGenerationDecision{Request: &changed}, nil
+				})
+			}
+			a, err := agent.New(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := a.Run(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := injected
+			if source == "BeforeGeneration" {
+				want = initial // Temporary request edits do not enter lasting history.
+			}
+			want = append(append(gai.Dialog(nil), want...), assistantMessage("answer"))
+			if !reflect.DeepEqual(result.Dialog, want) || len(generator.Requests()) != 1 {
+				t.Fatalf("result = %#v, requests = %d", result, len(generator.Requests()))
+			}
+			if !reflect.DeepEqual(initial, gai.Dialog{userMessage("question")}) {
+				t.Fatal("borrowed dialog was mutated")
+			}
+		})
+	}
+}
+
 func TestDialogContinuation(t *testing.T) {
 	first := mustToolCallBlock(t, "old-1", "charge", map[string]any{})
 	second := mustToolCallBlock(t, "old-2", "charge", map[string]any{})
@@ -1718,12 +1774,15 @@ func TestDialogContinuation(t *testing.T) {
 	}{
 		{"user turn", gai.Dialog{userMessage("go")}, true},
 		{"assistant continuation", gai.Dialog{assistantMessage("continue")}, true},
+		{"inline system instructions", gai.Dialog{userMessage("go"), gai.SystemMessage(gai.TextBlock("be brief"))}, true},
 		{"completed batch", gai.Dialog{calls, one, two}, true},
+		{"system after completed batch", gai.Dialog{calls, one, two, gai.SystemMessage(gai.TextBlock("use the receipts"))}, true},
 		{"reordered complete results", gai.Dialog{calls, two, one}, true},
 		{"unresolved batch", gai.Dialog{calls}, false},
 		{"partially resolved batch", gai.Dialog{calls, one}, false},
 		{"new user cannot hide pending call", gai.Dialog{calls, one, userMessage("go")}, false},
 		{"new assistant cannot hide pending call", gai.Dialog{calls, assistantMessage("done")}, false},
+		{"system cannot split a tool batch", gai.Dialog{calls, one, gai.SystemMessage(gai.TextBlock("continue")), two}, false},
 		{"orphan result", gai.Dialog{one}, false},
 		{"duplicate result", gai.Dialog{calls, one, one, two}, false},
 		{"unknown result", gai.Dialog{calls, one, gai.ToolResultMessage("other", gai.TextBlock("bad"))}, false},

@@ -49,9 +49,6 @@ func validateInstructions(message gai.Message) error {
 
 func validateDialog(dialog gai.Dialog) error {
 	for i, message := range dialog {
-		if message.Role == gai.System {
-			return fmt.Errorf("dialog message %d uses the system role", i)
-		}
 		if err := validateMessage(message); err != nil {
 			return fmt.Errorf("dialog message %d: %w", i, err)
 		}

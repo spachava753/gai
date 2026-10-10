@@ -600,8 +600,8 @@ components:
           # Kimi K3: system message with tools and NO content, at a particular
           # history position. Definitions apply to subsequent turns and must be
           # replayed. Do not lift them all to top-level tools: that changes scope.
-          # Schema support alone does not add this feature to GAI's current dialog
-          # contract (which keeps system instructions outside the dialog).
+          # Schema support alone does not add content-less tool declarations to
+          # GAI's dialog contract: inline system messages still require blocks.
 
     MessageContent:
       oneOf:

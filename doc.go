@@ -12,8 +12,9 @@
 // the conversational [Dialog]. A zero Message means instructions are absent;
 // any populated instruction message must have the [System] role. Use
 // [SystemMessage] to construct one. A dialog contains user, assistant, and
-// [ToolResult] messages, each represented as an ordered sequence of [Block]
-// values.
+// [ToolResult] messages, plus inline [System] messages on supporting providers.
+// Each message is an ordered sequence of [Block] values. Inline instructions
+// retain their conversation position rather than being lifted into Instructions.
 //
 // The block helpers [TextBlock], [ImageBlock], [AudioBlock], [PDFBlock], and
 // [ToolCallBlock] construct the common block forms. Provider-specific replay

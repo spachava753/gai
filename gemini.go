@@ -406,6 +406,9 @@ func geminiContentBlock(part *genai.Part) (Block, error) {
 // [TokenCounter]. It accepts text, image, audio, and PDF input, produces text,
 // inline images, and inline audio,
 // supports function tools, and preprocesses parallel tool results.
+// Initial instructions map to the native systemInstruction field. Inline
+// [System] messages in [GenerationRequest.Dialog] are unsupported and return
+// a conversion error rather than being moved or rewritten.
 //
 // Gemini consumes [WithTemperature], [WithTopP], [WithTopK],
 // [WithCandidateCount], [WithMaxGenerationTokens], [WithToolChoice],

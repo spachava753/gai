@@ -223,11 +223,18 @@ type GenerationRequest struct {
 	// It does not enable caching, specify retention, or identify a stored cache
 	// resource. Other providers ignore it. It is never derived from SafetyIdentifier.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty" yaml:"prompt_cache_key,omitempty"`
-	// Instructions contains optional [System]-role content outside [Dialog]. The
-	// zero Message means absent; any populated value must use [System]. Use
-	// [SystemMessage] to construct explicit instructions, including an empty one.
+	// Instructions contains optional initial [System]-role instructions outside
+	// [Dialog]. Adapters accept only [Text] [Content] blocks here. The zero Message
+	// means absent; use [SystemMessage] for explicit instructions, including an
+	// empty one. Inline system messages remain separate and are not merged here.
 	Instructions Message `json:"instructions,omitempty" yaml:"instructions,omitempty"`
-	// Dialog is the complete conversation. An empty dialog returns [ErrEmptyDialog].
+	// Dialog is the complete ordered conversation of [User], [Assistant], and
+	// [ToolResult] messages. It may also include [System] messages with at least
+	// one [Content] block; [SystemMessage] constructs them. [OpenAiGenerator] and
+	// [ResponsesGenerator] preserve their position. See [AnthropicGenerator] for
+	// its text-only inline content and placement rules. [GeminiGenerator] rejects
+	// inline system messages. Provider/model support determines accepted modalities.
+	// An empty dialog returns [ErrEmptyDialog].
 	Dialog Dialog `json:"dialog" yaml:"dialog"`
 	// Tools is the complete caller-defined function set available to this
 	// invocation. Tool names must be unique.
@@ -287,27 +294,32 @@ func textInstructions(instructions Message) ([]string, error) {
 			Reason:    "a populated instruction message must specify the system role",
 		}
 	}
-	if instructions.Role != System {
+	return textSystemMessage(instructions, "instructions")
+}
+
+// textSystemMessage validates text-only system content in either request field.
+func textSystemMessage(message Message, parameter string) ([]string, error) {
+	if message.Role != System {
 		return nil, &InvalidParameterErr{
-			Parameter: "instructions",
-			Reason:    "instructions must use the system role",
+			Parameter: parameter,
+			Reason:    "message must use the system role",
 		}
 	}
-	if instructions.ToolResultError {
+	if message.ToolResultError {
 		return nil, &InvalidParameterErr{
-			Parameter: "instructions",
-			Reason:    "instructions cannot be marked as a tool-result error",
+			Parameter: parameter,
+			Reason:    "system message cannot be marked as a tool-result error",
 		}
 	}
-	if len(instructions.Blocks) == 0 {
+	if len(message.Blocks) == 0 {
 		return nil, nil
 	}
 
-	parts := make([]string, 0, len(instructions.Blocks))
-	for _, block := range instructions.Blocks {
+	parts := make([]string, 0, len(message.Blocks))
+	for _, block := range message.Blocks {
 		if block.BlockType != Content {
 			return nil, &InvalidParameterErr{
-				Parameter: "instructions",
+				Parameter: parameter,
 				Reason:    fmt.Sprintf("block type %q is not supported", block.BlockType),
 			}
 		}
@@ -316,7 +328,7 @@ func textInstructions(instructions Message) ([]string, error) {
 		}
 		if block.Content == nil {
 			return nil, &InvalidParameterErr{
-				Parameter: "instructions",
+				Parameter: parameter,
 				Reason:    "block content cannot be nil",
 			}
 		}

@@ -20,6 +20,8 @@ Configuration contains a generator, model, optional system instructions, fixed e
 
 `Run` receives a complete, nonempty dialog and generation options. The caller appends a user message when starting a new turn. The loop always starts by preparing another generation from that dialog; it does not infer that an earlier run has already completed from a trailing assistant message.
 
+The dialog may include inline `System` messages when the selected provider supports them. `PrepareDialog` can add lasting instructions at a conversation position, while `BeforeGeneration` can inject instructions for one request. Neither changes the separate configured `Instructions` field. Provider-specific model and placement rules remain the caller's responsibility. System messages cannot interrupt unresolved historical tool calls; supply the complete tool-result batch before appending instructions.
+
 The loop validates the supplied conversation, prepares a request, generates one assistant response, and processes any requested tools sequentially in response order. It repeats until the model produces a terminal response, a hook requests a normal stop, or an error occurs. Streaming is preferred when the generator supports it, but the loop accepts only complete responses into the dialog.
 
 `RunResult` contains the active dialog, stop information, and standard usage accepted during the invocation. It is the caller's starting point for the next turn or for handling a failure. The Agent retains no conversation between invocations.

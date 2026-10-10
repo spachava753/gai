@@ -183,6 +183,8 @@ type ResponsesService interface {
 // ResponsesGenerator adapts the OpenAI Responses API to [Generator] and
 // [StreamingGenerator]. It accepts text, image, and PDF input, produces text,
 // supports function tools, and preserves reasoning summaries and message phases.
+// [System] messages in [GenerationRequest.Dialog] remain ordered input items,
+// separate from the request's top-level Instructions.
 //
 // It always sends store=false and requests encrypted reasoning content. Replay
 // data uses [ResponsesExtraFieldReasoningID],
@@ -413,12 +415,18 @@ func (r *ResponsesGenerator) buildInputItems(dialog Dialog) ([]responses.Respons
 	var inputItems []responses.ResponseInputItemUnionParam
 	for _, msg := range dialog {
 		switch msg.Role {
-		case User:
+		case User, System:
+			if msg.Role == System && (len(msg.Blocks) == 0 || msg.ToolResultError) {
+				return nil, &InvalidParameterErr{Parameter: "dialog", Reason: "system message requires content and cannot be marked as a tool-result error"}
+			}
 			var contents responses.ResponseInputMessageContentListParam
 
 			for _, blk := range msg.Blocks {
 				switch blk.BlockType {
 				case Content:
+					if blk.Content == nil {
+						return nil, &InvalidParameterErr{Parameter: "dialog", Reason: "block content cannot be nil"}
+					}
 					switch blk.ModalityType {
 					case Text:
 						contents = append(contents, responses.ResponseInputContentParamOfInputText(blk.Content.String()))
@@ -454,7 +462,7 @@ func (r *ResponsesGenerator) buildInputItems(dialog Dialog) ([]responses.Respons
 			}
 
 			if len(contents) > 0 {
-				role := responses.EasyInputMessageRoleUser
+				role := responses.EasyInputMessageRole(msg.Role.String())
 				inputItems = append(inputItems, responses.ResponseInputItemParamOfMessage(contents, role))
 			}
 

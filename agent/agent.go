@@ -128,6 +128,10 @@ type RunRequest struct {
 	// Dialog must be nonempty and contain results for all historical tool calls.
 	// Append a user message before Run to start a new turn. Run never executes
 	// historical tool calls; applications reconcile uncertain effects themselves.
+	// Inline [gai.System] messages are allowed when supported by the selected
+	// provider and must not interrupt an unresolved tool-call batch. To add
+	// instructions during a run, use [PrepareDialogHook] for lasting history
+	// changes or [BeforeGenerationHook] for one-request changes.
 	Dialog gai.Dialog
 	// Options are reused as read-only data in every base generation request.
 	Options gai.GenerationOptions

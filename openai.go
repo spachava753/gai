@@ -167,7 +167,9 @@ func WithOpenAIStreamUsage(enabled bool) GenerationOption {
 // [GenerationRequest]. Supported inputs include text, images, PDFs, and audio;
 // supported outputs include text, audio, and function calls. Actual support
 // depends on the endpoint and model. It implements [Generator],
-// [StreamingGenerator], and [TokenCounter].
+// [StreamingGenerator], and [TokenCounter]. [System] messages in
+// [GenerationRequest.Dialog] retain their position after any initial Instructions;
+// endpoint and model support are validated by the server.
 //
 // To display model reasoning, read the Content of blocks whose BlockType is
 // [Thinking]. The generator creates these blocks from reasoning_content,

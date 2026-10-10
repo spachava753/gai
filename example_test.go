@@ -57,6 +57,27 @@ func ExampleGenerator() {
 	// Output: Echo: Hello
 }
 
+func ExampleSystemMessage() {
+	request := gai.GenerationRequest{
+		Model:        "caller-selected-model",
+		Instructions: gai.SystemMessage(gai.TextBlock("Answer clearly.")),
+		Dialog:       gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Continue the task.")}}},
+	}
+	// On supporting providers, inject instructions after a user turn or the
+	// complete tool-result batch. Initial instructions remain separate.
+	request.Dialog = append(request.Dialog,
+		gai.SystemMessage(gai.TextBlock("The remaining budget is small; finish concisely.")),
+	)
+	fmt.Println(request.Instructions.Role)
+	for _, message := range request.Dialog {
+		fmt.Println(message.Role)
+	}
+	// Output:
+	// system
+	// user
+	// system
+}
+
 func ExampleGenerationRequest_headers() {
 	request := gai.GenerationRequest{
 		Model:   "model-id",

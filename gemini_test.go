@@ -17,6 +17,42 @@ import (
 )
 
 func TestGoogleAdapterScenarios(t *testing.T) {
+	t.Run("InlineSystemMessagesRejected", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("unsupported system message reached Gemini")
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		defer server.Close()
+		client, err := genai.NewClient(t.Context(), &genai.ClientConfig{APIKey: "test-key", Backend: genai.BackendGeminiAPI, HTTPClient: server.Client(), HTTPOptions: genai.HTTPOptions{BaseURL: server.URL}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		generator := NewGeminiGenerator(client)
+		request := GenerationRequest{Model: "model", Dialog: Dialog{
+			{Role: User, Blocks: []Block{TextBlock("question")}},
+			SystemMessage(TextBlock("new guidance")),
+		}}
+		for _, operation := range []string{"Generate", "Stream", "Count"} {
+			t.Run(operation, func(t *testing.T) {
+				var err error
+				switch operation {
+				case "Generate":
+					_, err = generator.Generate(t.Context(), request)
+				case "Stream":
+					for chunk := range generator.Stream(t.Context(), request) {
+						if chunk.Err != nil {
+							err = chunk.Err
+						}
+					}
+				case "Count":
+					_, err = generator.Count(t.Context(), request)
+				}
+				if err == nil || !strings.Contains(err.Error(), "unsupported message role: system") {
+					t.Fatalf("expected unsupported inline system message, got %v", err)
+				}
+			})
+		}
+	})
 	t.Run("NativeOutputAndThinking", func(t *testing.T) {
 		for _, stream := range []bool{false, true} {
 			calls := 0
