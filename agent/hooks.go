@@ -17,56 +17,15 @@ type RunStatus struct {
 	Usage gai.Metadata
 }
 
-// PrepareDialogHook may replace the active dialog before a generation request
-// is built. Replacements become lasting history in subsequent base requests and
-// [RunResult.Dialog]. Use it to insert inline [gai.System] instructions that must
-// survive later tool rounds; [BeforeGenerationHook] changes only one request.
-// Request fields are borrowed read-only values. A returned replacement belongs
-// to the loop and must not be changed after PrepareDialog returns.
-type PrepareDialogHook interface {
-	// PrepareDialog returns a possible lasting dialog replacement.
-	PrepareDialog(context.Context, PrepareDialogRequest) (PrepareDialogDecision, error)
-}
-
-// PrepareDialogFunc adapts a function to PrepareDialogHook.
-type PrepareDialogFunc func(context.Context, PrepareDialogRequest) (PrepareDialogDecision, error)
-
-// PrepareDialog calls f.
-func (f PrepareDialogFunc) PrepareDialog(ctx context.Context, request PrepareDialogRequest) (PrepareDialogDecision, error) {
-	return f(ctx, request)
-}
-
-// PrepareDialogRequest describes the base request before one possible model
-// call.
-type PrepareDialogRequest struct {
-	// Generation is the zero-based index of the possible next model call.
-	Generation uint
-	// Request contains the configured model and instructions, active dialog,
-	// fixed tools, and run options before any BeforeGeneration changes.
-	Request gai.GenerationRequest
-	// Status reports work accepted before this hook call.
-	Status RunStatus
-}
-
-// PrepareDialogDecision describes a possible lasting dialog replacement.
-type PrepareDialogDecision struct {
-	// Dialog replaces the active dialog when non-nil, becoming the history used
-	// in later base requests and returned in [RunResult.Dialog], unless another
-	// lasting replacement changes it. Nil preserves the active dialog; a non-nil
-	// empty dialog is invalid. Use [BeforeGenerationDecision.Request] instead
-	// for a change visible only to one model call.
-	Dialog gai.Dialog
-	// Usage contains standard usage incurred while producing Dialog. It must be
-	// empty when Dialog is nil.
-	Usage gai.Metadata
-}
-
-// BeforeGenerationHook may change one generation request or stop the run
-// normally before the provider call. Replacement history is visible only to
-// that call; it does not enter subsequent base requests or [RunResult.Dialog].
-// Use [PrepareDialogHook] for lasting changes, including inline [gai.System]
-// instructions. Request fields are borrowed read-only values. A returned
-// request belongs to the loop until its generator call ends.
+// BeforeGenerationHook may replace a generation request or stop the run before
+// the provider call. Use it for dialog compaction, retrieval, inline [gai.System]
+// instructions, or generation settings. A validated replacement's dialog becomes
+// the conversation the loop continues from; see [BeforeGenerationDecision.Request].
+// The application decides what to store outside the run.
+//
+// Request fields are borrowed read-only values. Copy the parts you change. A
+// returned replacement belongs to the loop and must not be changed until Run
+// returns.
 type BeforeGenerationHook interface {
 	// BeforeGeneration returns the request for one provider call or a stop reason.
 	BeforeGeneration(context.Context, BeforeGenerationRequest) (BeforeGenerationDecision, error)
@@ -92,10 +51,15 @@ type BeforeGenerationRequest struct {
 
 // BeforeGenerationDecision supplies one request or asks the loop to stop.
 type BeforeGenerationDecision struct {
-	// Request replaces the base request for this provider call when non-nil.
-	// Replacement fields, including Dialog and Instructions, do not enter later
-	// base requests or [RunResult.Dialog]; the accepted response still enters the
-	// active dialog. Use [PrepareDialogDecision.Dialog] for lasting history changes.
+	// Request replaces the request sent to the generator when non-nil and valid.
+	// Replacements are complete requests, not patches: copy the base request to
+	// retain its fields. Dialog must be nonempty with every tool call resolved.
+	// Its Dialog becomes the active conversation before generation; accepted
+	// responses and tool results are appended there. Later base requests and
+	// [RunResult.Dialog] use that conversation, even if generation fails.
+	// Other base fields are rebuilt from [Config] and [RunRequest.Options] for
+	// each generation. Tools must still match the Agent's fixed tool definitions.
+	// The application decides which state to store or reuse after Run.
 	// Nil keeps the base request. Request is ignored when StopReason is nonempty.
 	Request *gai.GenerationRequest
 	// StopReason asks the loop to return normally without another provider call.

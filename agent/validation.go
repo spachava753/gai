@@ -231,23 +231,27 @@ func toolDefinitionsEqual(left, right []gai.Tool) bool {
 	return true
 }
 
-func validateGenerationRequest(request gai.GenerationRequest, fixedTools []gai.Tool) error {
+func validateGenerationRequest(request gai.GenerationRequest, fixedTools []gai.Tool) (map[string]struct{}, error) {
 	if request.Model == "" {
-		return gai.InvalidParameterErr{Parameter: "model", Reason: "cannot be empty"}
+		return nil, gai.InvalidParameterErr{Parameter: "model", Reason: "cannot be empty"}
 	}
 	if err := validateInstructions(request.Instructions); err != nil {
-		return gai.InvalidParameterErr{Parameter: "instructions", Reason: err.Error()}
+		return nil, gai.InvalidParameterErr{Parameter: "instructions", Reason: err.Error()}
 	}
 	if len(request.Dialog) == 0 {
-		return gai.InvalidParameterErr{Parameter: "dialog", Reason: gai.ErrEmptyDialog.Error()}
+		return nil, gai.InvalidParameterErr{Parameter: "dialog", Reason: gai.ErrEmptyDialog.Error()}
 	}
-	if _, err := validateReadyDialog(request.Dialog); err != nil {
-		return gai.InvalidParameterErr{Parameter: "dialog", Reason: err.Error()}
+	seen, err := validateReadyDialog(request.Dialog)
+	if err != nil {
+		return nil, gai.InvalidParameterErr{Parameter: "dialog", Reason: err.Error()}
 	}
 	if !toolDefinitionsEqual(request.Tools, fixedTools) {
-		return gai.InvalidParameterErr{Parameter: "tools", Reason: "must exactly match the Agent's fixed tools"}
+		return nil, gai.InvalidParameterErr{Parameter: "tools", Reason: "must exactly match the Agent's fixed tools"}
 	}
-	return validateOptions(request.Options)
+	if err := validateOptions(request.Options); err != nil {
+		return nil, err
+	}
+	return seen, nil
 }
 
 func validateFinishReason(reason gai.FinishReason) error {

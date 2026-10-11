@@ -29,9 +29,8 @@ type Config struct {
 	Instructions gai.Message
 	// Tools are the complete fixed executable tool set.
 	Tools []Tool
-	// PrepareDialog may replace the lasting active dialog before each model call.
-	PrepareDialog PrepareDialogHook
-	// BeforeGeneration may change one request or stop before a provider call.
+	// BeforeGeneration may replace a request, including the active dialog, or
+	// stop before a provider call. See [BeforeGenerationDecision.Request].
 	BeforeGeneration BeforeGenerationHook
 	// AfterGeneration may change one complete response before it enters the dialog.
 	AfterGeneration AfterGenerationHook
@@ -54,7 +53,6 @@ type Agent struct {
 	tools            []executableTool
 	toolDefinitions  []gai.Tool
 	toolIndexes      map[string]int
-	prepareDialog    PrepareDialogHook
 	beforeGeneration BeforeGenerationHook
 	afterGeneration  AfterGenerationHook
 	beforeTool       BeforeToolHook
@@ -91,7 +89,6 @@ func New(config Config) (*Agent, error) {
 		tools:            tools,
 		toolDefinitions:  definitions,
 		toolIndexes:      indexes,
-		prepareDialog:    config.PrepareDialog,
 		beforeGeneration: config.BeforeGeneration,
 		afterGeneration:  config.AfterGeneration,
 		beforeTool:       config.BeforeTool,
@@ -100,9 +97,6 @@ func New(config Config) (*Agent, error) {
 	}
 	if streaming, ok := config.Generator.(gai.StreamingGenerator); ok && !isNilInterface(streaming) {
 		agent.streaming = streaming
-	}
-	if isNilInterface(agent.prepareDialog) {
-		agent.prepareDialog = nil
 	}
 	if isNilInterface(agent.beforeGeneration) {
 		agent.beforeGeneration = nil
@@ -129,9 +123,8 @@ type RunRequest struct {
 	// Append a user message before Run to start a new turn. Run never executes
 	// historical tool calls; applications reconcile uncertain effects themselves.
 	// Inline [gai.System] messages are allowed when supported by the selected
-	// provider and must not interrupt an unresolved tool-call batch. To add
-	// instructions during a run, use [PrepareDialogHook] for lasting history
-	// changes or [BeforeGenerationHook] for one-request changes.
+	// provider and must not interrupt an unresolved tool-call batch. Use
+	// [BeforeGenerationHook] to replace or extend the dialog during a run.
 	Dialog gai.Dialog
 	// Options are reused as read-only data in every base generation request.
 	Options gai.GenerationOptions
@@ -140,7 +133,9 @@ type RunRequest struct {
 // RunResult contains the active dialog and standard usage when a run returns.
 // Its referenced data may share storage with inputs and dependency outputs.
 type RunResult struct {
-	// Dialog is the active dialog to pass to a later run.
+	// Dialog is the active conversation, including validated hook replacements
+	// and accepted responses/tool results. The application decides what to store
+	// or supply to a later run.
 	Dialog gai.Dialog
 	// StopReason identifies a normal model or hook stop and is empty on failure.
 	StopReason StopReason

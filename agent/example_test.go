@@ -67,7 +67,9 @@ func ExampleBeforeGenerationFunc() {
 
 		BeforeGeneration: agent.BeforeGenerationFunc(func(_ context.Context, request agent.BeforeGenerationRequest) (agent.BeforeGenerationDecision, error) {
 			next := request.Request // Scalar changes affect only this struct copy.
-			next.Model = "model-for-this-call"
+			next.Model = "selected-model"
+			// Use a summary prepared by the application as the next conversation.
+			next.Dialog = gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("Summary of the task so far.")}}}
 			next.Options = maps.Clone(request.Request.Options) // Nested values still share references.
 			if next.Options == nil {
 				next.Options = make(gai.GenerationOptions)
@@ -82,14 +84,17 @@ func ExampleBeforeGenerationFunc() {
 		panic(err)
 	}
 
-	_, err = runner.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("run")}}}})
+	result, err := runner.Run(context.Background(), agent.RunRequest{Dialog: gai.Dialog{{Role: gai.User, Blocks: []gai.Block{gai.TextBlock("run")}}}})
 	if err != nil {
 		panic(err)
 	}
 
 	fmt.Println(usedModel)
+	fmt.Println(result.Dialog[0].Blocks[0].Content)
+	// The application chooses what to save or use for another Run.
 	// Output:
-	// model-for-this-call
+	// selected-model
+	// Summary of the task so far.
 }
 
 func ExampleToolHandlerFunc() {

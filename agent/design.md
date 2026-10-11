@@ -16,11 +16,11 @@ Hooks and handlers use interfaces with function adapters. An implementation can 
 
 ## Configuration and one run
 
-Configuration contains a generator, model, optional system instructions, fixed executable tools, and optional hooks. It is borrowed and remains unchanged during the Agent's lifetime. A lasting model or tool-set change uses a newly configured Agent. Hooks may change a particular model request while preserving the registered tool declarations.
+Configuration contains a generator, model, optional system instructions, fixed executable tools, and optional hooks. It is borrowed and remains unchanged during the Agent's lifetime. Changing that configuration uses a newly configured Agent. `BeforeGeneration` can select a request's model, instructions, dialog, and options while preserving the registered tool declarations.
 
 `Run` receives a complete, nonempty dialog and generation options. The caller appends a user message when starting a new turn. The loop always starts by preparing another generation from that dialog; it does not infer that an earlier run has already completed from a trailing assistant message.
 
-The dialog may include inline `System` messages when the selected provider supports them. `PrepareDialog` can add lasting instructions at a conversation position, while `BeforeGeneration` can inject instructions for one request. Neither changes the separate configured `Instructions` field. Provider-specific model and placement rules remain the caller's responsibility. System messages cannot interrupt unresolved historical tool calls; supply the complete tool-result batch before appending instructions.
+The dialog may include inline `System` messages when the selected provider supports them. `BeforeGeneration` handles dialog compaction, retrieval, and instruction changes alongside other request settings. A validated replacement dialog becomes the conversation the loop continues from; accepted responses and tool results are appended to it. Inline instructions remain separate from the request's `Instructions` field. Provider-specific model and placement rules remain the caller's responsibility. System messages cannot interrupt unresolved historical tool calls; supply the complete tool-result batch before appending instructions.
 
 The loop validates the supplied conversation, prepares a request, generates one assistant response, and processes any requested tools sequentially in response order. It repeats until the model produces a terminal response, a hook requests a normal stop, or an error occurs. Streaming is preferred when the generator supports it, but the loop accepts only complete responses into the dialog.
 
@@ -30,14 +30,13 @@ The loop validates the supplied conversation, prepares a request, generates one 
 
 | Hook | Purpose | Position and effect |
 |---|---|---|
-| `PrepareDialog` | Compaction, summarization, or lasting context changes | Runs before each request is built. Its replacement becomes the active dialog for later generations and the returned result. It can report usage incurred while preparing that replacement. |
-| `BeforeGeneration` | Temporary retrieval context, per-call model/options selection, or budget checks | Receives the base request. It can replace that request for this call or stop before generation. Temporary changes reset on the next generation. Tool declarations remain fixed. |
+| `BeforeGeneration` | Compaction, retrieval, instructions, generation settings, or budget checks | Receives the base request and can replace it or stop before generation. A validated replacement's dialog becomes the active conversation. Tool declarations remain fixed. |
 | `GenerationChunk` | Live display or incremental consumption | Receives raw streaming chunks synchronously. Output is provisional and cannot replace the eventual response. |
 | `AfterGeneration` | Review or transformation of a complete model response | Runs after initial response validation and before acceptance. A replacement must preserve the provider's finish reason and usage. |
 | `BeforeTool` | Permission checks, argument changes, or controlled rejection | Runs for a known tool with valid arguments. It can replace arguments, reject execution with a model-visible result, or request a stop after the batch. |
 | `AfterTool` | Transforming a handler result or requesting a review boundary | Runs after a handler returns a valid result, before acceptance. It can replace that result or request a stop after the batch. |
 
-`PrepareDialog` and `BeforeGeneration` deliberately have different effects. A summary returned by `PrepareDialog` replaces lasting context. Retrieved material added by `BeforeGeneration` is visible to that model call without entering the active dialog itself.
+There is one request-change hook. `BeforeGeneration` supplies the request sent to the generator, and its validated dialog is adopted before generation. Later base requests combine the current dialog with the configured model, instructions, fixed tools, and `RunRequest.Options`; selecting other request fields does not mutate the Agent or the caller's run options. `RunResult.Dialog` reports the conversation used by the loop. The application decides what to store, remove, or reuse across runs; the loop does not classify dialog changes as persisted or temporary.
 
 After-hooks are decision points before acceptance. Their invocation does not establish that their output entered the dialog, and they cannot repair outputs that failed initial validation. `AfterTool` also runs for a valid model-visible failure returned by a handler, but not for handler Go errors or synthetic results produced for rejected, unknown, or invalid calls.
 
@@ -45,7 +44,7 @@ After-hooks are decision points before acceptance. Their invocation does not est
 
 ## Replacement and stopping semantics
 
-All replacement hooks follow one rule: **nil preserves the existing value; a supplied replacement is validated and adopted**. Request, response, and result replacements use pointers. Dialog and argument replacements use their existing nil-capable slice and map types. An explicitly empty replacement is distinct from an omitted replacement and must satisfy the relevant validity rules.
+All replacement hooks follow one rule: **nil preserves the existing value; a supplied replacement is validated and adopted**. Request, response, and result replacements use pointers; argument replacements use maps. To replace a dialog, copy the generation request and set its `Dialog` before returning it from `BeforeGeneration`. A non-nil replacement request must contain a complete, nonempty dialog. An explicitly empty replacement is distinct from an omitted replacement and must satisfy the relevant validity rules.
 
 An empty decision is therefore a no-op. Replacement and control decisions are independent: an `AfterTool` hook can request a batch stop while leaving its result unchanged.
 
@@ -63,7 +62,7 @@ Applications define limits using hooks, context deadlines, and their own policy.
 
 ## Accepted work and failures
 
-Acceptance means that a validated message and any associated standard usage have entered the active state returned by `Run`. The current response or result is not yet accepted while its after-hook executes.
+Acceptance means that validated data has entered the active state returned by `Run`. A `BeforeGeneration` request's dialog is adopted after validation and before calling the generator, so a subsequent generation failure returns that dialog without inventing a response. The current response or tool result and its associated standard usage are not yet accepted while its after-hook executes. Hook request changes do not add usage to the run's generation totals; applications account for any external work done by their hooks.
 
 `RunStatus.AcceptedGenerations` counts accepted model responses. `AcceptedToolResults` counts accepted handler results, including model-visible failures, but excludes synthetic results for rejected or invalid calls. Counters and usage cover only the current invocation. They do not count attempted external operations or establish whether side effects occurred. Provider-specific metadata remains available through the complete response supplied to `AfterGeneration` or through generator wrappers.
 
@@ -107,4 +106,4 @@ Continuation supplies conversation context for further generation. It does not r
 
 ## API reference and examples
 
-[Hook contracts](hooks.go), [Agent and run types](agent.go), [tools](tool.go), and [errors](errors.go) contain field-level documentation. [Compiled examples](example_test.go) demonstrate ordinary runs, temporary request changes, tools, streaming, and reconciled continuation. `agent/agenttest` provides scripted generators for exercising application behavior without live providers.
+[Hook contracts](hooks.go), [Agent and run types](agent.go), [tools](tool.go), and [errors](errors.go) contain field-level documentation. [Compiled examples](example_test.go) demonstrate ordinary runs, request and dialog changes, tools, streaming, and reconciled continuation. `agent/agenttest` provides scripted generators for exercising application behavior without live providers.

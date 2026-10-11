@@ -22,8 +22,6 @@ func (e *RunError) Unwrap() error { return e.Err }
 type RunPhase string
 
 const (
-	// RunPhasePrepareDialogHook identifies PrepareDialog failures.
-	RunPhasePrepareDialogHook RunPhase = "prepare_dialog_hook"
 	// RunPhaseBeforeGenerationHook identifies BeforeGeneration failures.
 	RunPhaseBeforeGenerationHook RunPhase = "before_generation_hook"
 	// RunPhaseGeneration identifies generator or stream failures.

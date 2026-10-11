@@ -6,10 +6,13 @@
 // tools or reconstructs interrupted callbacks. Persistence and reconciliation
 // belong to the application.
 //
-// [PrepareDialogHook], [BeforeGenerationHook], [AfterGenerationHook],
-// [BeforeToolHook], and [AfterToolHook] return explicit decisions. A nil
-// replacement keeps the existing value. [GenerationChunkHook] receives borrowed,
-// provisional streaming output and returns only an error. All hooks have
+// [BeforeGenerationHook], [AfterGenerationHook], [BeforeToolHook], and
+// [AfterToolHook] return explicit decisions. A nil replacement keeps the
+// existing value. BeforeGeneration handles both dialog changes and generation
+// settings; its replacement dialog becomes the conversation the loop continues
+// from. The application decides what to store or reuse after the run.
+// [GenerationChunkHook] receives borrowed, provisional streaming output and
+// returns only an error. All hooks have
 // function adapters and receive the Run context. Cancellation is checked before
 // each hook invocation; callbacks must handle cancellation during their work.
 //

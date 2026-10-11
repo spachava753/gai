@@ -18,14 +18,12 @@ type chunkHookError struct {
 func (e *chunkHookError) Error() string { return e.err.Error() }
 
 type runState struct {
-	agent           *Agent
-	ctx             context.Context
-	instructions    gai.Message
-	toolDefinitions []gai.Tool
-	dialog          gai.Dialog
-	usage           gai.Metadata
-	status          RunStatus
-	seenCallIDs     map[string]struct{}
+	agent       *Agent
+	ctx         context.Context
+	dialog      gai.Dialog
+	usage       gai.Metadata
+	status      RunStatus
+	seenCallIDs map[string]struct{}
 }
 
 // Run executes model and tool rounds until the model or a hook stops, the
@@ -48,12 +46,10 @@ func (a *Agent) Run(ctx context.Context, request RunRequest) (RunResult, error) 
 	}
 
 	state := &runState{
-		agent:           a,
-		ctx:             ctx,
-		instructions:    a.instructions,
-		toolDefinitions: a.toolDefinitions,
-		dialog:          request.Dialog,
-		seenCallIDs:     seen,
+		agent:       a,
+		ctx:         ctx,
+		dialog:      request.Dialog,
+		seenCallIDs: seen,
 	}
 
 	for {
@@ -61,15 +57,11 @@ func (a *Agent) Run(ctx context.Context, request RunRequest) (RunResult, error) 
 			return state.result(), &RunError{Phase: RunPhaseCancellation, Err: err}
 		}
 		generation := state.status.AcceptedGenerations
-		if err := state.prepareDialogForGeneration(generation, request.Options); err != nil {
-			return state.result(), err
-		}
-
 		baseRequest := gai.GenerationRequest{
 			Model:        a.model,
-			Instructions: state.instructions,
+			Instructions: a.instructions,
 			Dialog:       state.dialog,
-			Tools:        state.toolDefinitions,
+			Tools:        a.toolDefinitions,
 			Options:      request.Options,
 		}
 		generationRequest, stopReason, err := state.beforeGenerationRequest(generation, baseRequest)
@@ -105,56 +97,8 @@ func (a *Agent) Run(ctx context.Context, request RunRequest) (RunResult, error) 
 	}
 }
 
-func (s *runState) prepareDialogForGeneration(generation uint, options gai.GenerationOptions) error {
-	// prepareDialogForGeneration applies only explicit, validated replacements.
-	if s.agent.prepareDialog == nil {
-		return nil
-	}
-	if err := s.ctx.Err(); err != nil {
-		return &RunError{Phase: RunPhaseCancellation, Err: err}
-	}
-	decision, err := s.agent.prepareDialog.PrepareDialog(s.ctx, PrepareDialogRequest{
-		Generation: generation,
-		Request: gai.GenerationRequest{
-			Model:        s.agent.model,
-			Instructions: s.instructions,
-			Dialog:       s.dialog,
-			Tools:        s.toolDefinitions,
-			Options:      options,
-		},
-		Status: s.status,
-	})
-	if err != nil {
-		return &RunError{Phase: phaseForContext(s.ctx, RunPhasePrepareDialogHook, err), Err: err}
-	}
-	if decision.Dialog == nil {
-		if len(decision.Usage) != 0 {
-			return &RunError{Phase: RunPhasePrepareDialogHook, Err: errors.New("PrepareDialog usage requires a dialog replacement")}
-		}
-		return nil
-	}
-	if len(decision.Dialog) == 0 {
-		return &RunError{Phase: RunPhasePrepareDialogHook, Err: fmt.Errorf("invalid PrepareDialog replacement: %w", gai.ErrEmptyDialog)}
-	}
-	replacementIDs, err := validateReadyDialog(decision.Dialog)
-	if err != nil {
-		return &RunError{Phase: RunPhasePrepareDialogHook, Err: fmt.Errorf("invalid PrepareDialog replacement: %w", err)}
-	}
-	usage, err := addStandardUsage(s.usage, decision.Usage)
-	if err != nil {
-		return &RunError{Phase: RunPhasePrepareDialogHook, Err: fmt.Errorf("invalid PrepareDialog usage: %w", err)}
-	}
-	for id := range replacementIDs {
-		s.seenCallIDs[id] = struct{}{}
-	}
-	s.dialog = decision.Dialog
-	s.usage = usage
-	s.status.Usage = usage
-	return nil
-}
-
 func (s *runState) beforeGenerationRequest(generation uint, base gai.GenerationRequest) (gai.GenerationRequest, StopReason, error) {
-	// beforeGenerationRequest applies call-only changes without replacing run state.
+	// beforeGenerationRequest validates the request before adopting its dialog.
 	if s.agent.beforeGeneration == nil {
 		return base, "", nil
 	}
@@ -178,9 +122,14 @@ func (s *runState) beforeGenerationRequest(generation uint, base gai.GenerationR
 	if decision.Request == nil {
 		return base, "", nil
 	}
-	if err := validateGenerationRequest(*decision.Request, s.agent.toolDefinitions); err != nil {
+	replacementIDs, err := validateGenerationRequest(*decision.Request, s.agent.toolDefinitions)
+	if err != nil {
 		return gai.GenerationRequest{}, "", &RunError{Phase: RunPhaseBeforeGenerationHook, Err: fmt.Errorf("invalid BeforeGeneration request: %w", err)}
 	}
+	for id := range replacementIDs {
+		s.seenCallIDs[id] = struct{}{}
+	}
+	s.dialog = decision.Request.Dialog
 	return *decision.Request, "", nil
 }
 

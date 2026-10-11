@@ -261,7 +261,9 @@ dialog := append(previousDialog, gai.Message{
 result, err := runner.Run(ctx, agent.RunRequest{Dialog: dialog})
 ```
 
-The loop prefers streaming when available, validates responses, executes tools sequentially, and returns the active dialog plus standard usage. `PrepareDialog`, generation, and tool hooks can replace data or request a normal stop. Nil replacements preserve existing values. The optional `GenerationChunk` hook receives provisional stream chunks; all hooks use interfaces with function adapters.
+The loop prefers streaming when available, validates responses, executes tools sequentially, and returns the active dialog plus standard usage. `BeforeGeneration` is the single request-change hook for compaction, retrieval, instructions, and generation settings. Its validated replacement dialog becomes the conversation that receives responses and tool results, appears in later requests, and is returned in `RunResult.Dialog`, including on a subsequent generation failure. Applications decide what to store or reuse outside the run. Other base request fields come from the Agent configuration and run options each round.
+
+Generation and tool hooks can replace data or request a normal stop. Nil replacements preserve existing values. The optional `GenerationChunk` hook receives provisional stream chunks; all hooks use interfaces with function adapters.
 
 Configuration and call inputs are borrowed read-only values. Struct copies share maps, slices, and pointers; callers copy the parts they want to change. Hook and handler outputs belong to the loop after return. Failures return accepted state and an `*agent.RunError` with a phase and an unwrap-able cause.
 
