@@ -271,6 +271,12 @@ Configuration and call inputs are borrowed read-only values. Struct copies share
 
 Use [`agent/agenttest`](https://pkg.go.dev/github.com/spachava753/gai/agent/agenttest) for scripted generators. See [`agent/design.md`](agent/design.md) for exact ordering, errors, ownership, and continuation behavior.
 
+## Classifiers
+
+Package [`classifier`](classifier/design.md) evaluates shared evidence against named predicate, choice, and ordinal-score questions. It is separate from `Generator`: results contain typed answers and complete probability distributions, not generated messages or tool calls. Applications own thresholds and actions.
+
+`classifier.Input` accepts JSON-compatible Go data plus GAI media attachments. Per-question instructions and descriptions can be strings, objects, or mixed arrays. Probabilities, scores, and optional implementation-specific confidence use `json.Number`. Usage reuses GAI's common metadata keys and accessors. See the [classifier design](classifier/design.md) and compiled examples for the contracts.
+
 ## Composition
 
 `Wrap` applies middleware-style wrappers in order:

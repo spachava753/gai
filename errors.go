@@ -12,9 +12,9 @@ import (
 // [WithMaxGenerationTokens].
 var ErrMaxGenerationLimit = errors.New("maximum generation limit reached")
 
-// UnsupportedInputModalityErr reports that a [GenerationRequest] contains a
-// [Block.ModalityType] unsupported by the selected provider or model. Its string
-// value names the rejected modality.
+// UnsupportedInputModalityErr reports input media unsupported by the selected
+// provider or model, including generation and classifier requests. Its string
+// value names the rejected modality or MIME type.
 type UnsupportedInputModalityErr string
 
 // Error formats the rejected input modality.
@@ -42,10 +42,11 @@ func (i InvalidToolChoiceErr) Error() string {
 	return fmt.Sprintf("invalid tool choice: %s", string(i))
 }
 
-// InvalidParameterErr reports a recognized [GenerationOptions] value with an
+// InvalidParameterErr reports a request field or recognized option with an
 // invalid concrete type, provider range, enum value, or option combination.
+// It is shared by generation and classifier request validation.
 type InvalidParameterErr struct {
-	// Parameter is the exported option key or request field that failed validation.
+	// Parameter is the exported option key or request field path that failed validation.
 	Parameter string `json:"parameter" yaml:"parameter"`
 	// Reason describes the violated contract.
 	Reason string `json:"reason" yaml:"reason"`

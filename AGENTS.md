@@ -19,6 +19,7 @@ GAI is a Go library for interacting with LLM providers, including OpenAI, Anthro
   - Streaming primitives: `streaming.go`
   - Shared domain types and helpers: `message.go`, `tool.go`, `errors.go`, `metrics.go`, `callback.go`
   - Examples and usage via `*_example_test.go` files
+- Public classifier package: `classifier/` contains the stateless `Classifier` interface, JSON-compatible evidence/guidance, typed predicate/choice/score schemas and answers, exact `json.Number` validation, and implementation-specific confidence. It reuses root GAI blocks, errors, and usage metadata without implementing `Generator`. `classifier/design.md` documents the contract. Keep provider wire formats and capability checks out of the shared types; preserve complete distributions and never invent missing probabilities or usage.
 - Public agent packages: `agent/` contains the reusable agent loop and `agent/agenttest/` contains deterministic test fixtures; `agent/design.md` documents behavior and rationale
 - Tests: colocated `*_test.go` for each area, plus provider-specific tests
 - Samples: `sample.jpg`, `sample.pdf`, `sample.wav` for multimodal tests/examples
