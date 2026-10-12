@@ -36,15 +36,6 @@ type preparedLevel struct {
 	description json.RawMessage
 }
 
-// Validate checks the common request contract without contacting a provider.
-// Provider-specific limits, modalities, and required instructions are checked by
-// the adapter. Arbitrary Data and guidance are marshaled once during validation;
-// custom JSON marshalers must be safe for concurrent use and have no side effects.
-func (r Request) Validate() error {
-	_, err := prepareRequest(r)
-	return err
-}
-
 func invalid(parameter, reason string) error {
 	return gai.InvalidParameterErr{Parameter: parameter, Reason: reason}
 }
@@ -63,8 +54,8 @@ func guidance(value any, path string) (json.RawMessage, error) {
 	return data, nil
 }
 
-// prepareRequest validates shared structure and serializes evidence/guidance once,
-// leaving endpoint-specific requirements to the provider adapter.
+// prepareRequest validates the request and encodes input, instructions, and
+// descriptions once. Each provider checks its own additional requirements.
 func prepareRequest(r Request) (preparedRequest, error) {
 	var result preparedRequest
 	if strings.TrimSpace(r.Model) == "" {
@@ -205,21 +196,6 @@ func prepareLevels(levels []ScoreLevel, path string) ([]preparedLevel, error) {
 	return result, nil
 }
 
-// Validate checks response names/order, variants, complete distributions, and
-// numeric consistency against request. Numbers are compared using exact rational
-// arithmetic, not float64. Upstream rounding is allowed up to 0.00005 per
-// probability and 0.00005 for a reported score, including accumulated error in
-// distribution sums and weighted means. Values are never silently renormalized.
-// For resource safety, numeric tokens are limited to 256 bytes and decimal
-// exponents to magnitude 10000. Missing/invalid numbers are not implicit zeros.
-func (r Response) Validate(request Request) error {
-	prepared, err := prepareRequest(request)
-	if err != nil {
-		return err
-	}
-	return validateResponse(r, prepared)
-}
-
 func responseError(name, reason string) error {
 	return &ResponseError{Question: name, Reason: reason}
 }
@@ -246,7 +222,7 @@ func validateAnswer(a Answer, q preparedQuestion) error {
 		return responseError(q.name, "answer name/order does not match question")
 	}
 	count := 0
-	for _, present := range []bool{a.Predicate != nil, a.Choice != nil, a.Score != nil, a.Refusal != nil} {
+	for _, present := range []bool{a.Predicate != nil, a.Choice != nil, a.Score != nil, a.Refused} {
 		if present {
 			count++
 		}
@@ -254,7 +230,7 @@ func validateAnswer(a Answer, q preparedQuestion) error {
 	if count != 1 {
 		return responseError(q.name, "requires exactly one answer variant")
 	}
-	if a.Refusal != nil {
+	if a.Refused {
 		if a.Confidence != nil {
 			return responseError(q.name, "refusal cannot have confidence")
 		}
@@ -321,14 +297,7 @@ func validateScore(a ScoreAnswer, q preparedQuestion) error {
 	if len(a.Probabilities) != len(q.levels) {
 		return responseError(q.name, "incomplete score distribution")
 	}
-	numbers := make([]json.Number, len(a.Probabilities))
-	for i, probability := range a.Probabilities {
-		if probability.Index != i {
-			return responseError(q.name, "score indices/order do not match schema")
-		}
-		numbers[i] = probability.Probability
-	}
-	mean, err := distribution(numbers, q.name)
+	mean, err := distribution(a.Probabilities, q.name)
 	if err != nil {
 		return err
 	}
@@ -336,7 +305,7 @@ func validateScore(a ScoreAnswer, q preparedQuestion) error {
 	if err != nil {
 		return responseError(q.name, "invalid score: "+err.Error())
 	}
-	n := int64(len(numbers))
+	n := int64(len(a.Probabilities))
 	if !near(score, mean, 1+n*(n-1)/2) {
 		return responseError(q.name, "score disagrees with weighted level probabilities")
 	}

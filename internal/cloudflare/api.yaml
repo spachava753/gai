@@ -1,0 +1,244 @@
+# GAI's maintained subset of hosted Cloudflare Workers AI Clef/Clef-Omni.
+# Sources (reviewed 2026-10-12):
+# https://developers.cloudflare.com/api/resources/ai/methods/run/
+# https://developers.cloudflare.com/workers-ai/models/clef/schema-input.json
+# https://developers.cloudflare.com/workers-ai/models/clef/schema-output.json
+# https://developers.cloudflare.com/workers-ai/models/clef-omni/schema-input.json
+# This describes wire shapes, not model capabilities. No defaults or retries.
+# Question unions and arbitrary input remain raw JSON in Go so their numbers,
+# nulls, and unknown fields survive without a float64 conversion.
+openapi: 3.0.3
+info:
+  title: Cloudflare Workers AI Clef
+  version: 0.1.0
+servers:
+  - url: https://api.cloudflare.com/client/v4
+security:
+  - bearerAuth: []
+paths:
+  /accounts/{account_id}/ai/run/{model_name}:
+    post:
+      operationId: classify
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: model_name
+          in: path
+          required: true
+          description: Full model route, such as @cf/cloudflare/clef.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClassificationRequest'
+      responses:
+        '200':
+          description: Answers and reported usage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassificationEnvelope'
+        default:
+          description: API error; raw methods retain status, headers, and body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    JSONValue:
+      description: Arbitrary JSON, including nested numbers and nulls.
+      x-go-type: json.RawMessage
+    EnvelopeMetadata:
+      type: object
+      properties:
+        result:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ResponseMetadata'
+        success:
+          type: boolean
+          nullable: true
+        errors:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/JSONValue'
+        messages:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/JSONValue'
+      additionalProperties: {x-go-type: json.RawMessage}
+    ClassificationEnvelope:
+      type: object
+      properties:
+        result:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ClassificationResponse'
+        success:
+          type: boolean
+          nullable: true
+        errors:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/JSONValue'
+        messages:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/JSONValue'
+      additionalProperties: {x-go-type: json.RawMessage}
+    ClassificationRequest:
+      type: object
+      required: [model, state, questions]
+      properties:
+        model:
+          type: string
+          description: Body selector, such as clef or clef-omni, without namespace.
+        state:
+          description: Text or a structured JSON object or array to evaluate.
+          x-go-type: json.RawMessage
+        questions:
+          type: object
+          description: Named noul, choice, or score questions.
+          x-go-type: map[string]json.RawMessage
+          additionalProperties:
+            $ref: '#/components/schemas/Question'
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+        audio:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+        videos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+      additionalProperties: {x-go-type: json.RawMessage}
+    Attachment:
+      description: Inline data URL or an object with content_type and base64.
+      x-go-type: json.RawMessage
+      oneOf:
+        - type: string
+        - type: object
+          required: [content_type, base64]
+          properties:
+            content_type:
+              type: string
+            base64:
+              type: string
+    Question:
+      type: object
+      description: >-
+        System One question. Noul criteria describe true and false; choice
+        criteria map string outcomes to descriptions or null; score criteria
+        are an ordered array of level descriptions. Instructions and descriptions
+        may be strings, objects, or arrays. The adapter validates the variant.
+      required: [type, instructions]
+      properties:
+        type:
+          type: string
+          description: noul, choice, or score.
+        instructions:
+          $ref: '#/components/schemas/JSONValue'
+        criteria:
+          $ref: '#/components/schemas/JSONValue'
+      additionalProperties: {x-go-type: json.RawMessage}
+    ResponseMetadata:
+      type: object
+      description: Decode metadata separately so valid usage survives an invalid answer.
+      required: [model]
+      properties:
+        model:
+          type: string
+        usage:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Usage'
+      additionalProperties: {x-go-type: json.RawMessage}
+    ClassificationResponse:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ResponseMetadata'
+        - type: object
+          required: [answers]
+          properties:
+            answers:
+              type: object
+              additionalProperties:
+                $ref: '#/components/schemas/Answer'
+    Answer:
+      type: object
+      description: >-
+        Noul supplies noul; choice supplies choice and probabilities; score
+        supplies score, probabilities, and legend. Confidence may be reported.
+        Keep absent and null values distinct. Adapters validate required fields
+        for the returned type before exposing answers.
+      required: [type]
+      properties:
+        type:
+          type: string
+        noul:
+          type: number
+          nullable: true
+        choice:
+          type: string
+          nullable: true
+        score:
+          type: number
+          nullable: true
+        confidence:
+          type: number
+          nullable: true
+        probabilities:
+          type: object
+          additionalProperties:
+            type: number
+        legend:
+          type: object
+          nullable: true
+          additionalProperties: {x-go-type: json.RawMessage}
+      additionalProperties: {x-go-type: json.RawMessage}
+    Usage:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+          nullable: true
+        output_tokens:
+          type: integer
+          nullable: true
+      additionalProperties: {x-go-type: json.RawMessage}
+    ErrorDetail:
+      type: object
+      properties:
+        message:
+          type: string
+      additionalProperties: {x-go-type: json.RawMessage}
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+      additionalProperties: {x-go-type: json.RawMessage}

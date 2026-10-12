@@ -1,0 +1,161 @@
+# GAI's maintained subset of the Perplexity Decisions API.
+# Source: https://docs.perplexity.ai/api-reference/decisions-post (reviewed 2026-10-12).
+# This describes wire shapes, not model capabilities. No defaults or retries.
+# Question unions and arbitrary input remain raw JSON in Go so their numbers,
+# nulls, and unknown fields survive without a float64 conversion.
+openapi: 3.0.3
+info:
+  title: Perplexity Decisions
+  version: 0.1.0
+servers:
+  - url: https://api.perplexity.ai/v1
+security:
+  - bearerAuth: []
+paths:
+  /decisions:
+    post:
+      operationId: classify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClassificationRequest'
+      responses:
+        '200':
+          description: Answers and reported usage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassificationResponse'
+        default:
+          description: API error; raw methods retain status, headers, and body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    JSONValue:
+      description: Arbitrary JSON, including nested numbers and nulls.
+      x-go-type: json.RawMessage
+    ClassificationRequest:
+      type: object
+      required: [model, state, questions]
+      properties:
+        model:
+          type: string
+        state:
+          description: Text or structured JSON; arrays may include image_url data-URL parts.
+          x-go-type: json.RawMessage
+        questions:
+          type: object
+          description: Named noul, choice, or score questions.
+          x-go-type: map[string]json.RawMessage
+          additionalProperties:
+            $ref: '#/components/schemas/Question'
+      additionalProperties: {x-go-type: json.RawMessage}
+    Question:
+      type: object
+      description: >-
+        System One question. Noul criteria describe true and false; choice
+        criteria map string outcomes to descriptions or null; score criteria
+        are an ordered array of level descriptions. Instructions and descriptions
+        may be strings, objects, or arrays. The adapter validates the variant.
+      required: [type]
+      properties:
+        type:
+          type: string
+          description: noul, choice, or score.
+        instructions:
+          $ref: '#/components/schemas/JSONValue'
+        criteria:
+          $ref: '#/components/schemas/JSONValue'
+      additionalProperties: {x-go-type: json.RawMessage}
+    ResponseMetadata:
+      type: object
+      description: Decode metadata separately so valid usage survives an invalid answer.
+      required: [model]
+      properties:
+        model:
+          type: string
+        usage:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Usage'
+      additionalProperties: {x-go-type: json.RawMessage}
+    ClassificationResponse:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ResponseMetadata'
+        - type: object
+          required: [answers]
+          properties:
+            answers:
+              type: object
+              additionalProperties:
+                $ref: '#/components/schemas/Answer'
+    Answer:
+      type: object
+      description: >-
+        Noul supplies noul; choice supplies choice and probabilities; score
+        supplies score, probabilities, and legend. Confidence may be reported.
+        Keep absent and null values distinct. Adapters validate required fields
+        for the returned type before exposing answers.
+      required: [type]
+      properties:
+        type:
+          type: string
+        noul:
+          type: number
+          nullable: true
+        choice:
+          type: string
+          nullable: true
+        score:
+          type: number
+          nullable: true
+        confidence:
+          type: number
+          nullable: true
+        probabilities:
+          type: object
+          additionalProperties:
+            type: number
+        legend:
+          type: object
+          nullable: true
+          additionalProperties: {x-go-type: json.RawMessage}
+      additionalProperties: {x-go-type: json.RawMessage}
+    Usage:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+          nullable: true
+        output_tokens:
+          type: integer
+          nullable: true
+      additionalProperties: {x-go-type: json.RawMessage}
+    ErrorDetail:
+      type: object
+      properties:
+        message:
+          type: string
+      additionalProperties: {x-go-type: json.RawMessage}
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+      additionalProperties: {x-go-type: json.RawMessage}

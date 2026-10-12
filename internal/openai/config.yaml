@@ -1,6 +1,8 @@
 # Run `go generate ./internal/openai` from the repository root.
 # Paths are relative to internal/openai, where go generate runs the tool.
 package: openai
+additional-imports:
+  - package: github.com/spachava753/gai/internal/wirejson
 generate:
   models: true
   client: true

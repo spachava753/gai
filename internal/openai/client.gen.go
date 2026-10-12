@@ -15,6 +15,7 @@ import (
 
 	"github.com/oapi-codegen/nullable"
 	"github.com/oapi-codegen/runtime"
+	"github.com/spachava753/gai/internal/wirejson"
 )
 
 // AllowedTools defines model for AllowedTools.
@@ -199,6 +200,102 @@ type CustomToolDefinition struct {
 	Format               *JSONObject                `json:"format,omitempty"`
 	Name                 *string                    `json:"name,omitempty"`
 	AdditionalProperties map[string]json.RawMessage `json:"-"`
+}
+
+// DecisionAnswer Predicate supplies probability; choice supplies choice and probabilities; score supplies score and probabilities; refusal supplies no numeric answer. Keep optional fields nullable so decoding does not invent zero values.
+type DecisionAnswer struct {
+	Choice               nullable.Nullable[json.RawMessage]                     `json:"choice,omitempty"`
+	Confidence           nullable.Nullable[wirejson.Number]                     `json:"confidence,omitempty"`
+	Name                 string                                                 `json:"name"`
+	Probabilities        nullable.Nullable[[]DecisionAnswer_Probabilities_Item] `json:"probabilities,omitempty"`
+	Probability          nullable.Nullable[wirejson.Number]                     `json:"probability,omitempty"`
+	Score                nullable.Nullable[wirejson.Number]                     `json:"score,omitempty"`
+	Type                 string                                                 `json:"type"`
+	AdditionalProperties map[string]json.RawMessage                             `json:"-"`
+}
+
+// DecisionAnswer_Probabilities_Item defines model for DecisionAnswer.probabilities.Item.
+type DecisionAnswer_Probabilities_Item struct {
+	Label       *string         `json:"label,omitempty"`
+	Probability wirejson.Number `json:"probability"`
+
+	// Value String/boolean choice value or integer score level index.
+	Value                json.RawMessage            `json:"value"`
+	AdditionalProperties map[string]json.RawMessage `json:"-"`
+}
+
+// DecisionInputTokensDetails defines model for DecisionInputTokensDetails.
+type DecisionInputTokensDetails struct {
+	CacheWriteTokens     nullable.Nullable[int]     `json:"cache_write_tokens,omitempty"`
+	CachedTokens         nullable.Nullable[int]     `json:"cached_tokens,omitempty"`
+	AdditionalProperties map[string]json.RawMessage `json:"-"`
+}
+
+// DecisionOutputTokensDetails defines model for DecisionOutputTokensDetails.
+type DecisionOutputTokensDetails struct {
+	ReasoningTokens      nullable.Nullable[int]     `json:"reasoning_tokens,omitempty"`
+	AdditionalProperties map[string]json.RawMessage `json:"-"`
+}
+
+// DecisionQuestion Predicate, choice, or score question. Choices and levels apply only to their corresponding type. The adapter selects and validates fields.
+type DecisionQuestion struct {
+	Choices              *[]DecisionQuestion_Choices_Item `json:"choices,omitempty"`
+	Instructions         string                           `json:"instructions"`
+	Levels               *[]DecisionQuestion_Levels_Item  `json:"levels,omitempty"`
+	Name                 *string                          `json:"name,omitempty"`
+	Type                 string                           `json:"type"`
+	AdditionalProperties map[string]json.RawMessage       `json:"-"`
+}
+
+// DecisionQuestion_Choices_Item defines model for DecisionQuestion.choices.Item.
+type DecisionQuestion_Choices_Item struct {
+	Description *string `json:"description,omitempty"`
+
+	// Value String or boolean outcome; the two types remain distinct.
+	Value                json.RawMessage            `json:"value"`
+	AdditionalProperties map[string]json.RawMessage `json:"-"`
+}
+
+// DecisionQuestion_Levels_Item defines model for DecisionQuestion.levels.Item.
+type DecisionQuestion_Levels_Item struct {
+	Description          *string                    `json:"description,omitempty"`
+	Label                string                     `json:"label"`
+	AdditionalProperties map[string]json.RawMessage `json:"-"`
+}
+
+// DecisionRequest defines model for DecisionRequest.
+type DecisionRequest struct {
+	// Input Text or an array of messages with input_text/input_image content.
+	Input                json.RawMessage            `json:"input"`
+	Model                string                     `json:"model"`
+	Questions            []json.RawMessage          `json:"questions"`
+	SafetyIdentifier     *string                    `json:"safety_identifier,omitempty"`
+	AdditionalProperties map[string]json.RawMessage `json:"-"`
+}
+
+// DecisionResponse defines model for DecisionResponse.
+type DecisionResponse struct {
+	Answers              []DecisionAnswer                 `json:"answers"`
+	Model                string                           `json:"model"`
+	Usage                nullable.Nullable[DecisionUsage] `json:"usage,omitempty"`
+	AdditionalProperties map[string]json.RawMessage       `json:"-"`
+}
+
+// DecisionResponseMetadata Decode metadata separately so valid usage survives an invalid answer.
+type DecisionResponseMetadata struct {
+	Model                string                           `json:"model"`
+	Usage                nullable.Nullable[DecisionUsage] `json:"usage,omitempty"`
+	AdditionalProperties map[string]json.RawMessage       `json:"-"`
+}
+
+// DecisionUsage defines model for DecisionUsage.
+type DecisionUsage struct {
+	InputTokens          nullable.Nullable[int]                         `json:"input_tokens,omitempty"`
+	InputTokensDetails   nullable.Nullable[DecisionInputTokensDetails]  `json:"input_tokens_details,omitempty"`
+	OutputTokens         nullable.Nullable[int]                         `json:"output_tokens,omitempty"`
+	OutputTokensDetails  nullable.Nullable[DecisionOutputTokensDetails] `json:"output_tokens_details,omitempty"`
+	TotalTokens          nullable.Nullable[int]                         `json:"total_tokens,omitempty"`
+	AdditionalProperties map[string]json.RawMessage                     `json:"-"`
 }
 
 // ErrorCode defines model for ErrorCode.
@@ -589,6 +686,9 @@ type CreateChatCompletionParams struct {
 
 // CreateChatCompletionJSONRequestBody defines body for CreateChatCompletion for application/json ContentType.
 type CreateChatCompletionJSONRequestBody = ChatCompletionRequest
+
+// CreateDecisionJSONRequestBody defines body for CreateDecision for application/json ContentType.
+type CreateDecisionJSONRequestBody = DecisionRequest
 
 // Getter for additional properties for AllowedTools. Returns the specified
 // element and whether it was found
@@ -3048,6 +3148,1105 @@ func (a CustomToolDefinition) MarshalJSON() ([]byte, error) {
 		object["name"], err = json.Marshal(a.Name)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling 'name': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionAnswer. Returns the specified
+// element and whether it was found
+func (a DecisionAnswer) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionAnswer
+func (a *DecisionAnswer) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionAnswer to handle AdditionalProperties
+func (a *DecisionAnswer) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["choice"]; found {
+		err = json.Unmarshal(raw, &a.Choice)
+		if err != nil {
+			return fmt.Errorf("error reading 'choice': %w", err)
+		}
+		delete(object, "choice")
+	}
+
+	if raw, found := object["confidence"]; found {
+		err = json.Unmarshal(raw, &a.Confidence)
+		if err != nil {
+			return fmt.Errorf("error reading 'confidence': %w", err)
+		}
+		delete(object, "confidence")
+	}
+
+	if raw, found := object["name"]; found {
+		err = json.Unmarshal(raw, &a.Name)
+		if err != nil {
+			return fmt.Errorf("error reading 'name': %w", err)
+		}
+		delete(object, "name")
+	}
+
+	if raw, found := object["probabilities"]; found {
+		err = json.Unmarshal(raw, &a.Probabilities)
+		if err != nil {
+			return fmt.Errorf("error reading 'probabilities': %w", err)
+		}
+		delete(object, "probabilities")
+	}
+
+	if raw, found := object["probability"]; found {
+		err = json.Unmarshal(raw, &a.Probability)
+		if err != nil {
+			return fmt.Errorf("error reading 'probability': %w", err)
+		}
+		delete(object, "probability")
+	}
+
+	if raw, found := object["score"]; found {
+		err = json.Unmarshal(raw, &a.Score)
+		if err != nil {
+			return fmt.Errorf("error reading 'score': %w", err)
+		}
+		delete(object, "score")
+	}
+
+	if raw, found := object["type"]; found {
+		err = json.Unmarshal(raw, &a.Type)
+		if err != nil {
+			return fmt.Errorf("error reading 'type': %w", err)
+		}
+		delete(object, "type")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionAnswer to handle AdditionalProperties
+func (a DecisionAnswer) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Choice != nil {
+		object["choice"], err = json.Marshal(a.Choice)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'choice': %w", err)
+		}
+	}
+
+	if a.Confidence != nil {
+		object["confidence"], err = json.Marshal(a.Confidence)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'confidence': %w", err)
+		}
+	}
+
+	object["name"], err = json.Marshal(a.Name)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'name': %w", err)
+	}
+
+	if a.Probabilities != nil {
+		object["probabilities"], err = json.Marshal(a.Probabilities)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'probabilities': %w", err)
+		}
+	}
+
+	if a.Probability != nil {
+		object["probability"], err = json.Marshal(a.Probability)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'probability': %w", err)
+		}
+	}
+
+	if a.Score != nil {
+		object["score"], err = json.Marshal(a.Score)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'score': %w", err)
+		}
+	}
+
+	object["type"], err = json.Marshal(a.Type)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'type': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionAnswer_Probabilities_Item. Returns the specified
+// element and whether it was found
+func (a DecisionAnswer_Probabilities_Item) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionAnswer_Probabilities_Item
+func (a *DecisionAnswer_Probabilities_Item) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionAnswer_Probabilities_Item to handle AdditionalProperties
+func (a *DecisionAnswer_Probabilities_Item) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["label"]; found {
+		err = json.Unmarshal(raw, &a.Label)
+		if err != nil {
+			return fmt.Errorf("error reading 'label': %w", err)
+		}
+		delete(object, "label")
+	}
+
+	if raw, found := object["probability"]; found {
+		err = json.Unmarshal(raw, &a.Probability)
+		if err != nil {
+			return fmt.Errorf("error reading 'probability': %w", err)
+		}
+		delete(object, "probability")
+	}
+
+	if raw, found := object["value"]; found {
+		err = json.Unmarshal(raw, &a.Value)
+		if err != nil {
+			return fmt.Errorf("error reading 'value': %w", err)
+		}
+		delete(object, "value")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionAnswer_Probabilities_Item to handle AdditionalProperties
+func (a DecisionAnswer_Probabilities_Item) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Label != nil {
+		object["label"], err = json.Marshal(a.Label)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'label': %w", err)
+		}
+	}
+
+	object["probability"], err = json.Marshal(a.Probability)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'probability': %w", err)
+	}
+
+	object["value"], err = json.Marshal(a.Value)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'value': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionInputTokensDetails. Returns the specified
+// element and whether it was found
+func (a DecisionInputTokensDetails) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionInputTokensDetails
+func (a *DecisionInputTokensDetails) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionInputTokensDetails to handle AdditionalProperties
+func (a *DecisionInputTokensDetails) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["cache_write_tokens"]; found {
+		err = json.Unmarshal(raw, &a.CacheWriteTokens)
+		if err != nil {
+			return fmt.Errorf("error reading 'cache_write_tokens': %w", err)
+		}
+		delete(object, "cache_write_tokens")
+	}
+
+	if raw, found := object["cached_tokens"]; found {
+		err = json.Unmarshal(raw, &a.CachedTokens)
+		if err != nil {
+			return fmt.Errorf("error reading 'cached_tokens': %w", err)
+		}
+		delete(object, "cached_tokens")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionInputTokensDetails to handle AdditionalProperties
+func (a DecisionInputTokensDetails) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.CacheWriteTokens != nil {
+		object["cache_write_tokens"], err = json.Marshal(a.CacheWriteTokens)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'cache_write_tokens': %w", err)
+		}
+	}
+
+	if a.CachedTokens != nil {
+		object["cached_tokens"], err = json.Marshal(a.CachedTokens)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'cached_tokens': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionOutputTokensDetails. Returns the specified
+// element and whether it was found
+func (a DecisionOutputTokensDetails) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionOutputTokensDetails
+func (a *DecisionOutputTokensDetails) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionOutputTokensDetails to handle AdditionalProperties
+func (a *DecisionOutputTokensDetails) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["reasoning_tokens"]; found {
+		err = json.Unmarshal(raw, &a.ReasoningTokens)
+		if err != nil {
+			return fmt.Errorf("error reading 'reasoning_tokens': %w", err)
+		}
+		delete(object, "reasoning_tokens")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionOutputTokensDetails to handle AdditionalProperties
+func (a DecisionOutputTokensDetails) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.ReasoningTokens != nil {
+		object["reasoning_tokens"], err = json.Marshal(a.ReasoningTokens)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'reasoning_tokens': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionQuestion. Returns the specified
+// element and whether it was found
+func (a DecisionQuestion) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionQuestion
+func (a *DecisionQuestion) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionQuestion to handle AdditionalProperties
+func (a *DecisionQuestion) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["choices"]; found {
+		err = json.Unmarshal(raw, &a.Choices)
+		if err != nil {
+			return fmt.Errorf("error reading 'choices': %w", err)
+		}
+		delete(object, "choices")
+	}
+
+	if raw, found := object["instructions"]; found {
+		err = json.Unmarshal(raw, &a.Instructions)
+		if err != nil {
+			return fmt.Errorf("error reading 'instructions': %w", err)
+		}
+		delete(object, "instructions")
+	}
+
+	if raw, found := object["levels"]; found {
+		err = json.Unmarshal(raw, &a.Levels)
+		if err != nil {
+			return fmt.Errorf("error reading 'levels': %w", err)
+		}
+		delete(object, "levels")
+	}
+
+	if raw, found := object["name"]; found {
+		err = json.Unmarshal(raw, &a.Name)
+		if err != nil {
+			return fmt.Errorf("error reading 'name': %w", err)
+		}
+		delete(object, "name")
+	}
+
+	if raw, found := object["type"]; found {
+		err = json.Unmarshal(raw, &a.Type)
+		if err != nil {
+			return fmt.Errorf("error reading 'type': %w", err)
+		}
+		delete(object, "type")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionQuestion to handle AdditionalProperties
+func (a DecisionQuestion) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Choices != nil {
+		object["choices"], err = json.Marshal(a.Choices)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'choices': %w", err)
+		}
+	}
+
+	object["instructions"], err = json.Marshal(a.Instructions)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'instructions': %w", err)
+	}
+
+	if a.Levels != nil {
+		object["levels"], err = json.Marshal(a.Levels)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'levels': %w", err)
+		}
+	}
+
+	if a.Name != nil {
+		object["name"], err = json.Marshal(a.Name)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'name': %w", err)
+		}
+	}
+
+	object["type"], err = json.Marshal(a.Type)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'type': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionQuestion_Choices_Item. Returns the specified
+// element and whether it was found
+func (a DecisionQuestion_Choices_Item) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionQuestion_Choices_Item
+func (a *DecisionQuestion_Choices_Item) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionQuestion_Choices_Item to handle AdditionalProperties
+func (a *DecisionQuestion_Choices_Item) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["description"]; found {
+		err = json.Unmarshal(raw, &a.Description)
+		if err != nil {
+			return fmt.Errorf("error reading 'description': %w", err)
+		}
+		delete(object, "description")
+	}
+
+	if raw, found := object["value"]; found {
+		err = json.Unmarshal(raw, &a.Value)
+		if err != nil {
+			return fmt.Errorf("error reading 'value': %w", err)
+		}
+		delete(object, "value")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionQuestion_Choices_Item to handle AdditionalProperties
+func (a DecisionQuestion_Choices_Item) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Description != nil {
+		object["description"], err = json.Marshal(a.Description)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'description': %w", err)
+		}
+	}
+
+	object["value"], err = json.Marshal(a.Value)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'value': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionQuestion_Levels_Item. Returns the specified
+// element and whether it was found
+func (a DecisionQuestion_Levels_Item) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionQuestion_Levels_Item
+func (a *DecisionQuestion_Levels_Item) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionQuestion_Levels_Item to handle AdditionalProperties
+func (a *DecisionQuestion_Levels_Item) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["description"]; found {
+		err = json.Unmarshal(raw, &a.Description)
+		if err != nil {
+			return fmt.Errorf("error reading 'description': %w", err)
+		}
+		delete(object, "description")
+	}
+
+	if raw, found := object["label"]; found {
+		err = json.Unmarshal(raw, &a.Label)
+		if err != nil {
+			return fmt.Errorf("error reading 'label': %w", err)
+		}
+		delete(object, "label")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionQuestion_Levels_Item to handle AdditionalProperties
+func (a DecisionQuestion_Levels_Item) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Description != nil {
+		object["description"], err = json.Marshal(a.Description)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'description': %w", err)
+		}
+	}
+
+	object["label"], err = json.Marshal(a.Label)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'label': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionRequest. Returns the specified
+// element and whether it was found
+func (a DecisionRequest) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionRequest
+func (a *DecisionRequest) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionRequest to handle AdditionalProperties
+func (a *DecisionRequest) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["input"]; found {
+		err = json.Unmarshal(raw, &a.Input)
+		if err != nil {
+			return fmt.Errorf("error reading 'input': %w", err)
+		}
+		delete(object, "input")
+	}
+
+	if raw, found := object["model"]; found {
+		err = json.Unmarshal(raw, &a.Model)
+		if err != nil {
+			return fmt.Errorf("error reading 'model': %w", err)
+		}
+		delete(object, "model")
+	}
+
+	if raw, found := object["questions"]; found {
+		err = json.Unmarshal(raw, &a.Questions)
+		if err != nil {
+			return fmt.Errorf("error reading 'questions': %w", err)
+		}
+		delete(object, "questions")
+	}
+
+	if raw, found := object["safety_identifier"]; found {
+		err = json.Unmarshal(raw, &a.SafetyIdentifier)
+		if err != nil {
+			return fmt.Errorf("error reading 'safety_identifier': %w", err)
+		}
+		delete(object, "safety_identifier")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionRequest to handle AdditionalProperties
+func (a DecisionRequest) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["input"], err = json.Marshal(a.Input)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'input': %w", err)
+	}
+
+	object["model"], err = json.Marshal(a.Model)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'model': %w", err)
+	}
+
+	if a.Questions != nil {
+		object["questions"], err = json.Marshal(a.Questions)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'questions': %w", err)
+		}
+	}
+
+	if a.SafetyIdentifier != nil {
+		object["safety_identifier"], err = json.Marshal(a.SafetyIdentifier)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'safety_identifier': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionResponse. Returns the specified
+// element and whether it was found
+func (a DecisionResponse) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionResponse
+func (a *DecisionResponse) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionResponse to handle AdditionalProperties
+func (a *DecisionResponse) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["answers"]; found {
+		err = json.Unmarshal(raw, &a.Answers)
+		if err != nil {
+			return fmt.Errorf("error reading 'answers': %w", err)
+		}
+		delete(object, "answers")
+	}
+
+	if raw, found := object["model"]; found {
+		err = json.Unmarshal(raw, &a.Model)
+		if err != nil {
+			return fmt.Errorf("error reading 'model': %w", err)
+		}
+		delete(object, "model")
+	}
+
+	if raw, found := object["usage"]; found {
+		err = json.Unmarshal(raw, &a.Usage)
+		if err != nil {
+			return fmt.Errorf("error reading 'usage': %w", err)
+		}
+		delete(object, "usage")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionResponse to handle AdditionalProperties
+func (a DecisionResponse) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Answers != nil {
+		object["answers"], err = json.Marshal(a.Answers)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'answers': %w", err)
+		}
+	}
+
+	object["model"], err = json.Marshal(a.Model)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'model': %w", err)
+	}
+
+	if a.Usage != nil {
+		object["usage"], err = json.Marshal(a.Usage)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'usage': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionResponseMetadata. Returns the specified
+// element and whether it was found
+func (a DecisionResponseMetadata) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionResponseMetadata
+func (a *DecisionResponseMetadata) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionResponseMetadata to handle AdditionalProperties
+func (a *DecisionResponseMetadata) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["model"]; found {
+		err = json.Unmarshal(raw, &a.Model)
+		if err != nil {
+			return fmt.Errorf("error reading 'model': %w", err)
+		}
+		delete(object, "model")
+	}
+
+	if raw, found := object["usage"]; found {
+		err = json.Unmarshal(raw, &a.Usage)
+		if err != nil {
+			return fmt.Errorf("error reading 'usage': %w", err)
+		}
+		delete(object, "usage")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionResponseMetadata to handle AdditionalProperties
+func (a DecisionResponseMetadata) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["model"], err = json.Marshal(a.Model)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'model': %w", err)
+	}
+
+	if a.Usage != nil {
+		object["usage"], err = json.Marshal(a.Usage)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'usage': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for DecisionUsage. Returns the specified
+// element and whether it was found
+func (a DecisionUsage) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DecisionUsage
+func (a *DecisionUsage) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DecisionUsage to handle AdditionalProperties
+func (a *DecisionUsage) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["input_tokens"]; found {
+		err = json.Unmarshal(raw, &a.InputTokens)
+		if err != nil {
+			return fmt.Errorf("error reading 'input_tokens': %w", err)
+		}
+		delete(object, "input_tokens")
+	}
+
+	if raw, found := object["input_tokens_details"]; found {
+		err = json.Unmarshal(raw, &a.InputTokensDetails)
+		if err != nil {
+			return fmt.Errorf("error reading 'input_tokens_details': %w", err)
+		}
+		delete(object, "input_tokens_details")
+	}
+
+	if raw, found := object["output_tokens"]; found {
+		err = json.Unmarshal(raw, &a.OutputTokens)
+		if err != nil {
+			return fmt.Errorf("error reading 'output_tokens': %w", err)
+		}
+		delete(object, "output_tokens")
+	}
+
+	if raw, found := object["output_tokens_details"]; found {
+		err = json.Unmarshal(raw, &a.OutputTokensDetails)
+		if err != nil {
+			return fmt.Errorf("error reading 'output_tokens_details': %w", err)
+		}
+		delete(object, "output_tokens_details")
+	}
+
+	if raw, found := object["total_tokens"]; found {
+		err = json.Unmarshal(raw, &a.TotalTokens)
+		if err != nil {
+			return fmt.Errorf("error reading 'total_tokens': %w", err)
+		}
+		delete(object, "total_tokens")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DecisionUsage to handle AdditionalProperties
+func (a DecisionUsage) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.InputTokens != nil {
+		object["input_tokens"], err = json.Marshal(a.InputTokens)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'input_tokens': %w", err)
+		}
+	}
+
+	if a.InputTokensDetails != nil {
+		object["input_tokens_details"], err = json.Marshal(a.InputTokensDetails)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'input_tokens_details': %w", err)
+		}
+	}
+
+	if a.OutputTokens != nil {
+		object["output_tokens"], err = json.Marshal(a.OutputTokens)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'output_tokens': %w", err)
+		}
+	}
+
+	if a.OutputTokensDetails != nil {
+		object["output_tokens_details"], err = json.Marshal(a.OutputTokensDetails)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'output_tokens_details': %w", err)
+		}
+	}
+
+	if a.TotalTokens != nil {
+		object["total_tokens"], err = json.Marshal(a.TotalTokens)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'total_tokens': %w", err)
 		}
 	}
 
@@ -7416,6 +8615,18 @@ type ClientInterface interface {
 	//
 	// Create a completion or a stream of completion events.
 	CreateChatCompletion(ctx context.Context, params *CreateChatCompletionParams, body CreateChatCompletionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDecisionWithBody performs a POST /decisions (the `CreateDecision` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Classify or score the same input against named questions. Source: https://developers.openai.com/api/reference/resources/decisions/methods/create (reviewed 2026-10-12). No streaming or automatic retries.
+	CreateDecisionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDecision performs a POST /decisions (the `CreateDecision` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Classify or score the same input against named questions. Source: https://developers.openai.com/api/reference/resources/decisions/methods/create (reviewed 2026-10-12). No streaming or automatic retries.
+	CreateDecision(ctx context.Context, body CreateDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // CreateChatCompletionWithBody performs a POST /chat/completions (the `CreateChatCompletion` operationId) request,
@@ -7440,6 +8651,38 @@ func (c *Client) CreateChatCompletionWithBody(ctx context.Context, params *Creat
 // Create a completion or a stream of completion events.
 func (c *Client) CreateChatCompletion(ctx context.Context, params *CreateChatCompletionParams, body CreateChatCompletionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateChatCompletionRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDecisionWithBody performs a POST /decisions (the `CreateDecision` operationId) request,
+// with any type of body and a specified content type.
+//
+// Classify or score the same input against named questions. Source: https://developers.openai.com/api/reference/resources/decisions/methods/create (reviewed 2026-10-12). No streaming or automatic retries.
+func (c *Client) CreateDecisionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDecisionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDecision performs a POST /decisions (the `CreateDecision` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Classify or score the same input against named questions. Source: https://developers.openai.com/api/reference/resources/decisions/methods/create (reviewed 2026-10-12). No streaming or automatic retries.
+func (c *Client) CreateDecision(ctx context.Context, body CreateDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDecisionRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7549,6 +8792,46 @@ func NewCreateChatCompletionRequestWithBody(server string, params *CreateChatCom
 	return req, nil
 }
 
+// NewCreateDecisionRequest calls the generic CreateDecision builder with application/json body
+func NewCreateDecisionRequest(server string, body CreateDecisionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateDecisionRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateDecisionRequestWithBody constructs an http.Request for the CreateDecision method, with any body, and a specified content type
+func NewCreateDecisionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/decisions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -7606,6 +8889,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Create a completion or a stream of completion events.
 	CreateChatCompletionWithResponse(ctx context.Context, params *CreateChatCompletionParams, body CreateChatCompletionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateChatCompletionResponse, error)
+
+	// CreateDecisionWithBodyWithResponse performs a POST /decisions (the `CreateDecision` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Classify or score the same input against named questions. Source: https://developers.openai.com/api/reference/resources/decisions/methods/create (reviewed 2026-10-12). No streaming or automatic retries.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateDecisionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDecisionResponse, error)
+
+	// CreateDecisionWithResponse performs a POST /decisions (the `CreateDecision` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Classify or score the same input against named questions. Source: https://developers.openai.com/api/reference/resources/decisions/methods/create (reviewed 2026-10-12). No streaming or automatic retries.
+	CreateDecisionWithResponse(ctx context.Context, body CreateDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDecisionResponse, error)
 }
 
 // CreateChatCompletionResponse200Headers the declared response headers of an HTTP 200 response for CreateChatCompletion
@@ -7673,6 +8970,54 @@ func (r CreateChatCompletionResponse) ContentType() string {
 	return ""
 }
 
+type CreateDecisionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DecisionResponse
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateDecisionResponse) GetJSON200() *DecisionResponse {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r CreateDecisionResponse) GetJSONDefault() *ErrorResponse {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateDecisionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateDecisionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateDecisionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateDecisionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // CreateChatCompletionWithBodyWithResponse performs a POST /chat/completions (the `CreateChatCompletion` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -7697,6 +9042,32 @@ func (c *ClientWithResponses) CreateChatCompletionWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseCreateChatCompletionResponse(rsp)
+}
+
+// CreateDecisionWithBodyWithResponse performs a POST /decisions (the `CreateDecision` operationId) request,
+// with any type of body and a specified content type.
+//
+// Classify or score the same input against named questions. Source: https://developers.openai.com/api/reference/resources/decisions/methods/create (reviewed 2026-10-12). No streaming or automatic retries.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateDecisionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDecisionResponse, error) {
+	rsp, err := c.CreateDecisionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDecisionResponse(rsp)
+}
+
+// CreateDecisionWithResponse performs a POST /decisions (the `CreateDecision` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Classify or score the same input against named questions. Source: https://developers.openai.com/api/reference/resources/decisions/methods/create (reviewed 2026-10-12). No streaming or automatic retries.
+func (c *ClientWithResponses) CreateDecisionWithResponse(ctx context.Context, body CreateDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDecisionResponse, error) {
+	rsp, err := c.CreateDecision(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDecisionResponse(rsp)
 }
 
 // ParseCreateChatCompletionResponse parses an HTTP response from a CreateChatCompletionWithResponse call
@@ -7777,6 +9148,39 @@ func ParseCreateChatCompletionResponse(rsp *http.Response) (*CreateChatCompletio
 			headers.XRequestId = &value
 		}
 		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateDecisionResponse parses an HTTP response from a CreateDecisionWithResponse call
+func ParseCreateDecisionResponse(rsp *http.Response) (*CreateDecisionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateDecisionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DecisionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
 	}
 
 	return response, nil

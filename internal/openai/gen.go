@@ -1,5 +1,5 @@
-// Package openai contains the generated shared Chat Completions wire client.
-// It backs gai.OpenAiGenerator.
+// Package openai contains generated Chat Completions and OpenAI Decisions clients.
+// It backs gai.OpenAiGenerator and the OpenAI classifier in x/classifier.
 //
 // Use Client's raw HTTP response methods for streaming and full error fidelity.
 // ClientWithResponses buffers and closes the body; it does not parse SSE.

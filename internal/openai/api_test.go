@@ -141,6 +141,72 @@ func TestErrorRoundTrips(t *testing.T) {
 	}
 }
 
+func TestDecisions(t *testing.T) {
+	t.Run("wire round trips", func(t *testing.T) {
+		for _, test := range []struct {
+			name  string
+			input string
+			value any
+		}{
+			{"text request", `{"model":"decisions-model","input":"","questions":[{"name":"p","type":"predicate","instructions":"Check"},{"name":"c","type":"choice","instructions":"Choose","choices":[{"value":false},{"value":"false","description":"String"}]},{"name":"s","type":"score","instructions":"Rate","levels":[{"label":"low"},{"label":"high","description":"Blocks work"}]}],"safety_identifier":"opaque","future":9007199254740993}`, &DecisionRequest{}},
+			{"image request", `{"model":"decisions-model","input":[{"role":"user","content":[{"type":"input_text","text":"Check"},{"type":"input_image","image_url":"data:image/png;base64,YWJj"}]}],"questions":[{"name":"p","type":"predicate","instructions":"Check"}]}`, &DecisionRequest{}},
+			{"response", `{"model":"resolved","answers":[{"name":"p","type":"predicate","probability":0.123456789012345678901},{"name":"c","type":"choice","choice":false,"confidence":0,"probabilities":[{"value":false,"probability":0.8000},{"value":"false","probability":0.2000}]},{"name":"s","type":"score","score":1.1000,"probabilities":[{"value":0,"label":"low","probability":0.1},{"value":1,"probability":0.7},{"value":2,"probability":0.2}]},{"name":"r","type":"refusal"}],"usage":{"input_tokens":12,"output_tokens":0,"input_tokens_details":{"cached_tokens":0,"unknown":9007199254740993},"output_tokens_details":{"reasoning_tokens":0}}}`, &DecisionResponse{}},
+			{"null usage", `{"model":"resolved","answers":[],"usage":null}`, &DecisionResponse{}},
+			{"nullable counts", `{"model":"resolved","answers":[],"usage":{"input_tokens":null,"input_tokens_details":null}}`, &DecisionResponse{}},
+			{"absent usage", `{"model":"resolved","answers":[],"future":{"number":9007199254740993}}`, &DecisionResponse{}},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				roundTrip(t, test.input, test.value)
+			})
+		}
+	})
+	t.Run("raw HTTP", func(t *testing.T) {
+		var calls atomic.Int32
+		const payload = `{"error":{"message":"slow down","code":9007199254740993}}`
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/decisions" {
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+			if r.Header.Get("Authorization") != "Bearer overridden" || r.Header.Get("X-Call") != "one" || r.Header.Get("Content-Type") != "application/json" {
+				t.Errorf("unexpected headers: %v", r.Header)
+			}
+			data, err := io.ReadAll(r.Body)
+			if err != nil || !bytes.Contains(data, []byte(`9007199254740993`)) {
+				t.Errorf("request body = %s, %v", data, err)
+			}
+			w.Header().Set("Retry-After", "2")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, payload)
+		}))
+		defer server.Close()
+		client, err := NewClient(server.URL+"/v1", WithHTTPClient(server.Client()), WithRequestEditorFn(func(_ context.Context, r *http.Request) error {
+			r.Header.Set("Authorization", "Bearer default")
+			return nil
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := DecisionRequest{
+			Model: "decisions-model", Input: json.RawMessage(`"Check record 9007199254740993"`),
+			Questions: []json.RawMessage{json.RawMessage(`{"name":"p","type":"predicate","instructions":"Check"}`)},
+		}
+		response, err := client.CreateDecision(t.Context(), request, func(_ context.Context, r *http.Request) error {
+			r.Header.Set("Authorization", "Bearer overridden")
+			r.Header.Set("X-Call", "one")
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		data, err := io.ReadAll(response.Body)
+		if err != nil || string(data) != payload || response.StatusCode != 429 || response.Header.Get("Retry-After") != "2" || calls.Load() != 1 {
+			t.Fatalf("raw response changed: %s, %v, status=%d, calls=%d", data, err, response.StatusCode, calls.Load())
+		}
+	})
+}
+
 func TestRawStreaming(t *testing.T) {
 	var calls atomic.Int32
 	release := make(chan struct{})

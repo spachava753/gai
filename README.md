@@ -273,9 +273,13 @@ Use [`agent/agenttest`](https://pkg.go.dev/github.com/spachava753/gai/agent/agen
 
 ## Classifiers
 
-Package [`classifier`](classifier/design.md) evaluates shared evidence against named predicate, choice, and ordinal-score questions. It is separate from `Generator`: results contain typed answers and complete probability distributions, not generated messages or tool calls. Applications own thresholds and actions.
+Experimental package [`x/classifier`](x/classifier/design.md) asks AI models to classify or score input. Each request contains input and one or more questions about it. A question can ask for the probability of yes, a choice from a list, or a rating on a scale. Answers contain probabilities and scores, not generated messages or tool calls.
 
-`classifier.Input` accepts JSON-compatible Go data plus GAI media attachments. Per-question instructions and descriptions can be strings, objects, or mixed arrays. Probabilities, scores, and optional implementation-specific confidence use `json.Number`. Usage reuses GAI's common metadata keys and accessors. See the [classifier design](classifier/design.md) and compiled examples for the contracts.
+`classifier.Input` accepts text, structured JSON data, and media attachments. Each question can include instructions and examples. Probabilities and scores use `json.Number`; optional confidence values also use `json.Number`, but their meaning depends on the implementation. Token counts use the existing `gai.InputTokens` and `gai.OutputTokens` accessors.
+
+Use `classifier.NewTypeSafe` for Jev, `classifier.NewOpenAI` for OpenAI Decisions, `classifier.NewCloudflare` for hosted Clef/Clef-Omni, or `classifier.NewPerplexity` for Perplexity Decisions. Constructors take an HTTP client, an optional API base URL, and credentials; Cloudflare also takes an account ID. Each request specifies its model. Clients reject unsupported input and do not add retries.
+
+See the [classifier design and provider comparison](x/classifier/design.md) and [compiled examples](x/classifier/example_test.go) for supported inputs, usage, and validation. Tests use local HTTP servers; they have not verified live-service compatibility.
 
 ## Composition
 
@@ -324,16 +328,18 @@ Use `GetMetric` with provider-specific metric constants for native cost, timing,
 go test ./...
 go vet ./...
 go test -race ./...
-go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/openai$' ./...
+go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(openai|cloudflare|perplexity|typesafe)$' ./...
 ```
 
-The shared Chat Completions wire client in `internal/openai` uses oapi-codegen. Regenerate it after changing its schema, configuration, or lossless-JSON overlay:
+Provider HTTP clients are generated with the pinned oapi-codegen tool; do not write them by hand. `internal/openai` contains Chat Completions and OpenAI Decisions. Classifiers also use `internal/typesafe`, `internal/perplexity`, and `internal/cloudflare`. Add endpoints to these schemas or create a generated package for a new protocol. Public adapters translate inputs and convert generated response models; generated clients construct and send HTTP requests.
+
+Regenerate clients after changing schemas, configurations, or overlays:
 
 ```bash
-go generate ./internal/openai
+go generate ./internal/...
 ```
 
-Its tests check that the generated file is current and exercise JSON round trips and local HTTP behavior. All Chat Completions adapters use this client. The former separate generated clients and OGEN tool have been removed.
+Each package checks that its generated file is current and tests JSON round trips and local HTTP behavior. Public classifier numbers use `json.Number`. Generated classifier models use a strict internal number type that preserves numeric spelling and rejects quoted numbers. Arbitrary JSON uses `json.RawMessage`; Chat Completions retains its existing numeric types. All Chat Completions adapters still share `internal/openai`, rather than separate compatible-provider clients.
 
 The OpenAI adapter has [SDK request contract tests](testdata/openai_sdk/README.md). An explicit scenario matrix drives public GAI APIs against conversations recorded through the OpenAI Python SDK for OpenAI, Z.AI, Kimi, and DeepSeek. Captures store only request/response body pairs; options are declared once in the matrix and translated into public GAI options by the tests. Each named provider/mode/step case checks JSON-equivalent outgoing HTTP bodies, with later history built from GAI output. Replay also checks successful completion, usable function calls, and known scenario arguments or JSON results—not exact generated prose. New captures come from a small SDK conversation script running through mitmproxy. Building the corpus requires explicit approval for live calls; ordinary tests never refresh it.
 

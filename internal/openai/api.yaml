@@ -1,9 +1,10 @@
-# This is GAI's maintained Chat Completions wire format, NOT a copy of one
-# provider's specification. "openai" names the protocol/client, not a claim that
+# This is GAI's maintained Chat Completions and OpenAI Decisions wire format,
+# NOT a copy of one provider's specification. "openai" names the protocol/client, not a claim that
 # native OpenAI accepts every field below.
 #
 # Scope: native OpenAI, DeepSeek, Z.AI, Moonshot/Kimi, and OpenCode Go's Chat
-# Completions routes. Responses and Anthropic Messages are different protocols
+# Completions routes, plus native OpenAI /decisions (not a compatible-provider
+# capability claim). Responses and Anthropic Messages are different protocols
 # and deliberately do not belong here. Uploads, tokenizers, model discovery, and
 # tool execution are also outside this operation.
 #
@@ -43,15 +44,16 @@
 # decisions are recorded here because those notes are not distributed with GAI.
 openapi: 3.0.3
 info:
-  title: GAI shared OpenAI-compatible Chat Completions API
+  title: GAI OpenAI Chat Completions and Decisions API
   version: 0.1.0
   description: >-
     A permissive client-side wire schema for OpenAI, DeepSeek, Z.AI, Moonshot,
     and compatible OpenCode Go endpoints. Accepted schema fields are not a
     promise of support by any particular provider. Callers supply the model,
     options, history, and explicit credentials on the appropriate connection.
+    Decisions is a separate native OpenAI operation used by x/classifier.
 servers:
-  # The operation adds ONLY /chat/completions. The base includes the API prefix:
+  # Operations append /chat/completions or /decisions. The base includes the API prefix:
   # OpenAI:  https://api.openai.com/v1
   # DeepSeek:https://api.deepseek.com (or the documented /v1 alias)
   # Z.AI:    https://api.z.ai/api/paas/v4
@@ -64,6 +66,32 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /decisions:
+    post:
+      operationId: createDecision
+      description: >-
+        Classify or score the same input against named questions.
+        Source: https://developers.openai.com/api/reference/resources/decisions/methods/create
+        (reviewed 2026-10-12). No streaming or automatic retries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+      responses:
+        '200':
+          description: Answers in question order, including explicit refusals.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionResponse'
+        default:
+          description: API error; raw methods retain status, headers, and body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /chat/completions:
     post:
       operationId: createChatCompletion
@@ -192,6 +220,181 @@ components:
       schema:
         type: string
   schemas:
+    # Decisions numbers must not use Chat Completions' float64 mapping. Override
+    # individual numeric fields rather than changing the established shared client.
+    DecisionRequest:
+      type: object
+      required: [model, input, questions]
+      properties:
+        model:
+          type: string
+        input:
+          description: Text or an array of messages with input_text/input_image content.
+          x-go-type: json.RawMessage
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+                properties:
+                  role:
+                    type: string
+                  content:
+                    x-go-type: json.RawMessage
+                additionalProperties: {}
+        questions:
+          type: array
+          x-go-type: '[]json.RawMessage'
+          items:
+            $ref: '#/components/schemas/DecisionQuestion'
+        safety_identifier:
+          type: string
+      additionalProperties: {}
+    DecisionQuestion:
+      type: object
+      description: >-
+        Predicate, choice, or score question. Choices and levels apply only
+        to their corresponding type. The adapter selects and validates fields.
+      required: [type, instructions]
+      properties:
+        type:
+          type: string
+        name:
+          type: string
+        instructions:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            required: [value]
+            properties:
+              value:
+                description: String or boolean outcome; the two types remain distinct.
+                x-go-type: json.RawMessage
+                oneOf:
+                  - type: string
+                  - type: boolean
+              description:
+                type: string
+            additionalProperties: {}
+        levels:
+          type: array
+          items:
+            type: object
+            required: [label]
+            properties:
+              label:
+                type: string
+              description:
+                type: string
+            additionalProperties: {}
+      additionalProperties: {}
+    DecisionResponseMetadata:
+      type: object
+      description: Decode metadata separately so valid usage survives an invalid answer.
+      required: [model]
+      properties:
+        model:
+          type: string
+        usage:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/DecisionUsage'
+      additionalProperties: {x-go-type: json.RawMessage}
+    DecisionResponse:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DecisionResponseMetadata'
+        - type: object
+          required: [answers]
+          properties:
+            answers:
+              type: array
+              items:
+                $ref: '#/components/schemas/DecisionAnswer'
+    DecisionAnswer:
+      type: object
+      description: >-
+        Predicate supplies probability; choice supplies choice and probabilities;
+        score supplies score and probabilities; refusal supplies no numeric answer.
+        Keep optional fields nullable so decoding does not invent zero values.
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        probability:
+          type: number
+          x-go-type: wirejson.Number
+          nullable: true
+        choice:
+          x-go-type: json.RawMessage
+          nullable: true
+        score:
+          type: number
+          x-go-type: wirejson.Number
+          nullable: true
+        confidence:
+          type: number
+          x-go-type: wirejson.Number
+          nullable: true
+        probabilities:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [value, probability]
+            properties:
+              value:
+                description: String/boolean choice value or integer score level index.
+                x-go-type: json.RawMessage
+              label:
+                type: string
+              probability:
+                type: number
+                x-go-type: wirejson.Number
+            additionalProperties: {}
+      additionalProperties: {}
+    DecisionUsage:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+          nullable: true
+        output_tokens:
+          type: integer
+          nullable: true
+        total_tokens:
+          type: integer
+          nullable: true
+        input_tokens_details:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/DecisionInputTokensDetails'
+        output_tokens_details:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/DecisionOutputTokensDetails'
+      additionalProperties: {}
+    DecisionInputTokensDetails:
+      type: object
+      properties:
+        cached_tokens:
+          type: integer
+          nullable: true
+        cache_write_tokens:
+          type: integer
+          nullable: true
+      additionalProperties: {}
+    DecisionOutputTokensDetails:
+      type: object
+      properties:
+        reasoning_tokens:
+          type: integer
+          nullable: true
+      additionalProperties: {}
     # -------------------------------------------------------------------------
     # Request: union of fields, NOT oneOf provider-specific request objects.
     # Those objects overlap and become ambiguous as APIs evolve. Selecting the

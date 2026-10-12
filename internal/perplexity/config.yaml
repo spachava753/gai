@@ -1,0 +1,13 @@
+# Paths are relative to this package; run go generate ./internal/perplexity.
+package: perplexity
+additional-imports:
+  - package: github.com/spachava753/gai/internal/wirejson
+generate:
+  models: true
+  client: true
+output-options:
+  nullable-type: true
+  type-mapping:
+    number:
+      default:
+        type: wirejson.Number
