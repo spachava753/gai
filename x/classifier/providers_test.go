@@ -1,13 +1,21 @@
 package classifier_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -632,10 +640,14 @@ func TestCloudflareExtensions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		request := predicateRequest()
-		request.Model = "@cf/../clef"
-		if _, err := model.Classify(context.Background(), request); err == nil {
-			t.Fatal("accepted model traversal")
+		for _, name := range []string{"@cf/../clef", "@cf/clef", "@cf/cloudflare/clef/extra", "@/cloudflare/clef", "@cf//clef", "@cf/cloudflare/clef%2Fextra"} {
+			t.Run(name, func(t *testing.T) {
+				request := predicateRequest()
+				request.Model = name
+				if _, err := model.Classify(t.Context(), request); err == nil {
+					t.Fatal("accepted invalid model path")
+				}
+			})
 		}
 		if calls.Load() != 0 {
 			t.Fatal("invalid model path reached HTTP transport")
@@ -654,6 +666,355 @@ func TestCloudflareExtensions(t *testing.T) {
 		request.Model = "@cf/cloudflare/clef"
 		if _, err := model.Classify(context.Background(), request); err != nil {
 			t.Fatalf("valid result-only envelope rejected: %v", err)
+		}
+	})
+}
+
+// Live tests exercise the same public constructors and Classify method as users.
+// They make no retries, do not refresh fixtures, and skip only when live testing
+// or the required credential is absent. Once enabled, API failures fail the test.
+// These test API contracts, not model accuracy: any contract-valid judgment or
+// refusal is acceptable, without expected labels or decision thresholds.
+type liveClassifierProvider struct {
+	name, keyEnv, model, baseURL string
+	protocol                     gai.Provider
+	router, images, auth         bool
+}
+
+func liveClassifierProviders() []liveClassifierProvider {
+	return []liveClassifierProvider{
+		{name: "openai", keyEnv: "OPENAI_API_KEY", model: "gpt-6-luna", protocol: classifier.ProviderOpenAI, images: true, auth: true},
+		{name: "openrouter_systemone", keyEnv: "OPENROUTER_API_KEY", model: "typesafe/jev-1.13", baseURL: "https://openrouter.ai/api/v1", protocol: classifier.ProviderTypeSafe, router: true},
+		{name: "openrouter_decisions_jev", keyEnv: "OPENROUTER_API_KEY", model: "typesafe/jev-1.13", baseURL: "https://openrouter.ai/api/alpha", protocol: classifier.ProviderPerplexity, router: true},
+		{name: "openrouter_decisions_perplexity", keyEnv: "OPENROUTER_API_KEY", model: "perplexity/pplx-decider-v1.1-27b", baseURL: "https://openrouter.ai/api/alpha", protocol: classifier.ProviderPerplexity, router: true, images: true, auth: true},
+		{name: "cloudflare_clef", keyEnv: "CLOUDFLARE_API_TOKEN", model: "@cf/cloudflare/clef", protocol: classifier.ProviderCloudflare, images: true, auth: true},
+	}
+}
+
+func requireLiveAPIKey(t testing.TB, env string) string {
+	t.Helper()
+	if os.Getenv("LIVE_TESTS") == "" {
+		t.Skip("LIVE_TESTS not set")
+	}
+	key := os.Getenv(env)
+	if key == "" {
+		t.Skipf("%s not set", env)
+	}
+	return key
+}
+
+func newLiveClassifier(t *testing.T, provider liveClassifierProvider) classifier.Classifier {
+	t.Helper()
+	key := requireLiveAPIKey(t, provider.keyEnv)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	t.Cleanup(transport.CloseIdleConnections)
+	client := &http.Client{
+		Transport: transport, Timeout: time.Minute,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	var model classifier.Classifier
+	var err error
+	switch provider.protocol {
+	case classifier.ProviderOpenAI:
+		model, err = classifier.NewOpenAI(client, provider.baseURL, key)
+	case classifier.ProviderTypeSafe:
+		model, err = classifier.NewTypeSafe(client, provider.baseURL, key)
+	case classifier.ProviderPerplexity:
+		model, err = classifier.NewPerplexity(client, provider.baseURL, key)
+	case classifier.ProviderCloudflare:
+		account := os.Getenv("CLOUDFLARE_ACCOUNT_ID")
+		if account == "" {
+			t.Fatal("CLOUDFLARE_ACCOUNT_ID is required when Cloudflare live tests are enabled")
+		}
+		model, err = classifier.NewCloudflare(client, provider.baseURL, account, key)
+	default:
+		t.Fatalf("unknown test protocol %q", provider.protocol)
+	}
+	if err != nil {
+		t.Fatalf("construct classifier: %v", err)
+	}
+	return model
+}
+
+// requireLiveClassification avoids logging API bodies, request URLs, or headers:
+// a failed service could echo authentication data in its error response.
+func requireLiveClassification(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	var api *gai.ApiErr
+	var contract *classifier.ResponseError
+	switch {
+	case errors.As(err, &api):
+		t.Fatalf("Classify: API status=%d kind=%s (body withheld)", api.StatusCode, api.Kind)
+	case errors.As(err, &contract):
+		t.Fatalf("Classify: %v", contract)
+	case errors.Is(err, context.DeadlineExceeded):
+		t.Fatal("Classify: deadline exceeded")
+	default:
+		t.Fatalf("Classify: %T (details withheld)", err)
+	}
+}
+
+func liveNumber(t *testing.T, number json.Number, min, max float64) float64 {
+	t.Helper()
+	value, err := number.Float64()
+	if !json.Valid([]byte(number)) || err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < min || value > max {
+		t.Fatalf("number %q is not finite JSON in [%g, %g]", number, min, max)
+	}
+	return value
+}
+
+func assertLiveDistribution(t *testing.T, probabilities []json.Number) {
+	t.Helper()
+	var sum float64
+	for _, probability := range probabilities {
+		sum += liveNumber(t, probability, 0, 1)
+	}
+	// The public contract permits 0.00005 rounding error per entry.
+	if math.Abs(sum-1) > float64(len(probabilities))*0.00005+1e-12 {
+		t.Errorf("distribution sums to %.12g, want 1 within documented rounding tolerance", sum)
+	}
+}
+
+func assertLiveMetadata(t *testing.T, provider liveClassifierProvider, response classifier.Response) {
+	t.Helper()
+	if response.Model == "" {
+		t.Error("missing resolved model")
+	}
+	if got := response.ExtraFields[classifier.ExtraFieldProvider]; got != provider.protocol {
+		t.Errorf("protocol metadata = %v, want %v", got, provider.protocol)
+	}
+	if headers, ok := response.ExtraFields[classifier.ExtraFieldHeaders].(http.Header); !ok || len(headers) == 0 {
+		t.Error("missing HTTP response headers")
+	}
+	input, inputOK := gai.InputTokens(response.UsageMetadata)
+	output, outputOK := gai.OutputTokens(response.UsageMetadata)
+	if !inputOK || input <= 0 || !outputOK || output < 0 {
+		t.Errorf("usage input=(%d, %t) output=(%d, %t), want positive input and nonnegative output", input, inputOK, output, outputOK)
+	}
+	usage, ok := response.ExtraFields[classifier.ExtraFieldUsage].(map[string]json.RawMessage)
+	if !ok {
+		t.Fatal("missing native usage object")
+	}
+	for field, count := range map[string]int{"input_tokens": input, "output_tokens": output} {
+		var native int
+		if err := json.Unmarshal(usage[field], &native); err != nil || native != count {
+			t.Errorf("native %s differs from common usage count %d", field, count)
+		}
+	}
+	if provider.router {
+		// Cost is an OpenRouter extension, not a common token metric.
+		liveNumber(t, json.Number(usage["cost"]), 0, math.MaxFloat64)
+		fields, ok := response.ExtraFields[classifier.ExtraFieldWireFields].(map[string]json.RawMessage)
+		var id string
+		if !ok || json.Unmarshal(fields["id"], &id) != nil || id == "" {
+			t.Error("missing OpenRouter invocation ID")
+		}
+	}
+	if provider.protocol == classifier.ProviderCloudflare {
+		fields, ok := response.ExtraFields[classifier.ExtraFieldEnvelope].(map[string]json.RawMessage)
+		var success bool
+		if !ok || json.Unmarshal(fields["success"], &success) != nil || !success {
+			t.Error("missing successful Cloudflare envelope")
+		}
+		if _, present := fields["result"]; present {
+			t.Error("Cloudflare result leaked into envelope metadata")
+		}
+	}
+	t.Logf("resolved model=%s input_tokens=%d output_tokens=%d", response.Model, input, output)
+}
+
+// assertLiveAnswerShapes checks the public contract independently of the
+// implementation's validator. It does not grade the model's judgment.
+func assertLiveAnswerShapes(t *testing.T, questions []classifier.Question, answers []classifier.Answer) {
+	t.Helper()
+	if len(answers) != len(questions) {
+		t.Fatalf("got %d answers, want %d", len(answers), len(questions))
+	}
+	for i, question := range questions {
+		answer := answers[i]
+		if answer.Name != question.Name {
+			t.Fatalf("answer %d: name=%q, want %q", i, answer.Name, question.Name)
+		}
+		if answer.Refused {
+			if answer.Predicate != nil || answer.Choice != nil || answer.Score != nil || answer.Confidence != nil {
+				t.Errorf("%s: refusal contains a judgment or confidence", question.Name)
+			}
+			continue
+		}
+		if answer.Confidence != nil {
+			liveNumber(t, *answer.Confidence, 0, 1)
+		}
+		switch {
+		case question.Predicate != nil:
+			if answer.Predicate == nil || answer.Choice != nil || answer.Score != nil {
+				t.Fatalf("%s: wrong answer variant", question.Name)
+			}
+			liveNumber(t, answer.Predicate.Probability, 0, 1)
+		case question.Choice != nil:
+			if answer.Choice == nil || answer.Predicate != nil || answer.Score != nil {
+				t.Fatalf("%s: wrong answer variant", question.Name)
+			}
+			if len(answer.Choice.Probabilities) != len(question.Choice.Options) {
+				t.Fatalf("%s: incomplete choice distribution", question.Name)
+			}
+			var probabilities []json.Number
+			selected := false
+			for j, p := range answer.Choice.Probabilities {
+				if !reflect.DeepEqual(p.Value, question.Choice.Options[j].Value) {
+					t.Errorf("%s: outcome %d does not match request order or value type", question.Name, j)
+				}
+				selected = selected || reflect.DeepEqual(p.Value, answer.Choice.Value)
+				probabilities = append(probabilities, p.Probability)
+			}
+			if !selected {
+				t.Errorf("%s: selected value is not a declared option", question.Name)
+			}
+			assertLiveDistribution(t, probabilities)
+		case question.Score != nil:
+			if answer.Score == nil || answer.Predicate != nil || answer.Choice != nil {
+				t.Fatalf("%s: wrong answer variant", question.Name)
+			}
+			if len(answer.Score.Probabilities) != len(question.Score.Levels) {
+				t.Fatalf("%s: incomplete score distribution", question.Name)
+			}
+			assertLiveDistribution(t, answer.Score.Probabilities)
+			score := liveNumber(t, answer.Score.Score, 0, float64(len(question.Score.Levels)-1))
+			var mean, roundingWeight float64
+			for level, probability := range answer.Score.Probabilities {
+				mean += float64(level) * liveNumber(t, probability, 0, 1)
+				roundingWeight += float64(level)
+			}
+			if math.Abs(score-mean) > (1+roundingWeight)*0.00005+1e-12 {
+				t.Errorf("%s: score=%g, probability-weighted mean=%g", question.Name, score, mean)
+			}
+		}
+	}
+}
+
+func TestLiveClassifier(t *testing.T) {
+	t.Run("MixedQuestions", func(t *testing.T) {
+		for _, provider := range liveClassifierProviders() {
+			t.Run(provider.name, func(t *testing.T) {
+				model := newLiveClassifier(t, provider)
+				const ticket = "Please refund the duplicate charge on my invoice. Service is working normally."
+				// Same task, distinct API input forms; no expected judgment.
+				for _, test := range []struct {
+					name  string
+					input any
+				}{
+					{"text", ticket},
+					{"structured", map[string]any{"ticket": ticket, "history": []any{"first report", map[string]any{"resolved": false, "assigned": nil}}}},
+				} {
+					t.Run(test.name, func(t *testing.T) {
+						request := classifier.Request{
+							Model: provider.model, Input: classifier.Input{Data: test.input},
+							Questions: []classifier.Question{
+								{Name: "z_refund", Instructions: "Does the customer explicitly ask for a refund or money back?", Predicate: &classifier.Predicate{}},
+								{Name: "a_team", Instructions: []any{"Which team should handle this ticket?", map[string]any{"rule": "Choose based on the customer's stated problem."}}, Choice: &classifier.Choice{Options: []classifier.ChoiceOption{
+									{Value: classifier.StringValue("shipping"), Description: "Parcel delivery and tracking."},
+									{Value: classifier.StringValue("billing"), Description: "Invoices, duplicate charges and refunds."},
+									{Value: classifier.StringValue("account"), Description: "Passwords, login and account access."},
+								}}},
+								{Name: "m_impact", Instructions: "Rate ability to use the service, not financial impact. Use the stated availability and workaround status.", Score: &classifier.Score{Levels: []classifier.ScoreLevel{
+									{Label: "unaffected", Description: "Every feature of the service works normally."},
+									{Label: "workaround", Description: "A feature is broken, but an alternative way works."},
+									{Label: "blocked", Description: "Cannot use any part of the service and no workaround exists."},
+								}}},
+							},
+						}
+						if provider.protocol == classifier.ProviderOpenAI {
+							// Exercise the value union in the existing request. Any
+							// declared selection is valid; false and "false" must
+							// remain distinct entries in the returned distribution.
+							request.Questions = append(request.Questions, classifier.Question{
+								Name: "typed_choice", Instructions: "Does the customer request money back? Choose true for yes, false for no, or the string 'false' if uncertain.",
+								Choice: &classifier.Choice{Options: []classifier.ChoiceOption{
+									{Value: classifier.BooleanValue(true)}, {Value: classifier.BooleanValue(false)}, {Value: classifier.StringValue("false")},
+								}},
+							})
+						}
+						before, err := json.Marshal(request)
+						if err != nil {
+							t.Fatal(err)
+						}
+						ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+						defer cancel()
+						response, err := model.Classify(ctx, request)
+						requireLiveClassification(t, err)
+						assertLiveMetadata(t, provider, response)
+						assertLiveAnswerShapes(t, request.Questions, response.Answers)
+						after, err := json.Marshal(request)
+						if err != nil || string(before) != string(after) {
+							t.Error("Classify mutated the request")
+						}
+					})
+				}
+			})
+		}
+	})
+	t.Run("Images", func(t *testing.T) {
+		for _, provider := range liveClassifierProviders() {
+			if !provider.images {
+				continue // Explicit text-only profiles, not a model-name heuristic.
+			}
+			t.Run(provider.name, func(t *testing.T) {
+				model := newLiveClassifier(t, provider)
+				// This checks accepted PNG transport and the response schema,
+				// not whether the model correctly recognizes the color.
+				picture := image.NewRGBA(image.Rect(0, 0, 256, 256))
+				draw.Draw(picture, picture.Bounds(), image.NewUniform(color.RGBA{R: 255, A: 255}), image.Point{}, draw.Src)
+				var buffer bytes.Buffer
+				if err := png.Encode(&buffer, picture); err != nil {
+					t.Fatal(err)
+				}
+				request := classifier.Request{
+					Model: provider.model,
+					Input: classifier.Input{Media: []gai.Block{{BlockType: gai.Content, ModalityType: gai.Image, MimeType: "image/png", Content: gai.Str(base64.StdEncoding.EncodeToString(buffer.Bytes()))}}},
+					Questions: []classifier.Question{{Name: "color", Instructions: "Which color covers most of the attached image?", Choice: &classifier.Choice{Options: []classifier.ChoiceOption{
+						{Value: classifier.StringValue("green")}, {Value: classifier.StringValue("red")}, {Value: classifier.StringValue("blue")},
+					}}}},
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+				defer cancel()
+				response, err := model.Classify(ctx, request)
+				requireLiveClassification(t, err)
+				assertLiveMetadata(t, provider, response)
+				assertLiveAnswerShapes(t, request.Questions, response.Answers)
+			})
+		}
+	})
+	t.Run("Authentication", func(t *testing.T) {
+		for _, provider := range liveClassifierProviders() {
+			if !provider.auth {
+				continue // One credential-rejection probe per service.
+			}
+			t.Run(provider.name, func(t *testing.T) {
+				model := newLiveClassifier(t, provider)
+				request := predicateRequest()
+				request.Model = provider.model
+				// Deliberately override the borrowed client's valid credential for
+				// this call only. No credential is embedded in the fixture.
+				request.Headers = http.Header{"Authorization": {"Bearer gai-classifier-invalid-test-token"}}
+				ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+				defer cancel()
+				response, err := model.Classify(ctx, request)
+				var api *gai.ApiErr
+				if !errors.As(err, &api) {
+					t.Fatalf("invalid credential: got %T, want *gai.ApiErr", err)
+				}
+				if api.StatusCode != http.StatusUnauthorized && api.StatusCode != http.StatusForbidden {
+					t.Errorf("authentication status=%d, want 401 or 403", api.StatusCode)
+				}
+				if api.Provider != provider.protocol || api.RawBody == "" {
+					t.Error("API error lost protocol identity or raw body")
+				}
+				if len(response.Answers) != 0 {
+					t.Error("authentication failure returned usable answers")
+				}
+			})
 		}
 	})
 }

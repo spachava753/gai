@@ -57,7 +57,14 @@ Constructors take an HTTP client, an optional API base URL, and credentials. The
 | `NewCloudflare` (Clef) | `https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}` | Text or JSON; PNG/JPEG/WebP images; Clef-Omni audio/video fields | Strings |
 | `NewPerplexity` (Decisions) | `https://api.perplexity.ai/v1/decisions` | Text or JSON; PNG/JPEG/WebP images | Strings |
 
-A custom base URL includes its API prefix, such as `/v1`, but not the endpoint suffix. A service must support the chosen protocol; supporting Chat Completions does not imply support for Decisions. The Cloudflare client supports hosted Workers AI, not self-hosted Clef. Its `Request.Model` is a full model name such as `@cf/cloudflare/clef`.
+A custom base URL includes its API prefix, such as `/v1`, but not the endpoint suffix. A service must support the chosen protocol; supporting Chat Completions does not imply support for Decisions. The Cloudflare client supports hosted Workers AI, not self-hosted Clef. Its `Request.Model` is a full model name such as `@cf/cloudflare/clef`, with exactly three components: namespace, author, and model.
+
+OpenRouter exposes compatible endpoints without requiring another classifier type:
+
+- Use `NewTypeSafe(client, "https://openrouter.ai/api/v1", key)` for its [System One endpoint](https://openrouter.ai/docs/guides/community/typesafe-sdk), with a model such as `typesafe/jev-1.13`.
+- Use `NewPerplexity(client, "https://openrouter.ai/api/alpha", key)` for its [Decisions endpoint](https://openrouter.ai/docs/guides/community/jev-tutorial). The live suite covers `typesafe/jev-1.13` and `perplexity/pplx-decider-v1.1-27b` through this route.
+
+These clients retain their protocol's error and metadata provider identifiers, not an OpenRouter identifier. Native OpenRouter invocation IDs, resolved providers, and costs remain in the corresponding extra fields. Supporting these routes does not establish compatibility with every model in OpenRouter's catalog.
 
 OpenAI, TypeSafe, and Cloudflare require instructions for every question. Perplexity allows criteria-only questions. Provider methods document their limits on question counts, choices, levels, and attachments. The server checks other model-specific constraints, such as image dimensions. Cloudflare places images before the text and may truncate long text to fit the context limit.
 
@@ -69,7 +76,7 @@ OpenAI has no separate field for predicate criteria, so its client appends a JSO
 
 Provider HTTP clients must be generated, not handwritten. OpenAI Decisions uses the `/decisions` operation in `internal/openai`; TypeSafe, Perplexity, and Cloudflare have generated packages under `internal/` with those names. Each package has a maintained OpenAPI schema, an oapi-codegen configuration, and a `go:generate` command. Run `go generate ./internal/...` after changing a schema. Never edit `client.gen.go` directly.
 
-Adapters build generated request types and call generated operations. Input and question unions remain raw JSON so nested numbers, nulls, and provider-specific shapes are preserved. Authentication and per-call headers use the generated request editors. Cloudflare account and model path parameters are encoded by its generated client.
+Adapters build generated request types and call generated operations. Input and question unions remain raw JSON so nested numbers, nulls, and provider-specific shapes are preserved. Authentication and per-call headers use the generated request editors. Cloudflare account, model namespace, author, and name are separate path parameters encoded by its generated client. Model-route slashes must remain path separators; passing the entire model route as one parameter produces encoded slashes that Cloudflare rejects.
 
 Adapters read bounded raw HTTP responses, reject malformed JSON and duplicate keys, then decode the generated response models. They convert typed answers, usage, and Cloudflare envelopes rather than decoding known fields from raw JSON maps. Generated metadata projections preserve usage and invocation details when answer decoding fails. Generated error models supply API error messages; unrecognized error bodies remain available in full.
 
@@ -97,7 +104,42 @@ Original JSON objects are stored as `map[string]json.RawMessage`. When decoding 
 
 ## Tests and scope
 
-The compiled examples show basic classification, string and boolean choices, and use of a provider client. Each generated client package checks offline regeneration, JSON round trips, and raw HTTP behavior. Classifier provider tests use local HTTP servers and representative documented responses, not live captures. They cover structured input, all three question types, numeric precision, refusals, usage, media, cancellation, concurrent calls, and invalid responses. They do not establish live-service compatibility.
+The compiled examples show basic classification, string and boolean choices, and use of a provider client. Each generated client package checks offline regeneration, JSON round trips, and raw HTTP behavior. Offline provider tests use local HTTP servers and representative documented responses, not live captures. They cover structured input, all three question types, numeric precision, refusals, usage, media, cancellation, concurrent calls, and invalid responses. The Cloudflare HTTP regression checks the escaped path, not just Go's decoded `URL.Path`.
+
+`TestLiveClassifier` in `providers_test.go` exercises the public constructors and `Classify` against real services. Ordinary tests skip it. Set `LIVE_TESTS=1` and the credentials for the selected profiles:
+
+| Profile | Model | Required environment variables |
+| --- | --- | --- |
+| `openai` | `gpt-6-luna` | `OPENAI_API_KEY` |
+| `openrouter_systemone` | `typesafe/jev-1.13` | `OPENROUTER_API_KEY` |
+| `openrouter_decisions_jev` | `typesafe/jev-1.13` | `OPENROUTER_API_KEY` |
+| `openrouter_decisions_perplexity` | `perplexity/pplx-decider-v1.1-27b` | `OPENROUTER_API_KEY` |
+| `cloudflare_clef` | `@cf/cloudflare/clef` | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
+
+Supply credentials through the environment; tests do not access password managers or local CLI authentication. The Cloudflare read-only token used for verification could both list models with `cf` and run these inference requests; no new resources or tokens were created. Use a token authorized for Workers AI inference on the selected account.
+
+```sh
+# All configured profiles; unconfigured profiles explicitly skip.
+LIVE_TESTS=1 go test ./x/classifier -run '^TestLiveClassifier$' -count=1 -timeout=10m -v
+
+# Only Cloudflare mixed questions.
+LIVE_TESTS=1 go test ./x/classifier -run '^TestLiveClassifier$/MixedQuestions/cloudflare_' -count=1 -v
+
+# Explicitly offline, even if credentials are already set.
+LIVE_TESTS= go test ./...
+```
+
+Each call has a one-minute deadline and no added retry. Tests run sequentially and refuse redirects. Authentication, quota, model availability, and response-contract failures fail enabled tests; they are not converted into skips. Missing keys skip a profile, but a configured Cloudflare token without an account ID fails configuration. API error bodies and authentication headers are not printed.
+
+The suite tests API compatibility, not model accuracy. With all profiles configured it makes 16 calls:
+
+- Ten mixed-question calls: text and structured JSON through each of the five profiles. Both input forms describe the same task. Predicate, choice, and score questions are batched; OpenAI also includes boolean and string choice values in these requests.
+- Three image calls: one locally generated PNG through OpenAI, OpenRouter/Perplexity, and Cloudflare. These check accepted image requests and typed responses, not visual recognition.
+- Three authentication failures: one per service, rather than one per model or compatible route.
+
+Assertions cover named answer ordering, answer variants, complete distributions, numeric bounds and internal consistency, string/boolean identity, request immutability, usage, OpenRouter cost/ID metadata, Cloudflare envelopes, and typed API errors. Any declared choice and any contract-valid probability or score is acceptable. A well-formed refusal is also acceptable; the tests do not demand that a model answer a particular input. Weighted-score checks compare the score with its returned distribution, not with a predetermined rating. No assertion requires a correct classification, a particular color, or a decision threshold. Exact numeric precision and serialization edge cases remain deterministic offline tests.
+
+Initial live probes on 2026-10-14 passed for these routes and also for Cloudflare Clef-Flash and Clef-Omni. The reduced API-contract suite does not repeat the same protocol tests across those Cloudflare model variants. The revised 16-call API-contract suite passed live on 2026-10-14 with no skips or retries, including the batched OpenAI boolean choices. Direct TypeSafe and Perplexity hosting, audio/video input, and explicit refusal scenarios remain live-unverified. A successful live probe establishes compatibility for that request and route at that time, not model accuracy or permanent provider availability.
 
 There is no streaming, tool execution, automatic question derivation from Go structs, or conversion of generator output into confidence values. A model that only returns a label cannot implement the complete Choice answer without also obtaining probabilities for every option.
 

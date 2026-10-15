@@ -60,7 +60,8 @@ func cloudflarePathComponent(value string) bool {
 // cancellation, errors, and request data are handled.
 //
 // Model must be a full Workers AI name, such as "@cf/cloudflare/clef" or
-// "@cf/cloudflare/clef-omni". The last component, such as "clef", is also sent
+// "@cf/cloudflare/clef-omni", with namespace, author, and model components.
+// The last component, such as "clef", is also sent
 // in the request body's model field.
 //
 // A request may contain up to 64 questions. Names must be 1 to 100 ASCII letters,
@@ -88,7 +89,7 @@ func (c *Cloudflare) Classify(ctx context.Context, request Request) (Response, e
 	if err != nil {
 		return Response{}, err
 	}
-	selector, err := cloudflareModel(request.Model)
+	modelPath, err := cloudflareModel(request.Model)
 	if err != nil {
 		return Response{}, err
 	}
@@ -99,11 +100,11 @@ func (c *Cloudflare) Classify(ctx context.Context, request Request) (Response, e
 	if err != nil {
 		return Response{}, err
 	}
-	body := wire.ClassificationRequest{Model: selector, State: emptyState(prepared.data), Questions: questions}
+	body := wire.ClassificationRequest{Model: modelPath[2], State: emptyState(prepared.data), Questions: questions}
 	if err := cloudflareMedia(&body, request.Input.Media); err != nil {
 		return Response{}, err
 	}
-	httpResponse, err := c.client.Classify(ctx, c.accountID, request.Model, body, requestHeaders(request.Headers))
+	httpResponse, err := c.client.Classify(ctx, c.accountID, modelPath[0], modelPath[1], modelPath[2], body, requestHeaders(request.Headers))
 	data, response, err := readHTTPResponse(ProviderCloudflare, httpResponse, err)
 	if err != nil {
 		return response, err
@@ -111,17 +112,17 @@ func (c *Cloudflare) Classify(ctx context.Context, request Request) (Response, e
 	return decodeCloudflare(data, response, prepared)
 }
 
-func cloudflareModel(model string) (string, error) {
+func cloudflareModel(model string) ([]string, error) {
 	parts := strings.Split(model, "/")
-	if len(parts) < 2 || !strings.HasPrefix(parts[0], "@") {
-		return "", invalid("Model", "requires a full Workers AI model route, such as @cf/cloudflare/clef")
+	if len(parts) != 3 || !strings.HasPrefix(parts[0], "@") || len(parts[0]) == 1 {
+		return nil, invalid("Model", "requires a full Workers AI model route, such as @cf/cloudflare/clef")
 	}
 	for _, part := range parts {
 		if !cloudflarePathComponent(part) {
-			return "", invalid("Model", "invalid model path component")
+			return nil, invalid("Model", "invalid model path component")
 		}
 	}
-	return parts[len(parts)-1], nil
+	return parts, nil
 }
 
 func cloudflareQuestions(questions []preparedQuestion) error {

@@ -1238,19 +1238,19 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
-	// ClassifyWithBody performs a POST /accounts/{account_id}/ai/run/{model_name} (the `Classify` operationId) request,
+	// ClassifyWithBody performs a POST /accounts/{account_id}/ai/run/{model_namespace}/{model_author}/{model_name} (the `Classify` operationId) request,
 	// with any type of body and a specified content type.
-	ClassifyWithBody(ctx context.Context, accountId string, modelName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ClassifyWithBody(ctx context.Context, accountId string, modelNamespace string, modelAuthor string, modelName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Classify performs a POST /accounts/{account_id}/ai/run/{model_name} (the `Classify` operationId) request.
+	// Classify performs a POST /accounts/{account_id}/ai/run/{model_namespace}/{model_author}/{model_name} (the `Classify` operationId) request.
 	// Takes a body of the `application/json` content type.
-	Classify(ctx context.Context, accountId string, modelName string, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	Classify(ctx context.Context, accountId string, modelNamespace string, modelAuthor string, modelName string, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-// ClassifyWithBody performs a POST /accounts/{account_id}/ai/run/{model_name} (the `Classify` operationId) request,
+// ClassifyWithBody performs a POST /accounts/{account_id}/ai/run/{model_namespace}/{model_author}/{model_name} (the `Classify` operationId) request,
 // with any type of body and a specified content type.
-func (c *Client) ClassifyWithBody(ctx context.Context, accountId string, modelName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewClassifyRequestWithBody(c.Server, accountId, modelName, contentType, body)
+func (c *Client) ClassifyWithBody(ctx context.Context, accountId string, modelNamespace string, modelAuthor string, modelName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClassifyRequestWithBody(c.Server, accountId, modelNamespace, modelAuthor, modelName, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1261,10 +1261,10 @@ func (c *Client) ClassifyWithBody(ctx context.Context, accountId string, modelNa
 	return c.Client.Do(req)
 }
 
-// Classify performs a POST /accounts/{account_id}/ai/run/{model_name} (the `Classify` operationId) request.
+// Classify performs a POST /accounts/{account_id}/ai/run/{model_namespace}/{model_author}/{model_name} (the `Classify` operationId) request.
 // Takes a body of the `application/json` content type.
-func (c *Client) Classify(ctx context.Context, accountId string, modelName string, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewClassifyRequest(c.Server, accountId, modelName, body)
+func (c *Client) Classify(ctx context.Context, accountId string, modelNamespace string, modelAuthor string, modelName string, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClassifyRequest(c.Server, accountId, modelNamespace, modelAuthor, modelName, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1276,18 +1276,18 @@ func (c *Client) Classify(ctx context.Context, accountId string, modelName strin
 }
 
 // NewClassifyRequest calls the generic Classify builder with application/json body
-func NewClassifyRequest(server string, accountId string, modelName string, body ClassifyJSONRequestBody) (*http.Request, error) {
+func NewClassifyRequest(server string, accountId string, modelNamespace string, modelAuthor string, modelName string, body ClassifyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewClassifyRequestWithBody(server, accountId, modelName, "application/json", bodyReader)
+	return NewClassifyRequestWithBody(server, accountId, modelNamespace, modelAuthor, modelName, "application/json", bodyReader)
 }
 
 // NewClassifyRequestWithBody constructs an http.Request for the Classify method, with any body, and a specified content type
-func NewClassifyRequestWithBody(server string, accountId string, modelName string, contentType string, body io.Reader) (*http.Request, error) {
+func NewClassifyRequestWithBody(server string, accountId string, modelNamespace string, modelAuthor string, modelName string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -1299,7 +1299,21 @@ func NewClassifyRequestWithBody(server string, accountId string, modelName strin
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "model_name", modelName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "model_namespace", modelNamespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "model_author", modelAuthor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "model_name", modelName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -1309,7 +1323,7 @@ func NewClassifyRequestWithBody(server string, accountId string, modelName strin
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/accounts/%s/ai/run/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/accounts/%s/ai/run/%s/%s/%s", pathParam0, pathParam1, pathParam2, pathParam3)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1373,15 +1387,15 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// ClassifyWithBodyWithResponse performs a POST /accounts/{account_id}/ai/run/{model_name} (the `Classify` operationId) request,
+	// ClassifyWithBodyWithResponse performs a POST /accounts/{account_id}/ai/run/{model_namespace}/{model_author}/{model_name} (the `Classify` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	ClassifyWithBodyWithResponse(ctx context.Context, accountId string, modelName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClassifyResponse, error)
+	ClassifyWithBodyWithResponse(ctx context.Context, accountId string, modelNamespace string, modelAuthor string, modelName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClassifyResponse, error)
 
-	// ClassifyWithResponse performs a POST /accounts/{account_id}/ai/run/{model_name} (the `Classify` operationId) request.
+	// ClassifyWithResponse performs a POST /accounts/{account_id}/ai/run/{model_namespace}/{model_author}/{model_name} (the `Classify` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	ClassifyWithResponse(ctx context.Context, accountId string, modelName string, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*ClassifyResponse, error)
+	ClassifyWithResponse(ctx context.Context, accountId string, modelNamespace string, modelAuthor string, modelName string, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*ClassifyResponse, error)
 }
 
 type ClassifyResponse struct {
@@ -1432,22 +1446,22 @@ func (r ClassifyResponse) ContentType() string {
 	return ""
 }
 
-// ClassifyWithBodyWithResponse performs a POST /accounts/{account_id}/ai/run/{model_name} (the `Classify` operationId) request,
+// ClassifyWithBodyWithResponse performs a POST /accounts/{account_id}/ai/run/{model_namespace}/{model_author}/{model_name} (the `Classify` operationId) request,
 // with any type of body and a specified content type.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ClassifyWithBodyWithResponse(ctx context.Context, accountId string, modelName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClassifyResponse, error) {
-	rsp, err := c.ClassifyWithBody(ctx, accountId, modelName, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ClassifyWithBodyWithResponse(ctx context.Context, accountId string, modelNamespace string, modelAuthor string, modelName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClassifyResponse, error) {
+	rsp, err := c.ClassifyWithBody(ctx, accountId, modelNamespace, modelAuthor, modelName, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseClassifyResponse(rsp)
 }
 
-// ClassifyWithResponse performs a POST /accounts/{account_id}/ai/run/{model_name} (the `Classify` operationId) request.
+// ClassifyWithResponse performs a POST /accounts/{account_id}/ai/run/{model_namespace}/{model_author}/{model_name} (the `Classify` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ClassifyWithResponse(ctx context.Context, accountId string, modelName string, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*ClassifyResponse, error) {
-	rsp, err := c.Classify(ctx, accountId, modelName, body, reqEditors...)
+func (c *ClientWithResponses) ClassifyWithResponse(ctx context.Context, accountId string, modelNamespace string, modelAuthor string, modelName string, body ClassifyJSONRequestBody, reqEditors ...RequestEditorFn) (*ClassifyResponse, error) {
+	rsp, err := c.Classify(ctx, accountId, modelNamespace, modelAuthor, modelName, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

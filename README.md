@@ -279,7 +279,7 @@ Experimental package [`x/classifier`](x/classifier/design.md) asks AI models to 
 
 Use `classifier.NewTypeSafe` for Jev, `classifier.NewOpenAI` for OpenAI Decisions, `classifier.NewCloudflare` for hosted Clef/Clef-Omni, or `classifier.NewPerplexity` for Perplexity Decisions. Constructors take an HTTP client, an optional API base URL, and credentials; Cloudflare also takes an account ID. Each request specifies its model. Clients reject unsupported input and do not add retries.
 
-See the [classifier design and provider comparison](x/classifier/design.md) and [compiled examples](x/classifier/example_test.go) for supported inputs, usage, and validation. Tests use local HTTP servers; they have not verified live-service compatibility.
+See the [classifier design and provider comparison](x/classifier/design.md) and [compiled examples](x/classifier/example_test.go) for supported inputs, usage, and validation. Tests run offline by default. The opt-in `TestLiveClassifier` suite checks API contracts through native OpenAI Decisions, OpenRouter's System One and Decisions routes, and hosted Cloudflare Clef. It does not assert classification accuracy, expected labels, or decision thresholds. See the [live-test setup and scope](x/classifier/design.md#tests-and-scope) for credentials, model profiles, and targeted commands.
 
 ## Composition
 

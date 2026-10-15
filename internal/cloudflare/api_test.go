@@ -95,8 +95,10 @@ func TestRawHTTP(t *testing.T) {
 	const payload = `{"error":{"message":"slow down","code":9007199254740993}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.Method != http.MethodPost || r.URL.Path != "/prefix/accounts/account/ai/run/@cf/cloudflare/clef" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		// Cloudflare routes on the escaped path. Checking URL.Path alone hides
+		// encoded slashes in a full model name and misses a real routing failure.
+		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/prefix/accounts/account/ai/run/@cf/cloudflare/clef" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.EscapedPath())
 		}
 		if r.Header.Get("Authorization") != "Bearer overridden" || r.Header.Get("X-Call") != "one" || r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("unexpected headers: %v", r.Header)
@@ -121,7 +123,7 @@ func TestRawHTTP(t *testing.T) {
 		Model: "future-model", State: json.RawMessage(`{"id":9007199254740993}`),
 		Questions: map[string]json.RawMessage{"p": json.RawMessage(`{"type":"noul","instructions":"Check"}`)},
 	}
-	response, err := client.Classify(t.Context(), "account", "@cf/cloudflare/clef", request, func(_ context.Context, r *http.Request) error {
+	response, err := client.Classify(t.Context(), "account", "@cf", "cloudflare", "clef", request, func(_ context.Context, r *http.Request) error {
 		r.Header.Set("Authorization", "Bearer overridden")
 		r.Header.Set("X-Call", "one")
 		return nil

@@ -16,7 +16,9 @@ servers:
 security:
   - bearerAuth: []
 paths:
-  /accounts/{account_id}/ai/run/{model_name}:
+  # Model routes contain three path segments. A single model_name parameter
+  # escapes their slashes; Cloudflare rejects that URI rather than decoding it.
+  /accounts/{account_id}/ai/run/{model_namespace}/{model_author}/{model_name}:
     post:
       operationId: classify
       parameters:
@@ -25,10 +27,22 @@ paths:
           required: true
           schema:
             type: string
+        - name: model_namespace
+          in: path
+          required: true
+          description: Namespace segment, such as @cf.
+          schema:
+            type: string
+        - name: model_author
+          in: path
+          required: true
+          description: Author segment, such as cloudflare.
+          schema:
+            type: string
         - name: model_name
           in: path
           required: true
-          description: Full model route, such as @cf/cloudflare/clef.
+          description: Final model segment, such as clef.
           schema:
             type: string
       requestBody:
