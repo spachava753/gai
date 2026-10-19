@@ -169,6 +169,8 @@ options := gai.NewGenerationOptions(
 
 `WithReasoningEffort("high")` sets a qualitative effort label. `WithThinkingBudget(4096)` sets a positive thinking-token budget on Anthropic, Gemini, or OpenRouter; those providers reject combining it with effort. Other adapters ignore numeric thinking budgets rather than serializing them as effort. Anthropic also accepts `"adaptive"` and `"disabled"` through the effort control. Gemini's native zero/automatic budget sentinels are not part of the shared positive-budget option.
 
+Anthropic responses preserve ordinary thinking signatures and hidden (`redacted_thinking`) data for replay, including when collected with `StreamingAdapter`. Hidden thinking becomes an empty `Thinking` block with the opaque string under `AnthropicExtraFieldRedactedThinkingData` in `Block.ExtraFields`. Keep every returned block, its metadata, and its position when adding an assistant response to `Dialog`; do not discard thinking blocks just because their text is empty.
+
 Use one common helper for settings with the same meaning across providers:
 
 | Helpers | Documented provider controls wired through GAI |

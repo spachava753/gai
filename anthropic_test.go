@@ -5,10 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +41,148 @@ Assistant: MSFT
 `
 
 func TestClaudeAdapterScenarios(t *testing.T) {
+	t.Run("RedactedThinkingReplay", func(t *testing.T) {
+		// Keep adjacent redactions, visible thinking, and signature-only thinking
+		// separate, and replay the entire assistant content in its original order.
+		const content = `[
+			{"type":"thinking","thinking":"Let me check.","signature":"visible-signature"},
+			{"type":"redacted_thinking","data":"opaque+/first=="},
+			{"type":"redacted_thinking","data":"opaque+/second=="},
+			{"type":"thinking","thinking":"","signature":"hidden-signature"},
+			{"type":"text","text":"Checking."},
+			{"type":"tool_use","id":"call_1","name":"lookup","input":{"key":"value"}}
+		]`
+		streamEvents := []string{
+			`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}`,
+			`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me check."}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"visible-signature"}}`,
+			`{"type":"content_block_stop","index":0}`,
+			`{"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"opaque+/first=="}}`,
+			`{"type":"content_block_stop","index":1}`,
+			`{"type":"content_block_start","index":2,"content_block":{"type":"redacted_thinking","data":"opaque+/second=="}}`,
+			`{"type":"content_block_stop","index":2}`,
+			`{"type":"content_block_start","index":3,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+			`{"type":"content_block_delta","index":3,"delta":{"type":"signature_delta","signature":"hidden-signature"}}`,
+			`{"type":"content_block_stop","index":3}`,
+			`{"type":"content_block_start","index":4,"content_block":{"type":"text","text":""}}`,
+			`{"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"Checking."}}`,
+			`{"type":"content_block_stop","index":4}`,
+			`{"type":"content_block_start","index":5,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}`,
+			`{"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"{\"key\":\"value\"}"}}`,
+			`{"type":"content_block_stop","index":5}`,
+			`{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"input_tokens":10,"output_tokens":20}}`,
+			`{"type":"message_stop"}`,
+		}
+		for _, mode := range []string{"generate", "stream"} {
+			t.Run(mode, func(t *testing.T) {
+				type wireRequest struct {
+					Messages []struct {
+						Role    string
+						Content any
+					}
+				}
+				var requests []wireRequest
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var request wireRequest
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Errorf("decode request: %v", err)
+						http.Error(w, "invalid JSON", http.StatusBadRequest)
+						return
+					}
+					requests = append(requests, request)
+					if len(requests) > 1 {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = io.WriteString(w, `{"id":"msg_2","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"Done."}],"stop_reason":"end_turn","usage":{"input_tokens":30,"output_tokens":2}}`)
+						return
+					}
+					if mode == "stream" {
+						w.Header().Set("Content-Type", "text/event-stream")
+						for _, event := range streamEvents {
+							var header struct{ Type string }
+							if err := json.Unmarshal([]byte(event), &header); err != nil {
+								t.Errorf("decode fixture event: %v", err)
+								return
+							}
+							_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", header.Type, event)
+						}
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(w, `{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":%s,"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":20}}`, content)
+				}))
+				t.Cleanup(server.Close)
+				client := a.NewClient(option.WithAPIKey("test-key"), option.WithBaseURL(server.URL), option.WithHTTPClient(server.Client()), option.WithMaxRetries(0))
+				generator := NewAnthropicGenerator(&client.Messages)
+				var first Generator = generator
+				if mode == "stream" {
+					first = &StreamingAdapter{S: generator}
+				}
+				request := GenerationRequest{
+					Model:  "claude",
+					Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("Check the value.")}}},
+				}
+				response, err := first.Generate(t.Context(), request)
+				if err != nil {
+					t.Fatalf("first Generate: %v", err)
+				}
+				candidate := requireCandidate(t, response)
+				if candidate.Role != Assistant || len(candidate.Blocks) != 6 {
+					t.Fatalf("candidate = %#v, want assistant with six ordered blocks", candidate)
+				}
+				for i, data := range []string{"opaque+/first==", "opaque+/second=="} {
+					block := candidate.Blocks[i+1]
+					if block.BlockType != Thinking || block.ModalityType != Text || block.Content == nil || block.Content.String() != "" {
+						t.Errorf("redacted block %d = %#v, want empty text Thinking block", i+1, block)
+					}
+					if got := block.ExtraFields[AnthropicExtraFieldRedactedThinkingData]; got != data {
+						t.Errorf("redacted block %d data = %v, want %q", i+1, got, data)
+					}
+				}
+				request.Dialog = append(request.Dialog, candidate, Message{
+					Role: ToolResult,
+					Blocks: []Block{{
+						ID: "call_1", BlockType: Content, ModalityType: Text, Content: Str("Found it."),
+					}},
+				})
+				if _, err := generator.Generate(t.Context(), request); err != nil {
+					t.Fatalf("replay Generate: %v", err)
+				}
+				if len(requests) != 2 || len(requests[1].Messages) != 3 {
+					t.Fatalf("requests = %#v, want initial request and three-message follow-up", requests)
+				}
+				var want any
+				if err := json.Unmarshal([]byte(content), &want); err != nil {
+					t.Fatal(err)
+				}
+				replayed := requests[1].Messages[1]
+				if replayed.Role != "assistant" || !reflect.DeepEqual(replayed.Content, want) {
+					t.Errorf("replayed assistant = %#v, want original content %s", replayed, content)
+				}
+			})
+		}
+	})
+	t.Run("InvalidRedactedThinkingData", func(t *testing.T) {
+		for _, value := range []any{nil, 42, true, map[string]any{"data": "opaque"}} {
+			t.Run(fmt.Sprintf("%T", value), func(t *testing.T) {
+				service := &mockAnthropicSvc{}
+				generator := NewAnthropicGenerator(service)
+				_, err := generator.Generate(t.Context(), GenerationRequest{
+					Model: "claude",
+					Dialog: Dialog{{Role: Assistant, Blocks: []Block{{
+						BlockType: Thinking, Content: Str(""),
+						ExtraFields: map[string]any{AnthropicExtraFieldRedactedThinkingData: value},
+					}}}},
+				})
+				if err == nil || !strings.Contains(err.Error(), "invalid redacted thinking data") {
+					t.Fatalf("Generate error = %v, want invalid redacted thinking data", err)
+				}
+				if len(service.lastParams.Messages) != 0 {
+					t.Fatal("invalid data reached the SDK")
+				}
+			})
+		}
+	})
 	t.Run("AnthropicErrorClassification", func(t *testing.T) {
 		tests := []struct {
 			name       string

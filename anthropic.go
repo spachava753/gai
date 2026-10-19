@@ -87,6 +87,10 @@ func mapAnthropicError(err error) *ApiErr {
 // Effort selects adaptive thinking; a numeric budget selects enabled thinking.
 // The two controls cannot be combined. Thinking blocks preserve
 // [AnthropicExtraFieldThinkingSignature] in [Block.ExtraFields] for replay.
+// Redacted thinking uses [Thinking] blocks with empty content and opaque data
+// under [AnthropicExtraFieldRedactedThinkingData]. Preserve these blocks and
+// their order when replaying a response, including responses collected with
+// [StreamingAdapter].
 // Use [NewAnthropicServiceWrapper] to add request modifiers such as
 // [EnableSystemCaching] and [EnableMultiTurnCaching]. SafetyIdentifier maps to
 // metadata.user_id (an opaque UUID/hash, at most 512 characters, used for abuse
@@ -197,7 +201,25 @@ const (
 	// AnthropicExtraFieldThinkingSignature is the string [Block.ExtraFields] key
 	// for an Anthropic [Thinking] signature. Preserve it when replaying the block.
 	AnthropicExtraFieldThinkingSignature = "anthropic_thinking_signature"
+
+	// AnthropicExtraFieldRedactedThinkingData is the [Block.ExtraFields] key for
+	// opaque redacted thinking returned by [AnthropicGenerator]. Its value is a
+	// string on a text [Thinking] block with empty [Block.Content]. Preserve the
+	// block and data unchanged for replay; the data is not readable thinking text.
+	AnthropicExtraFieldRedactedThinkingData = "anthropic_redacted_thinking_data"
 )
+
+func anthropicRedactedThinkingBlock(data string) Block {
+	return Block{
+		BlockType:    Thinking,
+		ModalityType: Text,
+		MimeType:     "text/plain",
+		Content:      Str(""),
+		ExtraFields: map[string]interface{}{
+			AnthropicExtraFieldRedactedThinkingData: data,
+		},
+	}
+}
 
 // applyAnthropicParallelToolCalls only configures choices that permit tool use.
 func applyAnthropicParallelToolCalls(choice *a.ToolChoiceUnionParam, allow *bool, hasTools bool) {
@@ -360,6 +382,15 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 			case Thinking:
 				if block.ModalityType != Text {
 					return a.MessageParam{}, UnsupportedInputModalityErr(block.ModalityType.String())
+				}
+
+				if data, present := block.ExtraFields[AnthropicExtraFieldRedactedThinkingData]; present {
+					redacted, ok := data.(string)
+					if !ok {
+						return a.MessageParam{}, fmt.Errorf("invalid redacted thinking data: expected string")
+					}
+					contentParts = append(contentParts, a.NewRedactedThinkingBlock(redacted))
+					continue
 				}
 
 				var thinkingSig string
@@ -669,12 +700,7 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationReq
 				},
 			})
 		case "redacted_thinking":
-			blocks = append(blocks, Block{
-				ID:           contentPart.ID,
-				BlockType:    "redacted_thinking",
-				ModalityType: Text,
-				Content:      Str(contentPart.Data),
-			})
+			blocks = append(blocks, anthropicRedactedThinkingBlock(contentPart.Data))
 		default:
 			return Response{}, fmt.Errorf("unknown content type: %s", contentPart.Type)
 		}
@@ -834,7 +860,6 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 		// Track cumulative usage throughout the stream
 		var finalUsage *a.MessageDeltaUsage
 
-		// TODO: handle redacting thinking
 		for stream.Next() {
 			chunk := stream.Current()
 
@@ -849,8 +874,15 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 				continue
 
 			case a.ContentBlockStartEvent:
-				// if a content block start type event and tool call, then extract the tool call details
-				// all types of content block deltas are automatically handled in the `case a.ContentBlockDeltaEvent`
+				// Redacted thinking arrives in full at block start, without deltas.
+				if event.ContentBlock.Type == "redacted_thinking" {
+					if !yield(StreamChunk{Block: anthropicRedactedThinkingBlock(event.ContentBlock.Data)}) {
+						return
+					}
+					continue
+				}
+				// Tool headers arrive at block start; text, thinking, signatures,
+				// and tool arguments arrive as content-block deltas.
 				if event.ContentBlock.Type != "tool_use" {
 					continue
 				}
