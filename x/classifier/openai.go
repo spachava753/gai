@@ -86,6 +86,9 @@ func (c *OpenAI) Classify(ctx context.Context, request Request) (Response, error
 // openAIQuestions renders structured guidance into the endpoint's string fields,
 // retaining typed choices and expressing predicate criteria in the instructions.
 func openAIQuestions(questions []preparedQuestion) ([]json.RawMessage, error) {
+	if err := requireQuestionKinds(questions, "predicate", "choice", "score"); err != nil {
+		return nil, err
+	}
 	result := make([]json.RawMessage, 0, len(questions))
 	for _, q := range questions {
 		if q.instructions == nil {
@@ -163,7 +166,7 @@ func openAIInput(data json.RawMessage, media []gai.Block) (json.RawMessage, erro
 }
 
 // decodeOpenAI collects metadata, correlates named answers independently of wire
-// order, and publishes answers only after the full response contract validates.
+// order, and converts the generated models into public answers.
 func decodeOpenAI(data json.RawMessage, response Response, request preparedRequest) (Response, error) {
 	if err := checkJSON(data); err != nil {
 		return response, responseError("", err.Error())
@@ -201,10 +204,6 @@ func decodeOpenAI(data json.RawMessage, response Response, request preparedReque
 		normalized = append(normalized, answer)
 	}
 	response.Answers = normalized
-	if err := validateResponse(response, request); err != nil {
-		response.Answers = nil
-		return response, err
-	}
 	return response, nil
 }
 
@@ -226,15 +225,10 @@ func openAIUsage(response *Response, usage wire.DecisionUsage) error {
 	return nil
 }
 
-// convertOpenAIAnswer checks variant-specific presence on the generated model.
-// A refusal must not contain any of the known numeric or selected-answer fields,
-// including explicit nulls, which generated nullable fields keep distinct.
+// convertOpenAIAnswer converts the tagged generated model into a public answer.
 func convertOpenAIAnswer(native wire.DecisionAnswer, q preparedQuestion) (Answer, error) {
 	answer := Answer{Name: q.name, Confidence: optionalConfidence(native.Confidence), ExtraFields: nativeFields(native.AdditionalProperties)}
 	if native.Type == "refusal" {
-		if native.Probability.IsSpecified() || native.Probabilities.IsSpecified() || native.Choice.IsSpecified() || native.Score.IsSpecified() {
-			return answer, fmt.Errorf("refusal contains a numeric or selected answer payload")
-		}
 		answer.Refused = true
 		return answer, nil
 	}

@@ -2,12 +2,13 @@
 //
 // A [Request] contains input and one or more questions about it. A [Predicate]
 // asks a yes-or-no question, a [Choice] asks the model to select an option, and
-// a [Score] asks it to rate the input on a scale. The [Response] contains an
-// answer for each question, with probabilities rather than generated text.
-// Applications decide how to use those answers.
+// a [Score] asks it to rate the input on a scale. [Box] locates an object in an
+// image; [Extraction], [Estimate], and [Forecast] return typed values and
+// uncertainty information. The [Response] contains one answer per question,
+// not conversational messages. Applications decide how to use those answers.
 //
 // Use [NewTypeSafe] for Jev, [NewOpenAI] for OpenAI Decisions, [NewCloudflare]
-// for hosted Clef, or [NewPerplexity] for Perplexity Decisions. These clients
+// for hosted Clef or Clairic, or [NewPerplexity] for Perplexity Decisions. These clients
 // are safe for concurrent use. They do not keep conversation history or retry
 // failed calls. The supplied HTTP client's transport and redirect policies
 // still apply.
@@ -108,11 +109,14 @@ type Input struct {
 	//
 	// Attachments of the same kind keep their order. A provider may group
 	// images, audio, and video separately and choose where to place Data.
+	// TypeSafe uses a nonempty block ID as an asset reference in Data,
+	// instructions, or criteria. It assigns references to unnamed images and
+	// places them before Data. Other providers do not interpret IDs as references.
 	Media []gai.Block `json:"media,omitempty"`
 }
 
 // A Question tells the model what to determine about the input.
-// Exactly one of Predicate, Choice, or Score must be non-nil.
+// Exactly one question variant must be non-nil. Providers reject unsupported variants.
 type Question struct {
 	// Name identifies the question and its answer. It must be nonempty and
 	// unique within the request. It is not a substitute for Instructions.
@@ -136,6 +140,15 @@ type Question struct {
 
 	// Score asks the model to rate the input using the supplied levels.
 	Score *Score `json:"score,omitempty"`
+
+	// Box locates an object in an image.
+	Box *Box `json:"box,omitempty"`
+	// Extraction finds or computes a typed value from the input.
+	Extraction *Extraction `json:"extraction,omitempty"`
+	// Estimate predicts a value on a numeric or date grid.
+	Estimate *Estimate `json:"estimate,omitempty"`
+	// Forecast predicts a sequence of values on a grid.
+	Forecast *Forecast `json:"forecast,omitempty"`
 }
 
 // A Predicate asks a yes-or-no question. Its answer is the probability of yes,
@@ -249,18 +262,12 @@ type ScoreLevel struct {
 
 // A Response contains answers and usage information from a call to Classify.
 //
-// The built-in clients check that answers match the questions and include a
-// probability for every option or level. Invalid responses cause Classify to
-// return a *[ResponseError]. Callers do not need to validate responses themselves.
-//
-// Numbers are checked without converting to float64. The checks allow a rounding
-// error of 0.00005 per probability and per reported score. These allowances add
-// up when checking a sum or weighted average. For example, three probabilities
-// may differ from a sum of 1 by up to 0.00015. Each probability and confidence
-// must still be between 0 and 1, inclusive.
-//
-// Each number must be a valid JSON number of at most 256 bytes, with an exponent
-// between -10000 and 10000. An empty or invalid number is an error, not zero.
+// Built-in clients decode provider responses and arrange answers and finite
+// distributions in request order. They return provider values unchanged, without
+// checking ranges, probability sums, selected maxima, or score consistency.
+// Numbers retain their JSON spelling without conversion through float64.
+// A response that cannot be decoded or mapped to these types returns
+// *[ResponseError].
 type Response struct {
 	// Model is the model name returned by the provider. It may be an alias,
 	// rather than the name of a specific model version.
@@ -286,8 +293,8 @@ type Response struct {
 }
 
 // An Answer is the result for one question. If Refused is false, exactly one
-// of Predicate, Choice, or Score is non-nil and matches the question type.
-// If Refused is true, all three and Confidence must be nil.
+// answer variant is non-nil and matches the question type.
+// If Refused is true, all answer variants are nil; provider confidence is retained.
 type Answer struct {
 	// Name is the name of the question this answer belongs to.
 	Name string `json:"name"`
@@ -301,13 +308,22 @@ type Answer struct {
 	// Score contains the numeric score and each level's probability.
 	Score *ScoreAnswer `json:"score,omitempty"`
 
+	// Box contains normalized image coordinates.
+	Box *BoxAnswer `json:"box,omitempty"`
+	// Extraction contains a typed value or an explicit absence (nil Value).
+	Extraction *ExtractionAnswer `json:"extraction,omitempty"`
+	// Estimate contains a predicted value and available uncertainty summaries.
+	Estimate *EstimateAnswer `json:"estimate,omitempty"`
+	// Forecast contains the estimates for successive steps.
+	Forecast *ForecastAnswer `json:"forecast,omitempty"`
+
 	// Refused is true when the model declines to answer. A refusal is not
 	// a negative answer or a low-confidence prediction.
 	Refused bool `json:"refused,omitempty"`
 
 	// Confidence measures how certain the implementation is about the answer.
-	// It is between 0 and 1, inclusive. Nil means unavailable, not zero.
-	// It is always nil for a refusal.
+	// Providers normally report values between 0 and 1, inclusive.
+	// The value is passed through without a range check. Nil means unavailable.
 	//
 	// Each implementation defines what confidence means. It may return the
 	// provider's value, calculate one, or omit it. The built-in clients return
@@ -329,13 +345,13 @@ type PredicateAnswer struct {
 
 // A ChoiceAnswer contains the selected option and the probability of every option.
 type ChoiceAnswer struct {
-	// Value is the option selected by the model. It has the highest reported
-	// probability, allowing for rounding. The model breaks ties.
+	// Value is the option selected by the provider. It is not recomputed from
+	// the returned probabilities.
 	Value Value `json:"value"`
 
 	// Probabilities contains one entry per option, in the order given by
 	// [Choice.Options]. Options with zero probability are included.
-	// The probabilities sum to 1, allowing for rounding; see [Response].
+	// Values are copied as reported, without checking their sum.
 	Probabilities []ChoiceProbability `json:"probabilities"`
 }
 
@@ -355,7 +371,7 @@ type ChoiceProbability struct {
 //
 //	0*0.2 + 1*0.3 + 2*0.5 = 1.3
 //
-// Reported scores may differ slightly due to rounding; see [Response].
+// The adapter returns the reported score; it does not recompute this mean.
 type ScoreAnswer struct {
 	// Score is the numeric score returned by the model. It is between zero
 	// and the highest index in the question's [Score.Levels], inclusive.
@@ -369,7 +385,8 @@ type ScoreAnswer struct {
 	Probabilities []json.Number `json:"probabilities"`
 }
 
-// A ResponseError describes an invalid or incomplete response from a classifier.
+// A ResponseError describes a response that cannot be decoded or mapped to
+// the classifier's public types.
 // Callers must not use answers returned with this error.
 type ResponseError struct {
 	// Question is the name of the affected question. It is empty if the error

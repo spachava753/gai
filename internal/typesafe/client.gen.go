@@ -19,6 +19,7 @@ import (
 
 // Answer Noul supplies noul; choice supplies choice and probabilities; score supplies score, probabilities, and legend. Confidence may be reported. Keep absent and null values distinct. Adapters validate required fields for the returned type before exposing answers.
 type Answer struct {
+	Box                  nullable.Nullable[BoxCoordinates]             `json:"box,omitempty"`
 	Choice               nullable.Nullable[string]                     `json:"choice,omitempty"`
 	Confidence           nullable.Nullable[wirejson.Number]            `json:"confidence,omitempty"`
 	Legend               nullable.Nullable[map[string]json.RawMessage] `json:"legend,omitempty"`
@@ -29,11 +30,21 @@ type Answer struct {
 	AdditionalProperties map[string]json.RawMessage                    `json:"-"`
 }
 
+// BoxCoordinates defines model for BoxCoordinates.
+type BoxCoordinates struct {
+	Bottom               nullable.Nullable[wirejson.Number] `json:"bottom,omitempty"`
+	Left                 nullable.Nullable[wirejson.Number] `json:"left,omitempty"`
+	Right                nullable.Nullable[wirejson.Number] `json:"right,omitempty"`
+	Top                  nullable.Nullable[wirejson.Number] `json:"top,omitempty"`
+	AdditionalProperties map[string]json.RawMessage         `json:"-"`
+}
+
 // ClassificationRequest defines model for ClassificationRequest.
 type ClassificationRequest struct {
-	Model string `json:"model"`
+	Assets *map[string]ImageAsset `json:"assets,omitempty"`
+	Model  string                 `json:"model"`
 
-	// Questions Named noul, choice, or score questions.
+	// Questions Named noul, choice, score, or experimental box questions.
 	Questions map[string]json.RawMessage `json:"questions"`
 
 	// State Text or a structured JSON object or array to evaluate.
@@ -63,18 +74,25 @@ type ErrorResponse struct {
 	AdditionalProperties map[string]json.RawMessage `json:"-"`
 }
 
+// ImageAsset defines model for ImageAsset.
+type ImageAsset struct {
+	DataBase64 string `json:"data_base64"`
+	Format     string `json:"format"`
+	Type       string `json:"type"`
+}
+
 // JSONValue Arbitrary JSON, including nested numbers and nulls.
 type JSONValue = json.RawMessage
 
-// Question System One question. Noul criteria describe true and false; choice criteria map string outcomes to descriptions or null; score criteria are an ordered array of level descriptions. Instructions and descriptions may be strings, objects, or arrays. The adapter validates the variant.
+// Question System One question. Noul criteria describe true and false; choice criteria map string outcomes to descriptions or null; score criteria are an ordered array of level descriptions. Instructions and descriptions may be strings, objects, or arrays. Instructions may be omitted when criteria define the question. Box questions locate an object in an image and use instructions without criteria. The adapter validates the variant.
 type Question struct {
 	// Criteria Arbitrary JSON, including nested numbers and nulls.
 	Criteria *JSONValue `json:"criteria,omitempty"`
 
 	// Instructions Arbitrary JSON, including nested numbers and nulls.
-	Instructions JSONValue `json:"instructions"`
+	Instructions *JSONValue `json:"instructions,omitempty"`
 
-	// Type noul, choice, or score.
+	// Type noul, choice, score, or box.
 	Type                 string                     `json:"type"`
 	AdditionalProperties map[string]json.RawMessage `json:"-"`
 }
@@ -119,6 +137,14 @@ func (a *Answer) UnmarshalJSON(b []byte) error {
 	err := json.Unmarshal(b, &object)
 	if err != nil {
 		return err
+	}
+
+	if raw, found := object["box"]; found {
+		err = json.Unmarshal(raw, &a.Box)
+		if err != nil {
+			return fmt.Errorf("error reading 'box': %w", err)
+		}
+		delete(object, "box")
 	}
 
 	if raw, found := object["choice"]; found {
@@ -196,6 +222,13 @@ func (a Answer) MarshalJSON() ([]byte, error) {
 	var err error
 	object := make(map[string]json.RawMessage)
 
+	if a.Box != nil {
+		object["box"], err = json.Marshal(a.Box)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'box': %w", err)
+		}
+	}
+
 	if a.Choice != nil {
 		object["choice"], err = json.Marshal(a.Choice)
 		if err != nil {
@@ -252,6 +285,119 @@ func (a Answer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(object)
 }
 
+// Getter for additional properties for BoxCoordinates. Returns the specified
+// element and whether it was found
+func (a BoxCoordinates) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for BoxCoordinates
+func (a *BoxCoordinates) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for BoxCoordinates to handle AdditionalProperties
+func (a *BoxCoordinates) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["bottom"]; found {
+		err = json.Unmarshal(raw, &a.Bottom)
+		if err != nil {
+			return fmt.Errorf("error reading 'bottom': %w", err)
+		}
+		delete(object, "bottom")
+	}
+
+	if raw, found := object["left"]; found {
+		err = json.Unmarshal(raw, &a.Left)
+		if err != nil {
+			return fmt.Errorf("error reading 'left': %w", err)
+		}
+		delete(object, "left")
+	}
+
+	if raw, found := object["right"]; found {
+		err = json.Unmarshal(raw, &a.Right)
+		if err != nil {
+			return fmt.Errorf("error reading 'right': %w", err)
+		}
+		delete(object, "right")
+	}
+
+	if raw, found := object["top"]; found {
+		err = json.Unmarshal(raw, &a.Top)
+		if err != nil {
+			return fmt.Errorf("error reading 'top': %w", err)
+		}
+		delete(object, "top")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for BoxCoordinates to handle AdditionalProperties
+func (a BoxCoordinates) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Bottom != nil {
+		object["bottom"], err = json.Marshal(a.Bottom)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'bottom': %w", err)
+		}
+	}
+
+	if a.Left != nil {
+		object["left"], err = json.Marshal(a.Left)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'left': %w", err)
+		}
+	}
+
+	if a.Right != nil {
+		object["right"], err = json.Marshal(a.Right)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'right': %w", err)
+		}
+	}
+
+	if a.Top != nil {
+		object["top"], err = json.Marshal(a.Top)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'top': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
 // Getter for additional properties for ClassificationRequest. Returns the specified
 // element and whether it was found
 func (a ClassificationRequest) Get(fieldName string) (value json.RawMessage, found bool) {
@@ -275,6 +421,14 @@ func (a *ClassificationRequest) UnmarshalJSON(b []byte) error {
 	err := json.Unmarshal(b, &object)
 	if err != nil {
 		return err
+	}
+
+	if raw, found := object["assets"]; found {
+		err = json.Unmarshal(raw, &a.Assets)
+		if err != nil {
+			return fmt.Errorf("error reading 'assets': %w", err)
+		}
+		delete(object, "assets")
 	}
 
 	if raw, found := object["model"]; found {
@@ -319,6 +473,13 @@ func (a *ClassificationRequest) UnmarshalJSON(b []byte) error {
 func (a ClassificationRequest) MarshalJSON() ([]byte, error) {
 	var err error
 	object := make(map[string]json.RawMessage)
+
+	if a.Assets != nil {
+		object["assets"], err = json.Marshal(a.Assets)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'assets': %w", err)
+		}
+	}
 
 	object["model"], err = json.Marshal(a.Model)
 	if err != nil {
@@ -683,9 +844,11 @@ func (a Question) MarshalJSON() ([]byte, error) {
 		}
 	}
 
-	object["instructions"], err = json.Marshal(a.Instructions)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'instructions': %w", err)
+	if a.Instructions != nil {
+		object["instructions"], err = json.Marshal(a.Instructions)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'instructions': %w", err)
+		}
 	}
 
 	object["type"], err = json.Marshal(a.Type)

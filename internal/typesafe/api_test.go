@@ -75,6 +75,8 @@ func TestWireRoundTrips(t *testing.T) {
 	}{
 		{"request", `{"model":"future-model","state":{"id":9007199254740993,"nested":[null,false]},"questions":{"p":{"type":"noul","instructions":["Check",{"n":0.123456789012345678901}],"criteria":{"true":"yes"}},"c":{"type":"choice","instructions":"Choose","criteria":{"billing":null,"other":{"examples":[]}}},"s":{"type":"score","instructions":"Rate","criteria":["low",{"label":"high"}]}},"future":{"n":9007199254740993}}`, &ClassificationRequest{}},
 		{"response", `{"model":"resolved","answers":{"p":{"type":"noul","noul":0.123456789012345678901,"future":9007199254740993},"c":{"type":"choice","choice":"billing","confidence":0,"probabilities":{"billing":1,"other":0}},"s":{"type":"score","score":1.1000,"confidence":0.9876543210987654321,"probabilities":{"0":0.1,"1":0.7,"2":0.2},"legend":{"0":"low","1":{"label":"medium"},"2":null}}},"usage":{"input_tokens":12,"output_tokens":0,"future_cost":0.1234567890123456789}}`, &ClassificationResponse{}},
+		{"image request", `{"model":"jev","state":{"image":"ref"},"assets":{"ref":{"type":"image","format":"png","data_base64":"YWJj"}},"questions":{"q":{"type":"box","instructions":"Locate"}}}`, &ClassificationRequest{}},
+		{"box response", `{"model":"jev","answers":{"q":{"type":"box","box":{"top":0.1234567890123456789,"bottom":1,"left":0,"right":0.8},"confidence":null}}}`, &ClassificationResponse{}},
 		{"null usage", `{"model":"resolved","answers":{},"usage":null}`, &ClassificationResponse{}},
 		{"missing usage", `{"model":"resolved","answers":{}}`, &ClassificationResponse{}},
 		{"null count", `{"model":"resolved","answers":{},"usage":{"input_tokens":null}}`, &ClassificationResponse{}},

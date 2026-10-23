@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/spachava753/gai"
 	wire "github.com/spachava753/gai/internal/typesafe"
 )
 
@@ -43,9 +42,16 @@ func NewTypeSafe(client *http.Client, baseURL, apiKey string) (*TypeSafe, error)
 // order. See [Classifier.Classify] for how cancellation, errors, and request
 // data are handled.
 //
-// Data, Instructions, and descriptions are sent as JSON values. Every question
-// must include Instructions. Choices require string values and allow at most
-// 255 options; scores allow at most 10 levels. Media attachments are not supported.
+// Data, Instructions, and descriptions are sent as JSON values. Instructions
+// may be omitted when criteria define the question. Box requires instructions.
+// Choices require string values and allow at most 255 options; scores allow
+// at most 10 levels.
+// PNG and JPEG images and Box questions are experimental. Image blocks with IDs
+// use those IDs as references in Data, instructions, or criteria; each must be
+// referenced. Unnamed images are placed before Data. The adapter sends base64
+// JSON assets and TypeSafe-Danger-Zone-Images: true when images or boxes are used.
+// Request.Headers can override this header. The server validates model support
+// and image dimensions/size; the adapter never resizes or uploads files.
 //
 // SafetyIdentifier is ignored. Confidence is copied from the
 // response when present. Token counts that are not reported remain absent.
@@ -57,18 +63,32 @@ func (c *TypeSafe) Classify(ctx context.Context, request Request) (Response, err
 	if err != nil {
 		return Response{}, err
 	}
-	if len(request.Input.Media) != 0 {
-		return Response{}, gai.UnsupportedInputModalityErr(request.Input.Media[0].MimeType)
+	if err := requireQuestionKinds(prepared.questions, "predicate", "choice", "score", "box"); err != nil {
+		return Response{}, err
 	}
-	if err := systemOneLimits(prepared.questions, true); err != nil {
+	if err := systemOneLimits(prepared.questions, false); err != nil {
 		return Response{}, err
 	}
 	questions, err := systemOneQuestions(prepared.questions)
 	if err != nil {
 		return Response{}, err
 	}
-	body := wire.ClassificationRequest{Model: request.Model, State: prepared.data, Questions: questions}
-	httpResponse, err := c.client.Classify(ctx, body, requestHeaders(request.Headers))
+	body := wire.ClassificationRequest{Model: request.Model, State: emptyState(prepared.data), Questions: questions}
+	if err := typeSafeImages(&body, request.Input.Media); err != nil {
+		return Response{}, err
+	}
+	images := len(request.Input.Media) > 0
+	for _, q := range prepared.questions {
+		if q.kind == "box" && !images {
+			return Response{}, invalid(q.name, "box requires an image")
+		}
+	}
+	httpResponse, err := c.client.Classify(ctx, body, func(_ context.Context, r *http.Request) error {
+		if images {
+			r.Header.Set("TypeSafe-Danger-Zone-Images", "true")
+		}
+		return nil
+	}, requestHeaders(request.Headers))
 	data, response, err := readHTTPResponse(ProviderTypeSafe, httpResponse, err)
 	if err != nil {
 		return response, err

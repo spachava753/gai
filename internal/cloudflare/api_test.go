@@ -79,6 +79,8 @@ func TestWireRoundTrips(t *testing.T) {
 		{"success envelope", `{"success":true,"result":{"model":"clef","answers":{"p":{"type":"noul","noul":0.123456789012345678901}},"usage":{"input_tokens":12,"output_tokens":0}},"messages":[],"errors":[],"future":9007199254740993}`, &ClassificationEnvelope{}},
 		{"failure envelope", `{"success":false,"result":null,"errors":[{"code":1000,"message":"failed"}]}`, &ClassificationEnvelope{}},
 		{"result-only envelope", `{"result":{"model":"clef","answers":{}}}`, &ClassificationEnvelope{}},
+		{"Clairic request", `{"model":"clairic","state":"text","fields":{"n":{"type":"number","decimals":0},"f":{"type":"forecast","min":9007199254740993,"max":9007199254740994,"step":0.000000000000000001,"horizon":1,"interval":"day"}},"reference_date":"2026-10-20","options":{"include_quantiles":true,"return_state_text":true}}`, &ClassificationRequest{}},
+		{"Clairic response", `{"model":"clairic","answers":{"n":{"type":"number","value":null,"guess":9007199254740993,"p_null":1,"confidence":null},"f":{"type":"forecast","value":[1.000000000000000001],"steps":[{"value":1.000000000000000001,"p_below":0,"quantiles":[{"p":0.01,"value":null}],"index":0}]}},"truncated":false,"usage":{"input_tokens":5,"output_tokens":0,"passes":1}}`, &ClairicResponse{}},
 		{"null usage", `{"model":"resolved","answers":{},"usage":null}`, &ClassificationResponse{}},
 		{"missing usage", `{"model":"resolved","answers":{}}`, &ClassificationResponse{}},
 		{"null count", `{"model":"resolved","answers":{},"usage":{"input_tokens":null}}`, &ClassificationResponse{}},

@@ -200,6 +200,346 @@ func TestProviderContracts(t *testing.T) {
 	}
 }
 
+func TestTypeSafeImagesAndBox(t *testing.T) {
+	t.Run("references and box coordinates", func(t *testing.T) {
+		var captured map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("TypeSafe-Danger-Zone-Images") != "true" {
+				t.Error("missing image opt-in")
+			}
+			body, _ := io.ReadAll(r.Body)
+			captured = decodedJSON(t, body).(map[string]any)
+			fmt.Fprint(w, `{"model":"jev-1.14.0","answers":{"match":{"type":"choice","choice":"yes","probabilities":{"yes":1,"no":0}},"location":{"type":"box","box":{"top":0.1234567890123456789012345,"bottom":1,"left":0,"right":0.75},"confidence":null,"future":9007199254740993}},"usage":{"input_tokens":10,"output_tokens":0}}`)
+		}))
+		defer server.Close()
+		model, err := classifier.NewTypeSafe(server.Client(), server.URL, "key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		photo := gai.ImageBlock([]byte("photo"), "image/png")
+		reference := gai.ImageBlock([]byte("reference"), "image/jpeg")
+		reference.ID = "unique-reference-image"
+		request := classifier.Request{Model: "jev-preview", Input: classifier.Input{Data: map[string]any{"id": json.Number("9007199254740993")}, Media: []gai.Block{photo, reference}}, Questions: []classifier.Question{
+			{Name: "location", Instructions: "Locate unique-reference-image in the input photo", Box: &classifier.Box{}},
+			{Name: "match", Choice: &classifier.Choice{Options: []classifier.ChoiceOption{{Value: classifier.StringValue("yes"), Description: map[string]any{"example": "unique-reference-image"}}, {Value: classifier.StringValue("no")}}}},
+		}}
+		before, _ := json.Marshal(request)
+		response, err := model.Classify(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, _ := json.Marshal(request)
+		if !bytes.Equal(before, after) {
+			t.Fatal("request mutated")
+		}
+		if len(response.Answers) != 2 || response.Answers[0].Name != "location" || response.Answers[0].Box == nil || response.Answers[0].Box.Top != "0.1234567890123456789012345" || response.Answers[0].Confidence != nil {
+			t.Fatalf("box/order lost: %+v", response.Answers)
+		}
+		state := captured["state"].([]any)
+		assets := captured["assets"].(map[string]any)
+		if len(state) != 2 || len(assets) != 2 || state[1].(map[string]any)["id"] != json.Number("9007199254740993") {
+			t.Fatalf("state/assets: %v", captured)
+		}
+		if assets[state[0].(string)].(map[string]any)["data_base64"] != "cGhvdG8=" || assets[reference.ID].(map[string]any)["format"] != "jpeg" {
+			t.Fatalf("wrong assets: %v", assets)
+		}
+		questions := captured["questions"].(map[string]any)
+		if _, present := questions["match"].(map[string]any)["instructions"]; present {
+			t.Fatal("invented instructions")
+		}
+	})
+	t.Run("malformed boxes retain usage", func(t *testing.T) {
+		for _, box := range []string{`null`, `{}`, `{"top":"0.1","bottom":1,"left":0,"right":1}`, `{"top":null,"bottom":1,"left":0,"right":1}`} {
+			t.Run(box, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					fmt.Fprintf(w, `{"model":"jev","answers":{"q":{"type":"box","box":%s}},"usage":{"input_tokens":7,"output_tokens":0}}`, box)
+				}))
+				defer server.Close()
+				model, err := classifier.NewTypeSafe(server.Client(), server.URL, "key")
+				if err != nil {
+					t.Fatal(err)
+				}
+				response, err := model.Classify(t.Context(), classifier.Request{Model: "jev", Input: classifier.Input{Media: []gai.Block{gai.ImageBlock([]byte("png"), "image/png")}}, Questions: []classifier.Question{{Name: "q", Instructions: "Locate target", Box: &classifier.Box{}}}})
+				var contract *classifier.ResponseError
+				if !errors.As(err, &contract) || len(response.Answers) != 0 {
+					t.Fatalf("invalid box accepted: %+v, %v", response, err)
+				}
+				if tokens, ok := gai.InputTokens(response.UsageMetadata); !ok || tokens != 7 {
+					t.Fatal("usage lost")
+				}
+			})
+		}
+	})
+	t.Run("header override and explicit data reference", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("TypeSafe-Danger-Zone-Images") != "false" {
+				t.Error("header override ignored")
+			}
+			var body map[string]json.RawMessage
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if string(body["state"]) != `{"picture":"image-reference"}` {
+				t.Errorf("explicit state rewritten: %s", body["state"])
+			}
+			fmt.Fprint(w, `{"model":"jev","answers":{"refund":{"type":"noul","noul":0.5}}}`)
+		}))
+		defer server.Close()
+		model, err := classifier.NewTypeSafe(server.Client(), server.URL, "key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := predicateRequest()
+		request.Headers = http.Header{"TypeSafe-Danger-Zone-Images": {"false"}}
+		image := gai.ImageBlock([]byte("png"), "image/png")
+		image.ID = "image-reference"
+		request.Input = classifier.Input{Data: map[string]any{"picture": "image-reference"}, Media: []gai.Block{image}}
+		if _, err := model.Classify(t.Context(), request); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestClairic(t *testing.T) {
+	t.Run("contracts", func(t *testing.T) {
+		grid := classifier.Estimate{Min: json.Number("-10"), Max: json.Number("100"), Step: json.Number("0.5")}
+		for _, test := range []struct {
+			name      string
+			question  classifier.Question
+			answer    string
+			wantField string
+			wantValue any
+		}{
+			{"text", classifier.Question{Extraction: &classifier.Extraction{Type: "text"}}, `{"type":"text","value":"INV-1","span":[0,5],"confidence":0.9}`, `{"type":"text"}`, "INV-1"},
+			{"absent", classifier.Question{Extraction: &classifier.Extraction{Type: "text"}}, `{"type":"text","value":null,"guess":"INV-1","p_null":1,"span":[0,5]}`, `{"type":"text"}`, nil},
+			{"number", classifier.Question{Extraction: &classifier.Extraction{Type: "number", Integer: true, Unit: "USD"}}, `{"type":"number","value":9007199254740993,"guess":9007199254740993}`, `{"type":"number","integer":true,"unit":"USD"}`, json.Number("9007199254740993")},
+			{"date", classifier.Question{Extraction: &classifier.Extraction{Type: "date"}}, `{"type":"date","value":"2026-10-20"}`, `{"type":"date"}`, "2026-10-20"},
+			{"time", classifier.Question{Extraction: &classifier.Extraction{Type: "time"}}, `{"type":"time","value":"14:30:00"}`, `{"type":"time"}`, "14:30:00"},
+			{"datetime", classifier.Question{Extraction: &classifier.Extraction{Type: "datetime"}}, `{"type":"datetime","value":"2026-10-20T14:30:00"}`, `{"type":"datetime"}`, "2026-10-20T14:30:00"},
+			{"duration", classifier.Question{Extraction: &classifier.Extraction{Type: "duration", Unit: "hours"}}, `{"type":"duration","value":-0.12500}`, `{"type":"duration","unit":"hours"}`, json.Number("-0.12500")},
+			{"number_list", classifier.Question{Extraction: &classifier.Extraction{Type: "list", Items: "number"}}, `{"type":"list","value":[9007199254740993,0.000000000000000001]}`, `{"type":"list","items":"number"}`, []any{json.Number("9007199254740993"), json.Number("0.000000000000000001")}},
+			{"text_list", classifier.Question{Extraction: &classifier.Extraction{Type: "list", Items: "text"}}, `{"type":"list","value":["INV-1"],"spans":[[0,5]]}`, `{"type":"list","items":"text"}`, []any{"INV-1"}},
+			{"date_list", classifier.Question{Extraction: &classifier.Extraction{Type: "list", Items: "date"}}, `{"type":"list","value":["2026-10-20"]}`, `{"type":"list","items":"date"}`, []any{"2026-10-20"}},
+			{"estimate", classifier.Question{Estimate: &grid}, `{"type":"estimate","value":20.00,"mean":21.000000000000000001,"median":20,"p10":10,"p90":40,"p_below":0.01,"p_above":0.02,"quantiles":[{"p":0.01,"value":-1.000000000000000001}]}`, `{"type":"estimate","min":-10,"max":100,"step":0.5}`, json.Number("20.00")},
+			{"date_estimate", classifier.Question{Estimate: &classifier.Estimate{Min: "2026-01-01", Max: "2027-01-01", Step: "month"}}, `{"type":"estimate","value":"2026-10-01","median":"2026-10-01","p10":"2026-09-01","p90":"2026-11-01"}`, `{"type":"estimate","min":"2026-01-01","max":"2027-01-01","step":"month"}`, "2026-10-01"},
+			{"forecast", classifier.Question{Forecast: &classifier.Forecast{Estimate: grid, Horizon: 2, Interval: "day"}}, `{"type":"forecast","value":[20,30],"steps":[{"value":20,"p10":10,"p90":40,"confidence":0.5,"step":1},{"value":30,"p10":20,"p90":50,"step":2}]}`, `{"type":"forecast","min":-10,"max":100,"step":0.5,"horizon":2,"interval":"day"}`, []any{json.Number("20"), json.Number("30")}},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.EscapedPath() != "/accounts/account/ai/run/@cf/cloudflare/clairic" {
+						t.Errorf("escaped path: %s", r.URL.EscapedPath())
+					}
+					body, _ := io.ReadAll(r.Body)
+					wire := decodedJSON(t, body).(map[string]any)
+					if _, exists := wire["questions"]; exists {
+						t.Error("Clef questions sent to Clairic")
+					}
+					if !reflect.DeepEqual(wire["fields"].(map[string]any)["q"], decodedJSON(t, []byte(test.wantField))) {
+						t.Errorf("field: %s, want %s", body, test.wantField)
+					}
+					for _, field := range []string{"reference_date", "options"} {
+						if _, exists := wire[field]; exists {
+							t.Errorf("Classify must leave %s at its server default: %s", field, body)
+						}
+					}
+					fmt.Fprintf(w, `{"success":true,"result":{"model":"clairic","answers":{"q":%s},"truncated":false,"state_text":"INV-1","trace":9007199254740993,"usage":{"input_tokens":10,"output_tokens":0,"passes":2}},"errors":[]}`, test.answer)
+				}))
+				defer server.Close()
+				model, err := classifier.NewCloudflare(server.Client(), server.URL, "account", "key")
+				if err != nil {
+					t.Fatal(err)
+				}
+				question := test.question
+				question.Name = "q"
+				request := classifier.Request{Model: "@cf/cloudflare/clairic", Input: classifier.Input{Data: "INV-1"}, Questions: []classifier.Question{question}}
+				before, _ := json.Marshal(request)
+				var client classifier.Classifier = model
+				response, err := client.Classify(t.Context(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				after, _ := json.Marshal(request)
+				if !bytes.Equal(before, after) {
+					t.Fatal("request mutated")
+				}
+				if len(response.Answers) != 1 || response.Answers[0].Name != "q" || response.Answers[0].Refused {
+					t.Fatalf("answer: %+v", response)
+				}
+				answer := response.Answers[0]
+				var value any
+				switch {
+				case answer.Extraction != nil:
+					value = answer.Extraction.Value
+					if test.name == "absent" && (answer.Extraction.NullProbability == nil || *answer.Extraction.NullProbability != "1" || answer.Extraction.Guess != "INV-1") {
+						t.Fatal("absence metadata lost")
+					}
+				case answer.Estimate != nil:
+					value = answer.Estimate.Value
+					if test.name == "estimate" && (answer.Estimate.Mean != json.Number("21.000000000000000001") || len(answer.Estimate.Quantiles) != 1 || answer.Estimate.Quantiles[0].(map[string]any)["value"] != json.Number("-1.000000000000000001")) {
+						t.Fatalf("estimate precision: %+v", answer.Estimate)
+					}
+				case answer.Forecast != nil:
+					value = answer.Forecast.Value
+					if len(answer.Forecast.Steps) != 2 || answer.Forecast.Steps[1].Value != json.Number("30") || answer.Forecast.Steps[0].Confidence == nil {
+						t.Fatal("forecast steps lost")
+					}
+				}
+				if !reflect.DeepEqual(value, test.wantValue) {
+					t.Fatalf("value = %#v, want %#v", value, test.wantValue)
+				}
+				if n, ok := gai.OutputTokens(response.UsageMetadata); !ok || n != 0 {
+					t.Fatal("zero usage lost")
+				}
+				fields := response.ExtraFields[classifier.ExtraFieldWireFields].(map[string]json.RawMessage)
+				if string(fields["trace"]) != "9007199254740993" || string(fields["truncated"]) != "false" || string(fields["state_text"]) != `"INV-1"` {
+					t.Fatalf("metadata: %v", fields)
+				}
+			})
+		}
+	})
+	t.Run("invalid responses", func(t *testing.T) {
+		grid := classifier.Estimate{Min: json.Number("0"), Max: json.Number("100")}
+		for _, test := range []struct {
+			name     string
+			question classifier.Question
+			answer   string
+		}{
+			{"missing value", classifier.Question{Extraction: &classifier.Extraction{Type: "text"}}, `{"type":"text"}`},
+			{"wrong type", classifier.Question{Extraction: &classifier.Extraction{Type: "text"}}, `{"type":"number","value":1}`},
+			{"quoted probability", classifier.Question{Extraction: &classifier.Extraction{Type: "text"}}, `{"type":"text","value":null,"p_null":"1"}`},
+			{"step missing value", classifier.Question{Forecast: &classifier.Forecast{Estimate: grid, Horizon: 1, Interval: "day"}}, `{"type":"forecast","value":null,"steps":[{"mean":1}]}`},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					fmt.Fprintf(w, `{"success":true,"result":{"model":"clairic","answers":{"q":%s},"truncated":false,"usage":{"input_tokens":7,"output_tokens":0}}}`, test.answer)
+				}))
+				defer server.Close()
+				model, err := classifier.NewCloudflare(server.Client(), server.URL, "account", "key")
+				if err != nil {
+					t.Fatal(err)
+				}
+				question := test.question
+				question.Name = "q"
+				response, err := model.Classify(t.Context(), classifier.Request{Model: "@cf/cloudflare/clairic", Input: classifier.Input{Data: "text"}, Questions: []classifier.Question{question}})
+				var contract *classifier.ResponseError
+				if !errors.As(err, &contract) || len(response.Answers) != 0 {
+					t.Fatalf("invalid response accepted: %+v, %v", response, err)
+				}
+				if tokens, ok := gai.InputTokens(response.UsageMetadata); !ok || tokens != 7 {
+					t.Fatal("usage lost")
+				}
+			})
+		}
+	})
+}
+
+func TestNewQuestionRestrictions(t *testing.T) {
+	t.Run("unsupported providers", func(t *testing.T) {
+		for _, provider := range providerFixtures() {
+			t.Run(provider.name, func(t *testing.T) {
+				var calls atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); http.Error(w, "unexpected", 500) }))
+				defer server.Close()
+				model, err := provider.new(server.Client(), server.URL, "key")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var variant classifier.Question
+				if provider.name == "cloudflare" || provider.name == "perplexity" {
+					variant.Box = &classifier.Box{}
+				} else {
+					variant.Extraction = &classifier.Extraction{Type: "text"}
+				}
+				variant.Name = "q"
+				variant.Instructions = "Find it"
+				_, err = model.Classify(t.Context(), classifier.Request{Model: provider.model, Input: classifier.Input{Data: "text"}, Questions: []classifier.Question{variant}})
+				var parameter gai.InvalidParameterErr
+				if !errors.As(err, &parameter) || calls.Load() != 0 {
+					t.Fatalf("unsupported variant reached HTTP: %v", err)
+				}
+			})
+		}
+	})
+	t.Run("invalid Clairic requests", func(t *testing.T) {
+		for _, test := range []struct {
+			name   string
+			change func(*classifier.Request)
+		}{
+			{"structured input", func(r *classifier.Request) { r.Input.Data = map[string]any{"text": "x"} }},
+			{"audio", func(r *classifier.Request) { r.Input.Media = []gai.Block{gai.AudioBlock([]byte("audio"), "audio/wav")} }},
+			{"mixed formats", func(r *classifier.Request) {
+				r.Questions = append(r.Questions, classifier.Question{Name: "other", Instructions: "Check", Predicate: &classifier.Predicate{}})
+			}},
+			{"bad field name", func(r *classifier.Request) { r.Questions[0].Name = "1invalid" }},
+			{"structured instructions", func(r *classifier.Request) { r.Questions[0].Instructions = []string{"Find it"} }},
+			{"unknown extraction", func(r *classifier.Request) { r.Questions[0].Extraction.Type = "bool" }},
+			{"missing list items", func(r *classifier.Request) { r.Questions[0].Extraction.Type = "list" }},
+			{"float bounds", func(r *classifier.Request) {
+				r.Questions[0] = classifier.Question{Name: "q", Estimate: &classifier.Estimate{Min: 0.0, Max: 100.0}}
+			}},
+			{"reversed bounds", func(r *classifier.Request) {
+				r.Questions[0] = classifier.Question{Name: "q", Estimate: &classifier.Estimate{Min: json.Number("2"), Max: json.Number("1")}}
+			}},
+			{"zero step", func(r *classifier.Request) {
+				r.Questions[0] = classifier.Question{Name: "q", Estimate: &classifier.Estimate{Min: json.Number("0"), Max: json.Number("1"), Step: json.Number("0")}}
+			}},
+			{"invalid threshold", func(r *classifier.Request) { n := json.Number("0"); r.Questions[0].Extraction.NullThreshold = &n }},
+			{"invalid horizon", func(r *classifier.Request) {
+				r.Questions[0] = classifier.Question{Name: "q", Forecast: &classifier.Forecast{Estimate: classifier.Estimate{Min: json.Number("0"), Max: json.Number("1")}, Horizon: 65, Interval: "day"}}
+			}},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				var calls atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); http.Error(w, "unexpected", 500) }))
+				defer server.Close()
+				model, err := classifier.NewCloudflare(server.Client(), server.URL, "account", "key")
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := classifier.Request{Model: "@cf/cloudflare/clairic", Input: classifier.Input{Data: "text"}, Questions: []classifier.Question{{Name: "q", Extraction: &classifier.Extraction{Type: "text"}}}}
+				test.change(&request)
+				if _, err := model.Classify(t.Context(), request); err == nil || calls.Load() != 0 {
+					t.Fatalf("invalid request reached HTTP: %v", err)
+				}
+			})
+		}
+	})
+	t.Run("invalid image references", func(t *testing.T) {
+		for _, name := range []string{"unused", "key only", "duplicate", "long", "box without image", "unsupported format"} {
+			t.Run(name, func(t *testing.T) {
+				var calls atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); http.Error(w, "unexpected", 500) }))
+				defer server.Close()
+				model, err := classifier.NewTypeSafe(server.Client(), server.URL, "key")
+				if err != nil {
+					t.Fatal(err)
+				}
+				image := gai.ImageBlock([]byte("png"), "image/png")
+				image.ID = "image-ref"
+				request := predicateRequest()
+				request.Input.Media = []gai.Block{image}
+				switch name {
+				case "key only":
+					request.Input.Data = map[string]any{"image-ref": "not a reference"}
+				case "duplicate":
+					request.Input.Data = "image-ref"
+					request.Input.Media = append(request.Input.Media, image)
+				case "long":
+					request.Input.Media[0].ID = strings.Repeat("x", 1025)
+				case "box without image":
+					request.Input.Media = nil
+					request.Questions = []classifier.Question{{Name: "q", Instructions: "Locate target", Box: &classifier.Box{}}}
+				case "unsupported format":
+					request.Input.Media[0].MimeType = "image/webp"
+				}
+				if _, err := model.Classify(t.Context(), request); err == nil || calls.Load() != 0 {
+					t.Fatalf("invalid image request reached HTTP: %v", err)
+				}
+			})
+		}
+	})
+}
+
 func TestMediaTranslation(t *testing.T) {
 	for _, provider := range providerFixtures() {
 		t.Run(provider.name, func(t *testing.T) {
@@ -223,17 +563,19 @@ func TestMediaTranslation(t *testing.T) {
 			request.Model = provider.model
 			request.Input.Media = []gai.Block{gai.ImageBlock([]byte("abc"), "image/png"), gai.ImageBlock([]byte("def"), "image/jpeg")}
 			_, err = model.Classify(context.Background(), request)
-			if provider.name == "typesafe" {
-				var modality gai.UnsupportedInputModalityErr
-				if !errors.As(err, &modality) || calls.Load() != 0 {
-					t.Fatalf("Jev must reject media before HTTP: %v, calls=%d", err, calls.Load())
-				}
-				return
-			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			switch provider.name {
+			case "typesafe":
+				parts := captured["state"].([]any)
+				assets := captured["assets"].(map[string]any)
+				if len(parts) != 3 || len(assets) != 2 || parts[2] != request.Input.Data {
+					t.Fatalf("image state: %v", captured)
+				}
+				if assets[parts[0].(string)].(map[string]any)["data_base64"] != "YWJj" || assets[parts[1].(string)].(map[string]any)["format"] != "jpeg" {
+					t.Fatalf("image assets: %v", assets)
+				}
 			case "openai":
 				parts := captured["input"].([]any)[0].(map[string]any)["content"].([]any)
 				if len(parts) != 3 || parts[1].(map[string]any)["image_url"] != "data:image/png;base64,YWJj" || parts[2].(map[string]any)["image_url"] != "data:image/jpeg;base64,ZGVm" {
@@ -301,7 +643,7 @@ func TestOpenAIBooleanAndRefusal(t *testing.T) {
 	})
 }
 
-func TestRefusalPayloadRejected(t *testing.T) {
+func TestRefusalTag(t *testing.T) {
 	for _, payload := range []string{`"probability":0`, `"probability":null`, `"probabilities":null`, `"choice":null`, `"score":null`, `"confidence":0`} {
 		t.Run(payload, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -313,9 +655,8 @@ func TestRefusalPayloadRejected(t *testing.T) {
 				t.Fatal(err)
 			}
 			response, err := model.Classify(context.Background(), predicateRequest())
-			var contract *classifier.ResponseError
-			if !errors.As(err, &contract) || len(response.Answers) != 0 {
-				t.Fatalf("contradictory refusal payload accepted: %+v, %v", response, err)
+			if err != nil || len(response.Answers) != 1 || !response.Answers[0].Refused {
+				t.Fatalf("refusal tag not preserved: %+v, %v", response, err)
 			}
 		})
 	}
@@ -334,14 +675,10 @@ func TestInvalidNativeResponses(t *testing.T) {
 					s = strings.ReplaceAll(s, `"probability":`, `"missing_probability":`)
 					return strings.ReplaceAll(s, `"noul":0.75`, `"missing_noul":0.75`)
 				}},
-				{"out of range", func(s string) string { return strings.ReplaceAll(s, "0.75", `1.00000000000000000000000001`) }},
-				{"extreme exponent", func(s string) string { return strings.ReplaceAll(s, "0.75", `1e-999999999`) }},
 				{"wrong answer name", func(s string) string { return strings.ReplaceAll(s, `"refund"`, `"unknown"`) }},
-				{"missing model", func(s string) string { return strings.ReplaceAll(s, `"model":"resolved",`, ``) }},
 				{"duplicate JSON key", func(s string) string {
 					return strings.ReplaceAll(s, `"model":"resolved"`, `"model":"a","model":"resolved"`)
 				}},
-				{"invalid usage", func(s string) string { return strings.ReplaceAll(s, `"input_tokens":12`, `"input_tokens":-1`) }},
 				{"quoted usage", func(s string) string { return strings.ReplaceAll(s, `"input_tokens":12`, `"input_tokens":"12"`) }},
 				{"trailing value", func(s string) string { return s + `{}` }},
 			} {
@@ -480,6 +817,87 @@ func TestConcurrentRequests(t *testing.T) {
 	}
 }
 
+func TestReturnedValues(t *testing.T) {
+	for _, provider := range providerFixtures() {
+		t.Run(provider.name, func(t *testing.T) {
+			// These values deliberately disagree with the mathematical assumptions
+			// a caller might make. The adapter must return them, not second-guess
+			// the provider or turn a successful call into a validation failure.
+			body := mixedBody(provider)
+			body = strings.ReplaceAll(body, `"choice":"billing"`, `"choice":"other"`)
+			body = strings.ReplaceAll(body, `"score":1.1000`, `"score":9.8000`)
+			body = strings.ReplaceAll(body, `"confidence":0.6000`, `"confidence":1.5000`)
+			body = strings.ReplaceAll(body, `0.98765432109876543210987654321`, `1e-999999999`)
+			body = strings.ReplaceAll(body, `:0.2`, `:-0.2`)
+			body = strings.ReplaceAll(body, `"input_tokens":123`, `"input_tokens":-1`)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, wrapProviderResponse(provider, body))
+			}))
+			defer server.Close()
+			client, err := provider.new(server.Client(), server.URL, "key")
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := client.Classify(t.Context(), mixedRequest(provider.model))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(response.Answers) != 3 || response.Answers[0].Predicate.Probability != "1e-999999999" || *response.Answers[1].Choice.Value.String != "other" || response.Answers[1].Choice.Probabilities[1].Probability != "-0.2" || *response.Answers[1].Confidence != "1.5000" || response.Answers[2].Score.Score != "9.8000" {
+				t.Fatalf("provider values changed: %+v", response)
+			}
+			if tokens, ok := gai.InputTokens(response.UsageMetadata); !ok || tokens != -1 {
+				t.Fatal("provider usage changed")
+			}
+		})
+	}
+}
+
+func TestStructuredValuesPreserved(t *testing.T) {
+	t.Run("box", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, `{"model":"jev","answers":{"q":{"type":"box","box":{"top":0.9,"bottom":0.1,"left":-1,"right":2},"confidence":1.5}}}`)
+		}))
+		defer server.Close()
+		client, err := classifier.NewTypeSafe(server.Client(), server.URL, "key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Classify(t.Context(), classifier.Request{Model: "jev", Input: classifier.Input{Media: []gai.Block{gai.ImageBlock([]byte("image"), "image/png")}}, Questions: []classifier.Question{{Name: "q", Instructions: "Locate it", Box: &classifier.Box{}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		answer := response.Answers[0]
+		if *answer.Box != (classifier.BoxAnswer{Top: "0.9", Bottom: "0.1", Left: "-1", Right: "2"}) || *answer.Confidence != "1.5" {
+			t.Fatalf("box changed: %+v", answer)
+		}
+	})
+	t.Run("Clairic", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, `{"success":true,"result":{"model":"clairic","answers":{"n":{"type":"number","value":1.500,"confidence":2},"d":{"type":"date","value":"2026-02-30","span":[5,1]},"f":{"type":"forecast","value":null,"steps":[{"value":1e10001,"p10":20,"p90":-1,"p_above":-0.1,"confidence":2}]}}}}`)
+		}))
+		defer server.Close()
+		client, err := classifier.NewCloudflare(server.Client(), server.URL, "account", "key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Classify(t.Context(), classifier.Request{Model: "@cf/cloudflare/clairic", Input: classifier.Input{Data: "text"}, Questions: []classifier.Question{
+			{Name: "n", Extraction: &classifier.Extraction{Type: "number", Integer: true}},
+			{Name: "d", Extraction: &classifier.Extraction{Type: "date"}},
+			{Name: "f", Forecast: &classifier.Forecast{Estimate: classifier.Estimate{Min: json.Number("0"), Max: json.Number("100")}, Horizon: 2, Interval: "day"}},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.Answers[0].Extraction.Value != json.Number("1.500") || *response.Answers[0].Confidence != "2" || response.Answers[1].Extraction.Value != "2026-02-30" || !reflect.DeepEqual(response.Answers[1].Extraction.Span, []int{5, 1}) {
+			t.Fatalf("extraction changed: %+v", response)
+		}
+		forecast := response.Answers[2].Forecast
+		if len(forecast.Steps) != 1 || forecast.Steps[0].Value != json.Number("1e10001") || *forecast.Steps[0].AboveProbability != "-0.1" || *forecast.Steps[0].Confidence != "2" {
+			t.Fatalf("forecast changed: %+v", forecast)
+		}
+	})
+}
+
 func TestDistributionFailures(t *testing.T) {
 	for _, provider := range providerFixtures() {
 		t.Run(provider.name, func(t *testing.T) {
@@ -493,8 +911,6 @@ func TestDistributionFailures(t *testing.T) {
 				to   string
 			}{
 				{"missing distributions", `"probabilities":`, `"missing":`},
-				{"wrong choice maximum", `"choice":"billing"`, `"choice":"other"`},
-				{"incorrect score", `"score":1.1000`, `"score":1.8`},
 				{"quoted score", `"score":1.1000`, `"score":"1.1000"`},
 				{"missing score", `"score":1.1000`, `"other_score":1.1000`},
 				{"null score", `"score":1.1000`, `"score":null`},
@@ -561,7 +977,7 @@ func TestEndpointRestrictions(t *testing.T) {
 			request.Questions[0].Instructions = nil
 			request.Questions[0].Predicate.Criteria = &classifier.PredicateCriteria{True: "refund requested"}
 			_, err = model.Classify(context.Background(), request)
-			if provider.name == "perplexity" {
+			if provider.name == "perplexity" || provider.name == "typesafe" {
 				if err != nil || calls.Load() != 1 {
 					t.Fatalf("criteria-only predicate rejected: %v", err)
 				}

@@ -19,15 +19,6 @@ func predicateRequest() Request {
 	}
 }
 
-func preparedForTest(t *testing.T, request Request) preparedRequest {
-	t.Helper()
-	prepared, err := prepareRequest(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return prepared
-}
-
 func TestRequestPreparation(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -133,123 +124,6 @@ func TestFiniteSchema(t *testing.T) {
 	}
 }
 
-func TestNumericValidation(t *testing.T) {
-	for _, test := range []struct {
-		value string
-		valid bool
-	}{
-		{"0", true}, {"1", true}, {"1e-30", true}, {"0.12345678901234567890123456789", true},
-		{"", false}, {"null", false}, {`"0.5"`, false}, {"NaN", false}, {"Inf", false},
-		{"-0.0000000000000000000000000001", false}, {"1.0000000000000000000000000001", false},
-		{"01", false}, {"1/2", false}, {"1e999999999", false},
-	} {
-		t.Run(test.value, func(t *testing.T) {
-			response := Response{Model: "resolved", Answers: []Answer{{Name: "refund", Predicate: &PredicateAnswer{Probability: json.Number(test.value)}}}}
-			err := validateResponse(response, preparedForTest(t, predicateRequest()))
-			if (err == nil) != test.valid {
-				t.Fatalf("validateResponse() = %v, valid = %v", err, test.valid)
-			}
-			if err != nil {
-				var invalid *ResponseError
-				if !errors.As(err, &invalid) || invalid.Question != "refund" {
-					t.Fatalf("unexpected error %v", err)
-				}
-			}
-		})
-	}
-}
-
-func TestResponseContract(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		change func(*Response)
-		valid  bool
-	}{
-		{"zero probability", func(r *Response) {}, true},
-		{"explicit zero confidence", func(r *Response) { n := json.Number("0"); r.Answers[0].Confidence = &n }, true},
-		{"refusal", func(r *Response) {
-			r.Answers[0].Predicate = nil
-			r.Answers[0].Refused = true
-		}, true},
-		{"no answer or refusal", func(r *Response) { r.Answers[0].Predicate = nil }, false},
-		{"missing answers", func(r *Response) { r.Answers = nil }, false},
-		{"wrong name", func(r *Response) { r.Answers[0].Name = "different" }, false},
-		{"missing model", func(r *Response) { r.Model = "" }, false},
-		{"wrong kind", func(r *Response) {
-			r.Answers[0].Predicate = nil
-			r.Answers[0].Choice = &ChoiceAnswer{}
-		}, false},
-		{"two variants", func(r *Response) { r.Answers[0].Refused = true }, false},
-		{"refusal confidence", func(r *Response) {
-			r.Answers[0].Predicate = nil
-			r.Answers[0].Refused = true
-			n := json.Number("1")
-			r.Answers[0].Confidence = &n
-		}, false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			response := Response{Model: "resolved", Answers: []Answer{{Name: "refund", Predicate: &PredicateAnswer{Probability: "0"}}}}
-			test.change(&response)
-			if err := validateResponse(response, preparedForTest(t, predicateRequest())); (err == nil) != test.valid {
-				t.Fatalf("validateResponse() = %v, valid = %v", err, test.valid)
-			}
-		})
-	}
-}
-
-func TestScoreDistribution(t *testing.T) {
-	for _, test := range []struct {
-		name          string
-		probabilities []json.Number
-		score         json.Number
-		valid         bool
-	}{
-		{"expected not argmax", []json.Number{"0.1", "0.7", "0.2"}, "1.1", true},
-		{"rounded", []json.Number{"0.3333", "0.3333", "0.3333"}, "1", true},
-		{"not normalized", []json.Number{"0.1", "0.1", "0.1"}, "0.3", false},
-		{"argmax is wrong score", []json.Number{"0.1", "0.7", "0.2"}, "1", false},
-		{"missing outcome", []json.Number{"1"}, "0", false},
-		{"extra outcome", []json.Number{"1", "0", "0", "0"}, "0", false},
-		{"wrong order", []json.Number{"0.2", "0.7", "0.1"}, "1.1", false},
-		{"out of range probability", []json.Number{"-0.1", "1", "0.1"}, "1.2", false},
-		{"empty probability", []json.Number{"1", "", "0"}, "0", false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			request := predicateRequest()
-			request.Questions = []Question{{Name: "severity", Score: &Score{Levels: []ScoreLevel{{Label: "low"}, {Label: "medium"}, {Label: "high"}}}}}
-			response := Response{Model: "resolved", Answers: []Answer{{Name: "severity", Score: &ScoreAnswer{Score: test.score, Probabilities: test.probabilities}}}}
-			if err := validateResponse(response, preparedForTest(t, request)); (err == nil) != test.valid {
-				t.Fatalf("validateResponse() = %v, valid = %v", err, test.valid)
-			}
-		})
-	}
-}
-
-func TestChoiceDistribution(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		change func(*ChoiceAnswer)
-		valid  bool
-	}{
-		{"valid", func(a *ChoiceAnswer) {}, true},
-		{"wrong winner", func(a *ChoiceAnswer) { a.Value = StringValue("false") }, false},
-		{"unknown winner", func(a *ChoiceAnswer) { a.Value = StringValue("other") }, false},
-		{"missing mass", func(a *ChoiceAnswer) { a.Probabilities = a.Probabilities[:1] }, false},
-		{"duplicate", func(a *ChoiceAnswer) { a.Probabilities[1].Value = BooleanValue(false) }, false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			request := predicateRequest()
-			request.Questions = []Question{{Name: "choice", Choice: &Choice{Options: []ChoiceOption{{Value: BooleanValue(false)}, {Value: StringValue("false")}}}}}
-			answer := &ChoiceAnswer{Value: BooleanValue(false), Probabilities: []ChoiceProbability{{Value: BooleanValue(false), Probability: "0.8"}, {Value: StringValue("false"), Probability: "0.2"}}}
-			test.change(answer)
-			response := Response{Model: "resolved", Answers: []Answer{{Name: "choice", Choice: answer}}}
-			if err := validateResponse(response, preparedForTest(t, request)); (err == nil) != test.valid {
-				t.Fatalf("validateResponse() = %v, valid = %v", err, test.valid)
-			}
-		})
-	}
-}
-
 func TestAnswerJSON(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -291,7 +165,7 @@ func TestFuncAndSerialization(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateResponse(decoded, preparedForTest(t, predicateRequest())); err != nil {
-		t.Fatal(err)
+	if !reflect.DeepEqual(decoded, response) {
+		t.Fatalf("round trip = %+v, want %+v", decoded, response)
 	}
 }

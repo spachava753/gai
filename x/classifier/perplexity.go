@@ -63,6 +63,9 @@ func (c *Perplexity) Classify(ctx context.Context, request Request) (Response, e
 	if err != nil {
 		return Response{}, err
 	}
+	if err := requireQuestionKinds(prepared.questions, "predicate", "choice", "score"); err != nil {
+		return Response{}, err
+	}
 	if len(prepared.questions) > 128 {
 		return Response{}, invalid("Questions", "Perplexity accepts at most 128 questions")
 	}
@@ -120,7 +123,12 @@ func decodePerplexity(data json.RawMessage, response Response, request preparedR
 	}
 	answers := make(map[string]systemone.Answer, len(native.Answers))
 	for name, answer := range native.Answers {
-		answers[name] = systemone.Answer(answer)
+		answers[name] = systemone.Answer{
+			Type: answer.Type, Noul: answer.Noul, Choice: answer.Choice,
+			Score: answer.Score, Confidence: answer.Confidence,
+			Probabilities: answer.Probabilities, Legend: answer.Legend,
+			AdditionalProperties: answer.AdditionalProperties,
+		}
 	}
 	return convertSystemOne(answers, response, request)
 }

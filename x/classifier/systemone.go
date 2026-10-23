@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/oapi-codegen/nullable"
+
 	wire "github.com/spachava753/gai/internal/typesafe"
+	"github.com/spachava753/gai/internal/wirejson"
 )
 
 // systemOneQuestions translates the shared finite schema to System One wire
@@ -50,6 +53,10 @@ func systemOneQuestions(questions []preparedQuestion) (map[string]json.RawMessag
 				}
 			}
 			question["criteria"] = criteria
+		case "box":
+			// Box has no criteria.
+		default:
+			return nil, invalid(q.name, "unsupported System One question type")
 		}
 		encoded, err := json.Marshal(question)
 		if err != nil {
@@ -91,10 +98,6 @@ func convertSystemOne(answers map[string]wire.Answer, response Response, request
 		normalized = append(normalized, answer)
 	}
 	response.Answers = normalized
-	if err := validateResponse(response, request); err != nil {
-		response.Answers = nil
-		return response, err
-	}
 	return response, nil
 }
 
@@ -126,6 +129,21 @@ func convertSystemOneAnswer(native wire.Answer, q preparedQuestion) (Answer, err
 		answer.Choice, err = convertSystemOneChoice(native, q)
 	case native.Type == "score" && q.kind == "score":
 		answer.Score, err = convertSystemOneScore(native, q)
+	case native.Type == "box" && q.kind == "box":
+		box, boxErr := native.Box.Get()
+		if boxErr != nil {
+			return answer, fmt.Errorf("missing or null box")
+		}
+		answer.Box = &BoxAnswer{}
+		for _, edge := range []struct {
+			value  nullable.Nullable[wirejson.Number]
+			target *json.Number
+		}{{box.Top, &answer.Box.Top}, {box.Bottom, &answer.Box.Bottom}, {box.Left, &answer.Box.Left}, {box.Right, &answer.Box.Right}} {
+			*edge.target, err = requiredNumber(edge.value)
+			if err != nil {
+				return answer, err
+			}
+		}
 	default:
 		return answer, fmt.Errorf("unexpected answer kind")
 	}

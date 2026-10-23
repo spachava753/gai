@@ -329,9 +329,6 @@ func tokenMetric(metrics gai.Metadata, count nullable.Nullable[int], key string)
 	if err != nil {
 		return nil
 	}
-	if value < 0 {
-		return fmt.Errorf("invalid nonnegative integer usage field %s", key)
-	}
 	metrics[key] = value
 	return nil
 }

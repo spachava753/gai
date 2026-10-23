@@ -1,12 +1,13 @@
 # GAI's maintained subset of the TypeSafe System One API.
-# Source: https://docs.typesafe.ai/api (reviewed 2026-10-12).
+# Sources: https://api.typesafe.ai/openapi.json and https://docs.typesafe.ai/images
+# Reviewed 2026-10-20; images and box questions are experimental.
 # This describes wire shapes, not model capabilities. No defaults or retries.
 # Question unions and arbitrary input remain raw JSON in Go so their numbers,
 # nulls, and unknown fields survive without a float64 conversion.
 openapi: 3.0.3
 info:
   title: TypeSafe System One
-  version: 0.1.0
+  version: 0.2.0
 servers:
   - url: https://api.typesafe.ai/v1
 security:
@@ -52,9 +53,13 @@ components:
         state:
           description: Text or a structured JSON object or array to evaluate.
           x-go-type: json.RawMessage
+        assets:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ImageAsset'
         questions:
           type: object
-          description: Named noul, choice, or score questions.
+          description: Named noul, choice, score, or experimental box questions.
           x-go-type: map[string]json.RawMessage
           additionalProperties:
             $ref: '#/components/schemas/Question'
@@ -65,12 +70,14 @@ components:
         System One question. Noul criteria describe true and false; choice
         criteria map string outcomes to descriptions or null; score criteria
         are an ordered array of level descriptions. Instructions and descriptions
-        may be strings, objects, or arrays. The adapter validates the variant.
-      required: [type, instructions]
+        may be strings, objects, or arrays. Instructions may be omitted when
+        criteria define the question. Box questions locate an object in an image
+        and use instructions without criteria. The adapter validates the variant.
+      required: [type]
       properties:
         type:
           type: string
-          description: noul, choice, or score.
+          description: noul, choice, score, or box.
         instructions:
           $ref: '#/components/schemas/JSONValue'
         criteria:
@@ -110,6 +117,10 @@ components:
       properties:
         type:
           type: string
+        box:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/BoxCoordinates'
         noul:
           type: number
           nullable: true
@@ -130,6 +141,32 @@ components:
           type: object
           nullable: true
           additionalProperties: {x-go-type: json.RawMessage}
+      additionalProperties: {x-go-type: json.RawMessage}
+    ImageAsset:
+      type: object
+      required: [type, format, data_base64]
+      properties:
+        type:
+          type: string
+        format:
+          type: string
+        data_base64:
+          type: string
+    BoxCoordinates:
+      type: object
+      properties:
+        top:
+          type: number
+          nullable: true
+        bottom:
+          type: number
+          nullable: true
+        left:
+          type: number
+          nullable: true
+        right:
+          type: number
+          nullable: true
       additionalProperties: {x-go-type: json.RawMessage}
     Usage:
       type: object

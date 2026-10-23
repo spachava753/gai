@@ -42,6 +42,64 @@ func ExampleClassifier() {
 	// Output: 0.98
 }
 
+func ExampleTypeSafe_Classify() {
+	// This local server stands in for TypeSafe; no API key or network service is used.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"model":"jev-1.14.0","answers":{"mug":{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84},"confidence":0.9}}}`)
+	}))
+	defer server.Close()
+	client, err := classifier.NewTypeSafe(server.Client(), server.URL, "example-key")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	// Supply real PNG bytes in an application. The named image can also be
+	// referenced inside instructions or option descriptions.
+	photo := gai.ImageBlock([]byte("example PNG bytes"), "image/png")
+	photo.ID = "unique-kitchen-photo"
+	response, err := client.Classify(context.Background(), classifier.Request{
+		Model:     "jev-1.14.0",
+		Input:     classifier.Input{Data: map[string]any{"photo": photo.ID}, Media: []gai.Block{photo}},
+		Questions: []classifier.Question{{Name: "mug", Instructions: "Locate the mug in photo.", Box: &classifier.Box{}}},
+	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	box := response.Answers[0].Box
+	fmt.Println(box.Top, box.Bottom, box.Left, box.Right)
+	// Output: 0.25 0.82 0.44 0.84
+}
+
+func ExampleCloudflare_Classify() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"success":true,"result":{"model":"clairic","answers":{"due":{"type":"date","value":"2026-11-19"},"days":{"type":"estimate","value":30,"p10":21,"p90":38}},"truncated":false,"usage":{"input_tokens":100,"output_tokens":0}}}`)
+	}))
+	defer server.Close()
+	client, err := classifier.NewCloudflare(server.Client(), server.URL, "account", "example-key")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	response, err := client.Classify(context.Background(), classifier.Request{
+		Model: "@cf/cloudflare/clairic",
+		Input: classifier.Input{Data: "Invoice issued October 20, 2026, net 30."},
+		Questions: []classifier.Question{
+			{Name: "due", Instructions: "Invoice due date", Extraction: &classifier.Extraction{Type: "date"}},
+			{Name: "days", Instructions: "Days until payment", Estimate: &classifier.Estimate{Min: json.Number("0"), Max: json.Number("120"), Step: json.Number("1")}},
+		},
+	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(response.Answers[0].Extraction.Value)
+	fmt.Println(response.Answers[1].Estimate.P10, response.Answers[1].Estimate.P90)
+	// Output:
+	// 2026-11-19
+	// 21 38
+}
+
 func ExampleValue() {
 	values := []classifier.Value{
 		classifier.StringValue("false"),

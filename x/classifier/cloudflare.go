@@ -13,7 +13,7 @@ import (
 	systemone "github.com/spachava753/gai/internal/typesafe"
 )
 
-// Cloudflare is a client for Clef models hosted on Cloudflare Workers AI.
+// Cloudflare is a client for Clef and Clairic models hosted on Cloudflare Workers AI.
 // It does not support self-hosted Clef servers. Use [NewCloudflare] to create one;
 // the zero value cannot make requests.
 type Cloudflare struct {
@@ -59,6 +59,15 @@ func cloudflarePathComponent(value string) bool {
 // returns the answers in question order. See [Classifier.Classify] for how
 // cancellation, errors, and request data are handled.
 //
+// Extraction, Estimate, and Forecast use Clairic's fields format. They cannot
+// be mixed with predicate, choice, or score questions. Clairic accepts text Data
+// and up to four PNG/JPEG/WebP images, not audio or video. Field names must start
+// with a letter or underscore and contain at most 64 ASCII letters, digits,
+// dots, underscores, or hyphens. Instructions, when present, must be strings.
+// Optional reference-date, quantile, and state-text controls use server defaults.
+// Select a compatible model; GAI does not infer capabilities from model names.
+// The following question and media limits describe Clef.
+//
 // Model must be a full Workers AI name, such as "@cf/cloudflare/clef" or
 // "@cf/cloudflare/clef-omni", with namespace, author, and model components.
 // The last component, such as "clef", is also sent
@@ -93,14 +102,24 @@ func (c *Cloudflare) Classify(ctx context.Context, request Request) (Response, e
 	if err != nil {
 		return Response{}, err
 	}
-	if err := cloudflareQuestions(prepared.questions); err != nil {
-		return Response{}, err
+	body := wire.ClassificationRequest{Model: modelPath[2], State: emptyState(prepared.data)}
+	clairic := isClairicKind(prepared.questions[0].kind)
+	if clairic {
+		if err := prepareClairic(&body, prepared, request.Input.Media); err != nil {
+			return Response{}, err
+		}
+	} else {
+		if err := requireQuestionKinds(prepared.questions, "predicate", "choice", "score"); err != nil {
+			return Response{}, err
+		}
+		if err := cloudflareQuestions(prepared.questions); err != nil {
+			return Response{}, err
+		}
+		body.Questions, err = systemOneQuestions(prepared.questions)
+		if err != nil {
+			return Response{}, err
+		}
 	}
-	questions, err := systemOneQuestions(prepared.questions)
-	if err != nil {
-		return Response{}, err
-	}
-	body := wire.ClassificationRequest{Model: modelPath[2], State: emptyState(prepared.data), Questions: questions}
 	if err := cloudflareMedia(&body, request.Input.Media); err != nil {
 		return Response{}, err
 	}
@@ -226,6 +245,9 @@ func decodeCloudflare(data json.RawMessage, response Response, request preparedR
 			return response, responseError("", err.Error())
 		}
 	}
+	if isClairicKind(request.questions[0].kind) {
+		return decodeClairic(data, response, request)
+	}
 	var envelope wire.ClassificationEnvelope
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return response, responseError("", err.Error())
@@ -236,7 +258,12 @@ func decodeCloudflare(data json.RawMessage, response Response, request preparedR
 	}
 	answers := make(map[string]systemone.Answer, len(native.Answers))
 	for name, answer := range native.Answers {
-		answers[name] = systemone.Answer(answer)
+		answers[name] = systemone.Answer{
+			Type: answer.Type, Noul: answer.Noul, Choice: answer.Choice,
+			Score: answer.Score, Confidence: answer.Confidence,
+			Probabilities: answer.Probabilities, Legend: answer.Legend,
+			AdditionalProperties: answer.AdditionalProperties,
+		}
 	}
 	return convertSystemOne(answers, response, request)
 }

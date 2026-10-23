@@ -33,6 +33,80 @@ type Answer struct {
 // Attachment Inline data URL or an object with content_type and base64.
 type Attachment = json.RawMessage
 
+// ClairicAnswer defines model for ClairicAnswer.
+type ClairicAnswer struct {
+	Confidence nullable.Nullable[wirejson.Number] `json:"confidence,omitempty"`
+
+	// Guess Arbitrary JSON, including nested numbers and nulls.
+	Guess *JSONValue `json:"guess,omitempty"`
+
+	// Mean Arbitrary JSON, including nested numbers and nulls.
+	Mean *JSONValue `json:"mean,omitempty"`
+
+	// Median Arbitrary JSON, including nested numbers and nulls.
+	Median *JSONValue `json:"median,omitempty"`
+
+	// P10 Arbitrary JSON, including nested numbers and nulls.
+	P10 *JSONValue `json:"p10,omitempty"`
+
+	// P90 Arbitrary JSON, including nested numbers and nulls.
+	P90       *JSONValue                         `json:"p90,omitempty"`
+	PAbove    nullable.Nullable[wirejson.Number] `json:"p_above,omitempty"`
+	PBelow    nullable.Nullable[wirejson.Number] `json:"p_below,omitempty"`
+	PNull     nullable.Nullable[wirejson.Number] `json:"p_null,omitempty"`
+	Quantiles *[]JSONValue                       `json:"quantiles,omitempty"`
+	Span      *[]int                             `json:"span,omitempty"`
+	Spans     *[][]int                           `json:"spans,omitempty"`
+	Steps     *[]ClairicAnswer                   `json:"steps,omitempty"`
+	Type      *string                            `json:"type,omitempty"`
+
+	// Value Arbitrary JSON, including nested numbers and nulls.
+	Value                JSONValue                  `json:"value"`
+	AdditionalProperties map[string]json.RawMessage `json:"-"`
+}
+
+// ClairicEnvelope defines model for ClairicEnvelope.
+type ClairicEnvelope struct {
+	Result nullable.Nullable[ClairicResponse] `json:"result,omitempty"`
+}
+
+// ClairicField defines model for ClairicField.
+type ClairicField struct {
+	Decimals     *int    `json:"decimals,omitempty"`
+	Horizon      *int    `json:"horizon,omitempty"`
+	Instructions *string `json:"instructions,omitempty"`
+	Integer      *bool   `json:"integer,omitempty"`
+	Interval     *string `json:"interval,omitempty"`
+	Items        *string `json:"items,omitempty"`
+
+	// Max Arbitrary JSON, including nested numbers and nulls.
+	Max *JSONValue `json:"max,omitempty"`
+
+	// Min Arbitrary JSON, including nested numbers and nulls.
+	Min           *JSONValue       `json:"min,omitempty"`
+	NullThreshold *wirejson.Number `json:"null_threshold,omitempty"`
+	Scale         *string          `json:"scale,omitempty"`
+
+	// Step Arbitrary JSON, including nested numbers and nulls.
+	Step *JSONValue `json:"step,omitempty"`
+	Type string     `json:"type"`
+	Unit *string    `json:"unit,omitempty"`
+}
+
+// ClairicOptions defines model for ClairicOptions.
+type ClairicOptions struct {
+	IncludeQuantiles *bool `json:"include_quantiles,omitempty"`
+	ReturnStateText  *bool `json:"return_state_text,omitempty"`
+}
+
+// ClairicResponse defines model for ClairicResponse.
+type ClairicResponse struct {
+	Answers              map[string]ClairicAnswer   `json:"answers"`
+	Model                string                     `json:"model"`
+	Usage                nullable.Nullable[Usage]   `json:"usage,omitempty"`
+	AdditionalProperties map[string]json.RawMessage `json:"-"`
+}
+
 // ClassificationEnvelope defines model for ClassificationEnvelope.
 type ClassificationEnvelope struct {
 	Errors               nullable.Nullable[[]JSONValue]            `json:"errors,omitempty"`
@@ -42,16 +116,19 @@ type ClassificationEnvelope struct {
 	AdditionalProperties map[string]json.RawMessage                `json:"-"`
 }
 
-// ClassificationRequest defines model for ClassificationRequest.
+// ClassificationRequest Clef uses questions; Clairic uses fields. Adapters enforce exclusivity.
 type ClassificationRequest struct {
-	Audio  *[]Attachment `json:"audio,omitempty"`
-	Images *[]Attachment `json:"images,omitempty"`
+	Audio  *[]Attachment            `json:"audio,omitempty"`
+	Fields *map[string]ClairicField `json:"fields,omitempty"`
+	Images *[]Attachment            `json:"images,omitempty"`
 
-	// Model Body selector, such as clef or clef-omni, without namespace.
-	Model string `json:"model"`
+	// Model Body selector, such as clef, clef-omni, or clairic, without namespace.
+	Model   string          `json:"model"`
+	Options *ClairicOptions `json:"options,omitempty"`
 
 	// Questions Named noul, choice, or score questions.
-	Questions map[string]json.RawMessage `json:"questions"`
+	Questions     map[string]json.RawMessage `json:"questions,omitempty"`
+	ReferenceDate *string                    `json:"reference_date,omitempty"`
 
 	// State Text or a structured JSON object or array to evaluate.
 	State                json.RawMessage            `json:"state"`
@@ -279,6 +356,378 @@ func (a Answer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(object)
 }
 
+// Getter for additional properties for ClairicAnswer. Returns the specified
+// element and whether it was found
+func (a ClairicAnswer) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for ClairicAnswer
+func (a *ClairicAnswer) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for ClairicAnswer to handle AdditionalProperties
+func (a *ClairicAnswer) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["confidence"]; found {
+		err = json.Unmarshal(raw, &a.Confidence)
+		if err != nil {
+			return fmt.Errorf("error reading 'confidence': %w", err)
+		}
+		delete(object, "confidence")
+	}
+
+	if raw, found := object["guess"]; found {
+		err = json.Unmarshal(raw, &a.Guess)
+		if err != nil {
+			return fmt.Errorf("error reading 'guess': %w", err)
+		}
+		delete(object, "guess")
+	}
+
+	if raw, found := object["mean"]; found {
+		err = json.Unmarshal(raw, &a.Mean)
+		if err != nil {
+			return fmt.Errorf("error reading 'mean': %w", err)
+		}
+		delete(object, "mean")
+	}
+
+	if raw, found := object["median"]; found {
+		err = json.Unmarshal(raw, &a.Median)
+		if err != nil {
+			return fmt.Errorf("error reading 'median': %w", err)
+		}
+		delete(object, "median")
+	}
+
+	if raw, found := object["p10"]; found {
+		err = json.Unmarshal(raw, &a.P10)
+		if err != nil {
+			return fmt.Errorf("error reading 'p10': %w", err)
+		}
+		delete(object, "p10")
+	}
+
+	if raw, found := object["p90"]; found {
+		err = json.Unmarshal(raw, &a.P90)
+		if err != nil {
+			return fmt.Errorf("error reading 'p90': %w", err)
+		}
+		delete(object, "p90")
+	}
+
+	if raw, found := object["p_above"]; found {
+		err = json.Unmarshal(raw, &a.PAbove)
+		if err != nil {
+			return fmt.Errorf("error reading 'p_above': %w", err)
+		}
+		delete(object, "p_above")
+	}
+
+	if raw, found := object["p_below"]; found {
+		err = json.Unmarshal(raw, &a.PBelow)
+		if err != nil {
+			return fmt.Errorf("error reading 'p_below': %w", err)
+		}
+		delete(object, "p_below")
+	}
+
+	if raw, found := object["p_null"]; found {
+		err = json.Unmarshal(raw, &a.PNull)
+		if err != nil {
+			return fmt.Errorf("error reading 'p_null': %w", err)
+		}
+		delete(object, "p_null")
+	}
+
+	if raw, found := object["quantiles"]; found {
+		err = json.Unmarshal(raw, &a.Quantiles)
+		if err != nil {
+			return fmt.Errorf("error reading 'quantiles': %w", err)
+		}
+		delete(object, "quantiles")
+	}
+
+	if raw, found := object["span"]; found {
+		err = json.Unmarshal(raw, &a.Span)
+		if err != nil {
+			return fmt.Errorf("error reading 'span': %w", err)
+		}
+		delete(object, "span")
+	}
+
+	if raw, found := object["spans"]; found {
+		err = json.Unmarshal(raw, &a.Spans)
+		if err != nil {
+			return fmt.Errorf("error reading 'spans': %w", err)
+		}
+		delete(object, "spans")
+	}
+
+	if raw, found := object["steps"]; found {
+		err = json.Unmarshal(raw, &a.Steps)
+		if err != nil {
+			return fmt.Errorf("error reading 'steps': %w", err)
+		}
+		delete(object, "steps")
+	}
+
+	if raw, found := object["type"]; found {
+		err = json.Unmarshal(raw, &a.Type)
+		if err != nil {
+			return fmt.Errorf("error reading 'type': %w", err)
+		}
+		delete(object, "type")
+	}
+
+	if raw, found := object["value"]; found {
+		err = json.Unmarshal(raw, &a.Value)
+		if err != nil {
+			return fmt.Errorf("error reading 'value': %w", err)
+		}
+		delete(object, "value")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for ClairicAnswer to handle AdditionalProperties
+func (a ClairicAnswer) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Confidence != nil {
+		object["confidence"], err = json.Marshal(a.Confidence)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'confidence': %w", err)
+		}
+	}
+
+	if a.Guess != nil {
+		object["guess"], err = json.Marshal(a.Guess)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'guess': %w", err)
+		}
+	}
+
+	if a.Mean != nil {
+		object["mean"], err = json.Marshal(a.Mean)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'mean': %w", err)
+		}
+	}
+
+	if a.Median != nil {
+		object["median"], err = json.Marshal(a.Median)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'median': %w", err)
+		}
+	}
+
+	if a.P10 != nil {
+		object["p10"], err = json.Marshal(a.P10)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'p10': %w", err)
+		}
+	}
+
+	if a.P90 != nil {
+		object["p90"], err = json.Marshal(a.P90)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'p90': %w", err)
+		}
+	}
+
+	if a.PAbove != nil {
+		object["p_above"], err = json.Marshal(a.PAbove)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'p_above': %w", err)
+		}
+	}
+
+	if a.PBelow != nil {
+		object["p_below"], err = json.Marshal(a.PBelow)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'p_below': %w", err)
+		}
+	}
+
+	if a.PNull != nil {
+		object["p_null"], err = json.Marshal(a.PNull)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'p_null': %w", err)
+		}
+	}
+
+	if a.Quantiles != nil {
+		object["quantiles"], err = json.Marshal(a.Quantiles)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'quantiles': %w", err)
+		}
+	}
+
+	if a.Span != nil {
+		object["span"], err = json.Marshal(a.Span)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'span': %w", err)
+		}
+	}
+
+	if a.Spans != nil {
+		object["spans"], err = json.Marshal(a.Spans)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'spans': %w", err)
+		}
+	}
+
+	if a.Steps != nil {
+		object["steps"], err = json.Marshal(a.Steps)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'steps': %w", err)
+		}
+	}
+
+	if a.Type != nil {
+		object["type"], err = json.Marshal(a.Type)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'type': %w", err)
+		}
+	}
+
+	object["value"], err = json.Marshal(a.Value)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'value': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for ClairicResponse. Returns the specified
+// element and whether it was found
+func (a ClairicResponse) Get(fieldName string) (value json.RawMessage, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for ClairicResponse
+func (a *ClairicResponse) Set(fieldName string, value json.RawMessage) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for ClairicResponse to handle AdditionalProperties
+func (a *ClairicResponse) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["answers"]; found {
+		err = json.Unmarshal(raw, &a.Answers)
+		if err != nil {
+			return fmt.Errorf("error reading 'answers': %w", err)
+		}
+		delete(object, "answers")
+	}
+
+	if raw, found := object["model"]; found {
+		err = json.Unmarshal(raw, &a.Model)
+		if err != nil {
+			return fmt.Errorf("error reading 'model': %w", err)
+		}
+		delete(object, "model")
+	}
+
+	if raw, found := object["usage"]; found {
+		err = json.Unmarshal(raw, &a.Usage)
+		if err != nil {
+			return fmt.Errorf("error reading 'usage': %w", err)
+		}
+		delete(object, "usage")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]json.RawMessage)
+		for fieldName, fieldBuf := range object {
+			var fieldVal json.RawMessage
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for ClairicResponse to handle AdditionalProperties
+func (a ClairicResponse) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Answers != nil {
+		object["answers"], err = json.Marshal(a.Answers)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'answers': %w", err)
+		}
+	}
+
+	object["model"], err = json.Marshal(a.Model)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'model': %w", err)
+	}
+
+	if a.Usage != nil {
+		object["usage"], err = json.Marshal(a.Usage)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'usage': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
 // Getter for additional properties for ClassificationEnvelope. Returns the specified
 // element and whether it was found
 func (a ClassificationEnvelope) Get(fieldName string) (value json.RawMessage, found bool) {
@@ -425,6 +874,14 @@ func (a *ClassificationRequest) UnmarshalJSON(b []byte) error {
 		delete(object, "audio")
 	}
 
+	if raw, found := object["fields"]; found {
+		err = json.Unmarshal(raw, &a.Fields)
+		if err != nil {
+			return fmt.Errorf("error reading 'fields': %w", err)
+		}
+		delete(object, "fields")
+	}
+
 	if raw, found := object["images"]; found {
 		err = json.Unmarshal(raw, &a.Images)
 		if err != nil {
@@ -441,12 +898,28 @@ func (a *ClassificationRequest) UnmarshalJSON(b []byte) error {
 		delete(object, "model")
 	}
 
+	if raw, found := object["options"]; found {
+		err = json.Unmarshal(raw, &a.Options)
+		if err != nil {
+			return fmt.Errorf("error reading 'options': %w", err)
+		}
+		delete(object, "options")
+	}
+
 	if raw, found := object["questions"]; found {
 		err = json.Unmarshal(raw, &a.Questions)
 		if err != nil {
 			return fmt.Errorf("error reading 'questions': %w", err)
 		}
 		delete(object, "questions")
+	}
+
+	if raw, found := object["reference_date"]; found {
+		err = json.Unmarshal(raw, &a.ReferenceDate)
+		if err != nil {
+			return fmt.Errorf("error reading 'reference_date': %w", err)
+		}
+		delete(object, "reference_date")
 	}
 
 	if raw, found := object["state"]; found {
@@ -491,6 +964,13 @@ func (a ClassificationRequest) MarshalJSON() ([]byte, error) {
 		}
 	}
 
+	if a.Fields != nil {
+		object["fields"], err = json.Marshal(a.Fields)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'fields': %w", err)
+		}
+	}
+
 	if a.Images != nil {
 		object["images"], err = json.Marshal(a.Images)
 		if err != nil {
@@ -503,10 +983,24 @@ func (a ClassificationRequest) MarshalJSON() ([]byte, error) {
 		return nil, fmt.Errorf("error marshaling 'model': %w", err)
 	}
 
+	if a.Options != nil {
+		object["options"], err = json.Marshal(a.Options)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'options': %w", err)
+		}
+	}
+
 	if a.Questions != nil {
 		object["questions"], err = json.Marshal(a.Questions)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling 'questions': %w", err)
+		}
+	}
+
+	if a.ReferenceDate != nil {
+		object["reference_date"], err = json.Marshal(a.ReferenceDate)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'reference_date': %w", err)
 		}
 	}
 

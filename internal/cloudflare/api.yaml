@@ -1,5 +1,7 @@
-# GAI's maintained subset of hosted Cloudflare Workers AI Clef/Clef-Omni.
-# Sources (reviewed 2026-10-12):
+# GAI's maintained subset of hosted Cloudflare Workers AI Clef/Clef-Omni/Clairic.
+# Sources (reviewed 2026-10-20):
+# https://developers.cloudflare.com/workers-ai/models/clairic/schema-input.json
+# https://developers.cloudflare.com/workers-ai/models/clairic/schema-output.json
 # https://developers.cloudflare.com/api/resources/ai/methods/run/
 # https://developers.cloudflare.com/workers-ai/models/clef/schema-input.json
 # https://developers.cloudflare.com/workers-ai/models/clef/schema-output.json
@@ -9,8 +11,8 @@
 # nulls, and unknown fields survive without a float64 conversion.
 openapi: 3.0.3
 info:
-  title: Cloudflare Workers AI Clef
-  version: 0.1.0
+  title: Cloudflare Workers AI Clef and Clairic
+  version: 0.2.0
 servers:
   - url: https://api.cloudflare.com/client/v4
 security:
@@ -117,11 +119,12 @@ components:
       additionalProperties: {x-go-type: json.RawMessage}
     ClassificationRequest:
       type: object
-      required: [model, state, questions]
+      description: Clef uses questions; Clairic uses fields. Adapters enforce exclusivity.
+      required: [model, state]
       properties:
         model:
           type: string
-          description: Body selector, such as clef or clef-omni, without namespace.
+          description: Body selector, such as clef, clef-omni, or clairic, without namespace.
         state:
           description: Text or a structured JSON object or array to evaluate.
           x-go-type: json.RawMessage
@@ -129,8 +132,17 @@ components:
           type: object
           description: Named noul, choice, or score questions.
           x-go-type: map[string]json.RawMessage
+          x-go-type-skip-optional-pointer: true
           additionalProperties:
             $ref: '#/components/schemas/Question'
+        fields:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ClairicField'
+        reference_date:
+          type: string
+        options:
+          $ref: '#/components/schemas/ClairicOptions'
         images:
           type: array
           items:
@@ -143,6 +155,107 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Attachment'
+      additionalProperties: {x-go-type: json.RawMessage}
+    ClairicField:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+        instructions:
+          type: string
+        unit:
+          type: string
+        integer:
+          type: boolean
+        decimals:
+          type: integer
+        items:
+          type: string
+        min:
+          $ref: '#/components/schemas/JSONValue'
+        max:
+          $ref: '#/components/schemas/JSONValue'
+        step:
+          $ref: '#/components/schemas/JSONValue'
+        scale:
+          type: string
+        null_threshold:
+          type: number
+        horizon:
+          type: integer
+        interval:
+          type: string
+    ClairicOptions:
+      type: object
+      properties:
+        include_quantiles:
+          type: boolean
+        return_state_text:
+          type: boolean
+    ClairicEnvelope:
+      type: object
+      properties:
+        result:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ClairicResponse'
+    ClairicResponse:
+      allOf:
+        - $ref: '#/components/schemas/ResponseMetadata'
+        - type: object
+          required: [answers]
+          properties:
+            answers:
+              type: object
+              additionalProperties:
+                $ref: '#/components/schemas/ClairicAnswer'
+    ClairicAnswer:
+      type: object
+      required: [value]
+      properties:
+        type:
+          type: string
+        value:
+          $ref: '#/components/schemas/JSONValue'
+        guess:
+          $ref: '#/components/schemas/JSONValue'
+        confidence:
+          type: number
+          nullable: true
+        p_null:
+          type: number
+          nullable: true
+        span:
+          type: array
+          items: {type: integer}
+        spans:
+          type: array
+          items:
+            type: array
+            items: {type: integer}
+        mean:
+          $ref: '#/components/schemas/JSONValue'
+        median:
+          $ref: '#/components/schemas/JSONValue'
+        p10:
+          $ref: '#/components/schemas/JSONValue'
+        p90:
+          $ref: '#/components/schemas/JSONValue'
+        p_below:
+          type: number
+          nullable: true
+        p_above:
+          type: number
+          nullable: true
+        quantiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/JSONValue'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClairicAnswer'
       additionalProperties: {x-go-type: json.RawMessage}
     Attachment:
       description: Inline data URL or an object with content_type and base64.

@@ -24,6 +24,9 @@ type preparedQuestion struct {
 	negative     json.RawMessage
 	options      []preparedOption
 	levels       []preparedLevel
+	extraction   *Extraction
+	estimate     *Estimate
+	forecast     *Forecast
 }
 
 type preparedOption struct {
@@ -118,13 +121,13 @@ func validateMedia(block gai.Block, path string) error {
 func prepareQuestion(q Question, path string) (preparedQuestion, error) {
 	p := preparedQuestion{name: q.Name}
 	count := 0
-	for _, present := range []bool{q.Predicate != nil, q.Choice != nil, q.Score != nil} {
+	for _, present := range []bool{q.Predicate != nil, q.Choice != nil, q.Score != nil, q.Box != nil, q.Extraction != nil, q.Estimate != nil, q.Forecast != nil} {
 		if present {
 			count++
 		}
 	}
 	if count != 1 {
-		return p, invalid(path, "requires exactly one of Predicate, Choice, or Score")
+		return p, invalid(path, "requires exactly one question variant")
 	}
 	var err error
 	p.instructions, err = guidance(q.Instructions, path+".Instructions")
@@ -153,6 +156,20 @@ func prepareQuestion(q Question, path string) (preparedQuestion, error) {
 	case q.Score != nil:
 		p.kind = "score"
 		p.levels, err = prepareLevels(q.Score.Levels, path)
+	case q.Box != nil:
+		p.kind = "box"
+		if p.instructions == nil {
+			return p, invalid(path, "box requires instructions describing what to locate")
+		}
+	case q.Extraction != nil:
+		p.kind, p.extraction = "extraction", q.Extraction
+		err = validateExtraction(*q.Extraction)
+	case q.Estimate != nil:
+		p.kind, p.estimate = "estimate", q.Estimate
+		err = validateEstimate(*q.Estimate)
+	case q.Forecast != nil:
+		p.kind, p.forecast = "forecast", q.Forecast
+		err = validateForecast(*q.Forecast)
 	}
 	return p, err
 }
@@ -200,143 +217,20 @@ func responseError(name, reason string) error {
 	return &ResponseError{Question: name, Reason: reason}
 }
 
-func validateResponse(r Response, request preparedRequest) error {
-	if r.Model == "" {
-		return responseError("", "missing model")
-	}
-	if len(r.Answers) != len(request.questions) {
-		return responseError("", "answer count does not match questions")
-	}
-	for i, q := range request.questions {
-		if err := validateAnswer(r.Answers[i], q); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// validateAnswer first checks identity, refusal, and confidence invariants, then
-// dispatches to the matching finite-distribution validator.
-func validateAnswer(a Answer, q preparedQuestion) error {
-	if a.Name != q.name {
-		return responseError(q.name, "answer name/order does not match question")
-	}
-	count := 0
-	for _, present := range []bool{a.Predicate != nil, a.Choice != nil, a.Score != nil, a.Refused} {
-		if present {
-			count++
-		}
-	}
-	if count != 1 {
-		return responseError(q.name, "requires exactly one answer variant")
-	}
-	if a.Refused {
-		if a.Confidence != nil {
-			return responseError(q.name, "refusal cannot have confidence")
-		}
-		return nil
-	}
-	if a.Confidence != nil {
-		if _, err := boundedNumber(*a.Confidence, 1); err != nil {
-			return responseError(q.name, "invalid confidence: "+err.Error())
-		}
-	}
-	switch {
-	case a.Predicate != nil && q.kind == "predicate":
-		if _, err := boundedNumber(a.Predicate.Probability, 1); err != nil {
-			return responseError(q.name, "invalid probability: "+err.Error())
-		}
-		return nil
-	case a.Choice != nil && q.kind == "choice":
-		return validateChoice(*a.Choice, q)
-	case a.Score != nil && q.kind == "score":
-		return validateScore(*a.Score, q)
-	default:
-		return responseError(q.name, "answer kind does not match question")
-	}
-}
-
-// validateChoice checks typed outcome identity/order and the selected maximum,
-// then verifies that the complete distribution sums to approximately one.
-func validateChoice(a ChoiceAnswer, q preparedQuestion) error {
-	if len(a.Probabilities) != len(q.options) {
-		return responseError(q.name, "incomplete choice distribution")
-	}
-	selected, err := a.Value.MarshalJSON()
-	if err != nil {
-		return responseError(q.name, "invalid selected value")
-	}
-	var selectedProbability *big.Rat
-	maximum := new(big.Rat)
-	numbers := make([]json.Number, len(a.Probabilities))
-	for i, probability := range a.Probabilities {
-		value, err := probability.Value.MarshalJSON()
-		if err != nil || string(value) != string(q.options[i].value) {
-			return responseError(q.name, "choice outcomes/order do not match schema")
-		}
-		number, err := boundedNumber(probability.Probability, 1)
-		if err != nil {
-			return responseError(q.name, "invalid choice probability: "+err.Error())
-		}
-		if number.Cmp(maximum) > 0 {
-			maximum.Set(number)
-		}
-		if string(selected) == string(value) {
-			selectedProbability = number
-		}
-		numbers[i] = probability.Probability
-	}
-	if selectedProbability == nil || !near(selectedProbability, maximum, 2) {
-		return responseError(q.name, "selected value is not a highest-probability outcome")
-	}
-	_, err = distribution(numbers, q.name)
-	return err
-}
-
-func validateScore(a ScoreAnswer, q preparedQuestion) error {
-	if len(a.Probabilities) != len(q.levels) {
-		return responseError(q.name, "incomplete score distribution")
-	}
-	mean, err := distribution(a.Probabilities, q.name)
-	if err != nil {
-		return err
-	}
-	score, err := boundedNumber(a.Score, len(q.levels)-1)
-	if err != nil {
-		return responseError(q.name, "invalid score: "+err.Error())
-	}
-	n := int64(len(a.Probabilities))
-	if !near(score, mean, 1+n*(n-1)/2) {
-		return responseError(q.name, "score disagrees with weighted level probabilities")
-	}
-	return nil
-}
-
-func distribution(numbers []json.Number, name string) (*big.Rat, error) {
-	sum, mean := new(big.Rat), new(big.Rat)
-	for i, value := range numbers {
-		number, err := boundedNumber(value, 1)
-		if err != nil {
-			return nil, responseError(name, "invalid distribution: "+err.Error())
-		}
-		sum.Add(sum, number)
-		mean.Add(mean, new(big.Rat).Mul(number, new(big.Rat).SetInt64(int64(i))))
-	}
-	if !near(sum, big.NewRat(1, 1), int64(len(numbers))) {
-		return nil, responseError(name, "probabilities do not sum to approximately one")
-	}
-	return mean, nil
-}
-
-func near(a, b *big.Rat, units int64) bool {
-	difference := new(big.Rat).Sub(a, b)
-	difference.Abs(difference)
-	return difference.Cmp(big.NewRat(units, 20000)) <= 0
-}
-
 // boundedNumber rejects non-JSON spellings and unbounded numeric representations
 // before allocating a rational for exact interval comparisons.
 func boundedNumber(value json.Number, maximum int) (*big.Rat, error) {
+	number, err := exactNumber(value)
+	if err != nil {
+		return nil, err
+	}
+	if number.Sign() < 0 || number.Cmp(new(big.Rat).SetInt64(int64(maximum))) > 0 {
+		return nil, fmt.Errorf("number must lie in [0,%d]", maximum)
+	}
+	return number, nil
+}
+
+func exactNumber(value json.Number) (*big.Rat, error) {
 	text := value.String()
 	if len(text) == 0 || len(text) > 256 || !json.Valid([]byte(text)) || !strings.ContainsRune("-0123456789", rune(text[0])) {
 		return nil, fmt.Errorf("requires a JSON number of at most 256 bytes")
@@ -348,8 +242,8 @@ func boundedNumber(value json.Number, maximum int) (*big.Rat, error) {
 		}
 	}
 	number, ok := new(big.Rat).SetString(text)
-	if !ok || number.Sign() < 0 || number.Cmp(new(big.Rat).SetInt64(int64(maximum))) > 0 {
-		return nil, fmt.Errorf("number must lie in [0,%d]", maximum)
+	if !ok {
+		return nil, fmt.Errorf("invalid JSON number")
 	}
 	return number, nil
 }

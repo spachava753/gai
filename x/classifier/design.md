@@ -16,11 +16,15 @@ Each request specifies a model, input, and questions. A client keeps its HTTP cl
 
 `Input.Media` contains GAI image, audio, or video blocks. Data may be nil when media is supplied. Attachments of the same kind keep their order, but a provider may group images, audio, and video separately and choose where to put the text. Clients reject unsupported media rather than fetch URLs, upload files, or convert them behind the caller's back.
 
-All questions in a request use the same input. Each question has a unique name and one of three types:
+All questions in a request use the same input. Each question has a unique name and exactly one variant:
 
 - `Predicate` asks a yes-or-no question and returns the probability of yes. The application chooses a threshold if it needs a boolean.
 - `Choice` asks the model to select one option and returns the probability of every option. Options can have string or boolean values, although not all providers accept booleans. Boolean false and the string `"false"` are different values.
 - `Score` asks the model to rate the input on an ordered scale. Levels have values 0, 1, 2, and so on. The result is their probability-weighted average. For example, probabilities 0.2, 0.3, and 0.5 give a score of `0*0.2 + 1*0.3 + 2*0.5 = 1.3`, not the most likely level, 2.
+
+- `Box` asks where an object is in an image and returns normalized top/bottom/left/right edges. TypeSafe currently supports this experimental question type.
+- `Extraction` asks for text, a number, a date, a time, a datetime, a duration, or a list. A list declares text, number, or date items.
+- `Estimate` asks for a value on a numeric or ISO-date grid. `Forecast` asks for successive estimates on the same grid. Cloudflare Clairic currently supports these two variants and extraction.
 
 A question's `Instructions` tells the model what to decide and can include context or examples for that question. Instructions and option descriptions accept strings, objects, or arrays. Object keys are caller-defined. An array describes one question, not a sequence of calls. These values explain the task; they are not JSON Schemas.
 
@@ -28,17 +32,19 @@ Some providers allow instructions to be omitted when the options, levels, or pre
 
 Questions do not use earlier answers. Their predictions are not necessarily independent: adding or removing a question may affect other answers.
 
-## Answers and validation
+## Answers and decoding
 
-A successful call returns one answer per question, in request order. Choice and score answers include a probability for every option or level, including those with zero probability. Score probabilities are an ordered `[]json.Number`: entry `i` gives the probability of level `i`. A model may instead refuse to answer, setting `Answer.Refused` to true. A refusal has no probability, score, or confidence and does not by itself make the call fail.
+A successful call returns one answer per question, in request order. Choice and score answers include a probability for every option or level, including those with zero probability. Score probabilities are an ordered `[]json.Number`: entry `i` gives the probability of level `i`. A model may instead refuse to answer, setting `Answer.Refused` to true. A refusal has no answer value and does not by itself make the call fail. Provider-supplied confidence is retained.
+
+Box coordinates use `json.Number`. Extraction values retain their JSON types, with numbers decoded as `json.Number`. Explicit null becomes nil, not a refusal; missing required values are errors. Estimates preserve value, mean, median, p10/p90, probabilities outside the grid, and optional quantiles. Forecasts preserve the steps returned by the provider without enforcing a count. Provider-defined quantile entries and forecast aggregate values retain their JSON structure with `json.Number` leaves; the adapter does not invent their interpretation or fill in missing statistics.
 
 Probabilities and scores use `json.Number`. `Answer.Confidence` is a `*json.Number`; nil means unavailable, not zero. Each implementation defines what confidence means. It may return the provider's value, calculate one, or omit it. The built-in clients return the provider's value when present. Confidence is not necessarily the probability that an answer is correct, and values from different implementations may not be comparable.
 
-The built-in clients check input and question definitions before sending a request. Before returning answers, they check that each answer matches its question, includes all required probabilities, and has consistent numbers. These checks are internal; callers only need to call `Classify` and check its error.
+The built-in clients check input and question definitions before sending a request. Responses are decoded and mapped to public types, not semantically validated. The adapters do not check probability ranges or sums, choice maxima, weighted scores, box geometry, date spellings, integer constraints, span ordering, or forecast horizon consistency. Provider values are returned unchanged; no value is corrected, clamped, or recomputed.
 
-Response validation compares numbers without converting them to float64. It allows a rounding error of 0.00005 per probability and per reported score, adding these allowances when checking sums and weighted averages. For example, three probabilities may sum to a value within 0.00015 of 1. Validation does not change returned values. To limit resource use, each number may have at most 256 bytes and an exponent between -10000 and 10000.
+Request-side numeric comparisons limit each number to 256 bytes and an exponent between -10000 and 10000. Returned numbers are preserved without those comparison limits and without float64 conversion.
 
-Invalid responses return `ResponseError`. On any error, usage counts and diagnostic fields may still be available, but callers must not use the answers. Retrying a failed call or trying another provider is up to the caller.
+JSON decoding or mapping failures return `ResponseError`. On any error, usage counts and diagnostic fields may still be available, but callers must not use the answers. Retrying a failed call or trying another provider is up to the caller.
 
 ## Data ownership
 
@@ -52,9 +58,10 @@ Constructors take an HTTP client, an optional API base URL, and credentials. The
 
 | Client | Default endpoint | Input and instructions | Choice values |
 | --- | --- | --- | --- |
-| `NewTypeSafe` (Jev) | `https://api.typesafe.ai/v1/systemone` | Text or JSON; no media | Strings |
+| `NewTypeSafe` (Jev) | `https://api.typesafe.ai/v1/systemone` | Text or JSON; experimental PNG/JPEG image assets | Strings |
 | `NewOpenAI` (Decisions) | `https://api.openai.com/v1/decisions` | JSON objects and arrays are sent as text; PNG/JPEG/WebP/GIF images | Strings and booleans |
 | `NewCloudflare` (Clef) | `https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}` | Text or JSON; PNG/JPEG/WebP images; Clef-Omni audio/video fields | Strings |
+| `NewCloudflare` (Clairic) | Same Workers AI endpoint, with model `@cf/cloudflare/clairic` | Text and PNG/JPEG/WebP images; string instructions | Extraction, estimates, forecasts instead of choices |
 | `NewPerplexity` (Decisions) | `https://api.perplexity.ai/v1/decisions` | Text or JSON; PNG/JPEG/WebP images | Strings |
 
 A custom base URL includes its API prefix, such as `/v1`, but not the endpoint suffix. A service must support the chosen protocol; supporting Chat Completions does not imply support for Decisions. The Cloudflare client supports hosted Workers AI, not self-hosted Clef. Its `Request.Model` is a full model name such as `@cf/cloudflare/clef`, with exactly three components: namespace, author, and model.
@@ -66,11 +73,25 @@ OpenRouter exposes compatible endpoints without requiring another classifier typ
 
 These clients retain their protocol's error and metadata provider identifiers, not an OpenRouter identifier. Native OpenRouter invocation IDs, resolved providers, and costs remain in the corresponding extra fields. Supporting these routes does not establish compatibility with every model in OpenRouter's catalog.
 
-OpenAI, TypeSafe, and Cloudflare require instructions for every question. Perplexity allows criteria-only questions. Provider methods document their limits on question counts, choices, levels, and attachments. The server checks other model-specific constraints, such as image dimensions. Cloudflare places images before the text and may truncate long text to fit the context limit.
+OpenAI and Cloudflare Clef require instructions for every question. TypeSafe and Perplexity allow criteria-only questions. Clairic permits omitted instructions; box questions require instructions describing the target. Provider methods document their limits on question counts, choices, levels, and attachments. The server checks other model-specific constraints, such as image dimensions. Cloudflare places images before the text and may truncate long text to fit the context limit.
 
 OpenAI has no separate field for predicate criteria, so its client appends a JSON object describing the true and false outcomes to the question's instructions. System One score criteria include each level's label and description together. OpenAI's explicit refusal response sets `Answer.Refused` to true; the other clients do not interpret a negative or uncertain answer as a refusal.
 
 `SafetyIdentifier` is sent to OpenAI as `safety_identifier`. The other clients ignore it.
+
+### TypeSafe images and boxes
+
+The adapter sends inline base64 JSON assets. Give an image block an `ID` to use that string as a reference in `Input.Data`, question instructions, or criteria. References match string values (including substrings), not object keys. Every named image must be referenced. Use long unique IDs to avoid accidental matches. Unnamed image blocks receive collision-checked random references and are placed before the original Data in an array. The caller's request is not changed. PNG and JPEG are accepted; image dimensions and byte limits are server-validated, with no automatic resizing or multipart/file upload.
+
+Selecting images opts into the native `TypeSafe-Danger-Zone-Images: true` header. `Request.Headers` can override or remove it. Images and boxes are experimental upstream. Box questions require an image and a supporting model (currently Jev 1.14); the adapter does not inspect model names. OpenRouter support for these new features is not established by the older text-only live tests.
+
+### Cloudflare Clairic
+
+Use `NewCloudflare` with `Request.Model` set to a compatible full Workers AI route, such as `@cf/cloudflare/clairic`. Requests containing extraction, estimate, or forecast questions use Clairic's `fields` format, selected by question type rather than model-name rules. They cannot be mixed with Clef's predicate, choice, or score questions. Clairic accepts text input and images, not structured JSON, audio, or video. Field names have the documented 64-character limit and must begin with a letter or underscore; instructions must be strings when supplied.
+
+`Extraction` exposes list element type, unit, integer/decimal controls, and the optional null threshold. Estimate bounds and numeric steps require `json.Number` (not float64), while date bounds use ISO date strings. Date steps may also be `"month"` or `"year"`. `Forecast` embeds its estimate grid and adds horizon and interval.
+
+All providers expose classification only through `Classify(context.Context, Request)`, implementing `Classifier`. Cloudflare leaves optional reference-date, quantile, and state-text controls at server defaults; there is no provider-specific classification method or options type. Clairic's `truncated` and `state_text` remain in `Response.ExtraFields[ExtraFieldWireFields]`; usage breakdowns such as `passes` remain under `ExtraFieldUsage`. Character spans are preserved without rewriting their provider offsets.
 
 ## Generated HTTP clients
 
@@ -86,7 +107,7 @@ Generated classifier models use `internal/wirejson.Number` for fractional values
 
 Clients honor context cancellation and set request headers without modifying the HTTP client. They do not add retries. The supplied HTTP client's redirect and transport policies still apply. HTTP API errors return `gai.ApiErr`, including the provider, status code, response body, and Retry-After value when available.
 
-Responses are limited to 32 MiB. Duplicate JSON keys, trailing JSON values, and malformed or inconsistent answers return `ResponseError`. No answers are returned until the entire response has passed validation.
+Responses are limited to 32 MiB. Duplicate JSON keys, trailing JSON values, and values that cannot be decoded or mapped to the public types return `ResponseError`. Numeric semantics do not cause response errors.
 
 Token counts cover the entire call, including input, questions, descriptions, and attachments. They do not measure comparable computation across providers. An output-token count may be reported even if output is free. The clients do not estimate missing counts, per-question usage, or costs.
 
@@ -104,7 +125,9 @@ Original JSON objects are stored as `map[string]json.RawMessage`. When decoding 
 
 ## Tests and scope
 
-The compiled examples show basic classification, string and boolean choices, and use of a provider client. Each generated client package checks offline regeneration, JSON round trips, and raw HTTP behavior. Offline provider tests use local HTTP servers and representative documented responses, not live captures. They cover structured input, all three question types, numeric precision, refusals, usage, media, cancellation, concurrent calls, and invalid responses. The Cloudflare HTTP regression checks the escaped path, not just Go's decoded `URL.Path`.
+Offline regression tests also verify that provider values are passed through even when they violate mathematical assumptions; semantic checks in opt-in live contract tests are test assertions, not production response validation.
+
+The compiled examples show basic classification, string and boolean choices, and use of a provider client. Each generated client package checks offline regeneration, JSON round trips, and raw HTTP behavior. Offline provider tests use local HTTP servers and representative documented responses, not live captures. They cover structured input, all question variants, numeric precision, refusals, usage, media, cancellation, concurrent calls, and invalid responses. The Cloudflare HTTP regression checks the escaped path, not just Go's decoded `URL.Path`.
 
 `TestLiveClassifier` in `providers_test.go` exercises the public constructors and `Classify` against real services. Ordinary tests skip it. Set `LIVE_TESTS=1` and the credentials for the selected profiles:
 
@@ -139,7 +162,7 @@ The suite tests API compatibility, not model accuracy. With all profiles configu
 
 Assertions cover named answer ordering, answer variants, complete distributions, numeric bounds and internal consistency, string/boolean identity, request immutability, usage, OpenRouter cost/ID metadata, Cloudflare envelopes, and typed API errors. Any declared choice and any contract-valid probability or score is acceptable. A well-formed refusal is also acceptable; the tests do not demand that a model answer a particular input. Weighted-score checks compare the score with its returned distribution, not with a predetermined rating. No assertion requires a correct classification, a particular color, or a decision threshold. Exact numeric precision and serialization edge cases remain deterministic offline tests.
 
-Initial live probes on 2026-10-14 passed for these routes and also for Cloudflare Clef-Flash and Clef-Omni. The reduced API-contract suite does not repeat the same protocol tests across those Cloudflare model variants. The revised 16-call API-contract suite passed live on 2026-10-14 with no skips or retries, including the batched OpenAI boolean choices. Direct TypeSafe and Perplexity hosting, audio/video input, and explicit refusal scenarios remain live-unverified. A successful live probe establishes compatibility for that request and route at that time, not model accuracy or permanent provider availability.
+Initial live probes on 2026-10-14 passed for these routes and also for Cloudflare Clef-Flash and Clef-Omni. The reduced API-contract suite does not repeat the same protocol tests across those Cloudflare model variants. The revised 16-call API-contract suite passed live on 2026-10-14 with no skips or retries, including the batched OpenAI boolean choices. Direct TypeSafe and Perplexity hosting, TypeSafe image/box features, Clairic, audio/video input, and explicit refusal scenarios remain live-unverified. The 2026-10-20 image/box and Clairic coverage uses offline HTTP fixtures based on the published schemas, not live captures. A successful live probe establishes compatibility for that request and route at that time, not model accuracy or permanent provider availability.
 
 There is no streaming, tool execution, automatic question derivation from Go structs, or conversion of generator output into confidence values. A model that only returns a label cannot implement the complete Choice answer without also obtaining probabilities for every option.
 
