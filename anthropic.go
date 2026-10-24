@@ -430,11 +430,16 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 			return a.MessageParam{}, fmt.Errorf("tool result message must have at least one block")
 		}
 
-		// Group blocks by tool use ID
+		// Group blocks by tool use ID, preserving first-appearance order so
+		// unchanged history serializes to a stable prompt-cache prefix.
 		blocksByToolID := make(map[string][]Block)
+		var toolUseIDs []string
 		for _, block := range msg.Blocks {
 			if block.ID == "" {
 				return a.MessageParam{}, fmt.Errorf("tool result message block must have a tool use ID")
+			}
+			if _, seen := blocksByToolID[block.ID]; !seen {
+				toolUseIDs = append(toolUseIDs, block.ID)
 			}
 			blocksByToolID[block.ID] = append(blocksByToolID[block.ID], block)
 		}
@@ -442,7 +447,8 @@ func toAnthropicMessage(msg Message) (a.MessageParam, error) {
 		// Create tool result content for each group of blocks
 		var contentParts []a.ContentBlockParamUnion
 
-		for toolUseID, blocks := range blocksByToolID {
+		for _, toolUseID := range toolUseIDs {
+			blocks := blocksByToolID[toolUseID]
 			// A tool result for a specific tool use ID
 			resultContent := a.ToolResultBlockParam{
 				ToolUseID: toolUseID,
@@ -627,7 +633,11 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationReq
 	// Use message streaming, as the anthropic sdk *forces* us to use streaming for large models,
 	// even if we _want_ to just the standard http request. As such, we will simply use streaming
 	// for all models to keep things simple
-	resp, err := g.client.New(ctx, params, anthropicRequestHeaders(request.Headers)...)
+	headerOptions, err := anthropicRequestHeaders(request.Headers)
+	if err != nil {
+		return Response{}, err
+	}
+	resp, err := g.client.New(ctx, params, headerOptions...)
 	if err != nil {
 		if mapped := mapAnthropicError(err); mapped != nil {
 			return Response{}, mapped
@@ -854,7 +864,12 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 		}
 
 		// Start the stream
-		stream := g.client.NewStreaming(ctx, params, anthropicRequestHeaders(request.Headers)...)
+		headerOptions, err := anthropicRequestHeaders(request.Headers)
+		if err != nil {
+			yield(StreamChunk{Err: err})
+			return
+		}
+		stream := g.client.NewStreaming(ctx, params, headerOptions...)
 		defer stream.Close()
 
 		// Track cumulative usage throughout the stream
@@ -1116,7 +1131,11 @@ func (g *AnthropicGenerator) Count(ctx context.Context, request GenerationReques
 		})
 	}
 
-	resp, err := g.client.CountTokens(ctx, params, anthropicRequestHeaders(request.Headers)...)
+	headerOptions, err := anthropicRequestHeaders(request.Headers)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := g.client.CountTokens(ctx, params, headerOptions...)
 	if err != nil {
 		if mapped := mapAnthropicError(err); mapped != nil {
 			return 0, mapped

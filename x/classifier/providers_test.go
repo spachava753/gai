@@ -735,6 +735,56 @@ func TestUnavailableUsage(t *testing.T) {
 	}
 }
 
+func TestRequestHeaderNames(t *testing.T) {
+	for _, provider := range providerFixtures() {
+		t.Run(provider.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if !reflect.DeepEqual(r.Header.Values("X-Session"), []string{"one", "two"}) || r.Header.Get("Authorization") != "" {
+					t.Error("lowercase replacement or header removal failed")
+				}
+				fmt.Fprint(w, wrapProviderResponse(provider, predicateBody(provider, "0.5")))
+			}))
+			defer server.Close()
+			model, err := provider.new(server.Client(), server.URL, "test-key")
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := predicateRequest()
+			request.Model = provider.model
+			request.Headers = http.Header{"x-session": {"one", "two"}, "authorization": nil, "X-Remove": {}}
+			before := request.Headers.Clone()
+			if _, err := model.Classify(t.Context(), request); err != nil {
+				t.Fatal(err)
+			}
+			if calls.Load() != 1 || !reflect.DeepEqual(request.Headers, before) {
+				t.Fatal("valid request was not sent once with caller headers unchanged")
+			}
+			for _, headers := range []http.Header{
+				{"X-Session": {"first-secret"}, "x-session": {"second-secret"}},
+				{"X-Session": {"same-secret"}, "x-session": {"same-secret"}},
+				{"X-Session": nil, "x-session": {"secret"}},
+				{"X-Session": {}, "x-session": nil},
+				{"Authorization": {"Bearer secret"}, "authorization": nil, "X-Session": {"secret"}, "x-session": nil},
+			} {
+				request.Headers = headers
+				before := headers.Clone()
+				for range 8 {
+					_, err := model.Classify(t.Context(), request)
+					var invalid gai.InvalidParameterErr
+					if !errors.As(err, &invalid) || invalid.Parameter != "Headers" || invalid.Reason != "header names must be unique ignoring case" {
+						t.Fatalf("expected duplicate-header validation error without header values, got %v", err)
+					}
+					if calls.Load() != 1 || !reflect.DeepEqual(headers, before) {
+						t.Fatal("ambiguous headers reached the server or caller headers were mutated")
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestHTTPFailures(t *testing.T) {
 	for _, provider := range providerFixtures() {
 		t.Run(provider.name, func(t *testing.T) {

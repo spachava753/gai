@@ -14,6 +14,7 @@ import (
 	"github.com/oapi-codegen/nullable"
 
 	"github.com/spachava753/gai"
+	"github.com/spachava753/gai/internal/httpheaders"
 	openaiwire "github.com/spachava753/gai/internal/openai"
 	systemone "github.com/spachava753/gai/internal/typesafe"
 	"github.com/spachava753/gai/internal/wirejson"
@@ -85,6 +86,9 @@ func (c *clientConfig) authorize(_ context.Context, request *http.Request) error
 
 func requestHeaders(headers http.Header) func(context.Context, *http.Request) error {
 	return func(_ context.Context, request *http.Request) error {
+		if err := httpheaders.Validate(headers); err != nil {
+			return invalid("Headers", err.Error())
+		}
 		for name, values := range headers {
 			request.Header.Del(name)
 			for _, value := range values {

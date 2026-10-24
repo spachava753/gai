@@ -450,6 +450,9 @@ func (g *GeminiGenerator) Generate(ctx context.Context, request GenerationReques
 	if g.client == nil {
 		return Response{}, fmt.Errorf("gemini: client not initialized")
 	}
+	if err := validateRequestHeaders(request.Headers); err != nil {
+		return Response{}, err
+	}
 	dialog := request.Dialog
 	if len(dialog) == 0 {
 		return Response{}, ErrEmptyDialog
@@ -661,6 +664,10 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 	return func(yield func(StreamChunk) bool) {
 		if g.client == nil {
 			yield(StreamChunk{Err: fmt.Errorf("gemini: client not initialized")})
+			return
+		}
+		if err := validateRequestHeaders(request.Headers); err != nil {
+			yield(StreamChunk{Err: err})
 			return
 		}
 
@@ -1066,6 +1073,9 @@ func prepareGeminiChatHistory(dialog Dialog, toolCallIDToFuncName map[string]str
 func (g *GeminiGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
 	if g.client == nil {
 		return 0, fmt.Errorf("gemini: client not initialized")
+	}
+	if err := validateRequestHeaders(request.Headers); err != nil {
+		return 0, err
 	}
 	dialog := request.Dialog
 	if len(dialog) == 0 {

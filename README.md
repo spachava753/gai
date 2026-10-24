@@ -140,7 +140,7 @@ Z.AI counting calls `/tokenizer` with model, messages, and tools. Moonshot count
 
 The shared adapters send image data URLs and inline PDF bodies where the backend accepts them. The former Z.AI-only remote image/video/PDF URL conversion and provider-specific response metadata constants have been removed. Use the shared OpenAI metadata keys for returned native fields. PDF acceptance on Z.AI remains backend-dependent; no upload, extraction, or preprocessing workaround is added.
 
-`GenerationRequest.Headers` adds per-invocation HTTP headers to generation, streaming, and remote token-count requests. Supplied values replace matching ordinary client/provider headers without modifying shared clients. SDK-managed authentication can take precedence: Gemini sets `X-Goog-Api-Key` from its client credentials. Multiple values are preserved. Do not mutate the map or its slices while the invocation is running, and avoid storing secrets in serialized requests. The field is HTTP metadata, not part of the provider JSON body.
+`GenerationRequest.Headers` adds per-invocation HTTP headers to generation, streaming, and remote token-count requests. Supplied values replace matching ordinary client/provider headers without modifying shared clients. SDK-managed authentication can take precedence: Gemini sets `X-Goog-Api-Key` from its client credentials. Multiple values are preserved. Header names must be unique ignoring case; duplicates return `InvalidParameterErr` before sending. Do not mutate the map or its slices while the invocation is running, and avoid storing secrets in serialized requests. The field is HTTP metadata, not part of the provider JSON body.
 
 ## Options
 

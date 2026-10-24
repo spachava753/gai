@@ -2,6 +2,7 @@ package gai
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -22,7 +23,9 @@ func TestRequestHeaders(t *testing.T) {
 		request.Header.Set("X-Session", "old")
 		request.Header.Set("X-Remove", "old")
 		headers := http.Header{"x-session": {"one", "two"}, "x-remove": nil}
-		setRequestHeaders(request, headers)
+		if err := setRequestHeaders(request, headers); err != nil {
+			t.Fatal(err)
+		}
 		headers["x-session"][0] = "changed"
 		if got := request.Header.Values("X-SESSION"); !reflect.DeepEqual(got, []string{"one", "two"}) {
 			t.Fatalf("session headers = %v", got)
@@ -114,36 +117,41 @@ func TestRequestHeaders(t *testing.T) {
 				g := constructor.new(t, server)
 				operations := []struct {
 					name string
-					run  func(GenerationRequest)
+					run  func(GenerationRequest) error
 				}{
-					{"Generate", func(r GenerationRequest) {
-						if _, err := g.Generate(t.Context(), r); err == nil {
-							t.Error("expected HTTP error")
-						}
+					{"Generate", func(r GenerationRequest) error {
+						_, err := g.Generate(t.Context(), r)
+						return err
 					}},
-					{"Stream", func(r GenerationRequest) {
-						for range g.(StreamingGenerator).Stream(t.Context(), r) {
+					{"Stream", func(r GenerationRequest) error {
+						for chunk := range g.(StreamingGenerator).Stream(t.Context(), r) {
+							if chunk.Err != nil {
+								return chunk.Err
+							}
 						}
+						return nil
 					}},
 				}
 				if counter, ok := g.(TokenCounter); ok && constructor.name != "OpenAI" {
 					operations = append(operations, struct {
 						name string
-						run  func(GenerationRequest)
-					}{"Count", func(r GenerationRequest) {
-						if _, err := counter.Count(t.Context(), r); err == nil {
-							t.Error("expected HTTP error")
-						}
+						run  func(GenerationRequest) error
+					}{"Count", func(r GenerationRequest) error {
+						_, err := counter.Count(t.Context(), r)
+						return err
 					}})
 				}
 				for _, operation := range operations {
 					t.Run(operation.name, func(t *testing.T) {
 						for _, headers := range []http.Header{
 							{"X-Opencode-Session": {"conversation"}, "X-Replace": {"one", "two"}, "Authorization": {"Bearer override"}, "X-Api-Key": {"override"}, "X-Goog-Api-Key": {"override"}},
+							{"x-session": {"one", "two"}, "x-replace": {"lower-one", "lower-two"}, "X-Remove": nil, "X-Empty": {}},
 							nil,
 						} {
 							before := headers.Clone()
-							operation.run(GenerationRequest{Model: "test-model", Headers: headers, Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}})
+							if err := operation.run(GenerationRequest{Model: "test-model", Headers: headers, Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}}); err == nil {
+								t.Error("expected HTTP error")
+							}
 							var got http.Header
 							select {
 							case got = <-captured:
@@ -155,7 +163,11 @@ func TestRequestHeaders(t *testing.T) {
 									if constructor.name == "Gemini" && name == "X-Goog-Api-Key" {
 										want = []string{"test-key"}
 									}
-									if !reflect.DeepEqual(got.Values(name), want) {
+									if len(want) == 0 {
+										if _, present := got[http.CanonicalHeaderKey(name)]; present {
+											t.Errorf("%s was not removed", name)
+										}
+									} else if !reflect.DeepEqual(got.Values(name), want) {
 										t.Errorf("%s = %v, want %v", name, got.Values(name), want)
 									}
 								}
@@ -174,6 +186,32 @@ func TestRequestHeaders(t *testing.T) {
 								t.Fatal("mutated caller headers")
 							}
 						}
+						t.Run("DuplicateNames", func(t *testing.T) {
+							for _, headers := range []http.Header{
+								{"X-Opencode-Session": {"first-secret"}, "x-opencode-session": {"second-secret"}},
+								{"X-Session": {"same-secret"}, "x-session": {"same-secret"}},
+								{"X-Session": nil, "x-session": {"secret"}},
+								{"X-Session": {}, "x-session": nil},
+								{"Authorization": {"Bearer secret"}, "authorization": nil, "X-Session": {"secret"}, "x-session": nil},
+							} {
+								before := headers.Clone()
+								for range 8 {
+									err := operation.run(GenerationRequest{Model: "test-model", Headers: headers, Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}})
+									select {
+									case <-captured:
+										t.Fatal("ambiguous headers reached the server")
+									default:
+									}
+									var invalid *InvalidParameterErr
+									if !errors.As(err, &invalid) || invalid.Parameter != "headers" || invalid.Reason != "header names must be unique ignoring case" {
+										t.Fatalf("expected duplicate-header validation error without header values, got %v", err)
+									}
+									if !reflect.DeepEqual(headers, before) {
+										t.Fatal("mutated caller headers")
+									}
+								}
+							}
+						})
 					})
 				}
 			})

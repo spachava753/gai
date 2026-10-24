@@ -14,6 +14,7 @@ import (
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
 	openai "github.com/openai/openai-go/v3"
 	openaioption "github.com/openai/openai-go/v3/option"
+	"google.golang.org/genai"
 )
 
 func TestGeneratedProviderConstructors(t *testing.T) {
@@ -192,6 +193,199 @@ func TestMidConversationSystemMessageRequests(t *testing.T) {
 							after, err := json.Marshal(request)
 							if err != nil || !reflect.DeepEqual(before, after) {
 								t.Fatal("generator mutated the borrowed request")
+							}
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+// Replaying unchanged tool history must retain caller order and a byte-stable
+// serialized prefix, including after more conversation turns are appended.
+func TestToolResultHistoryOrder(t *testing.T) {
+	providers := []struct {
+		name    string
+		history string
+		results string
+		new     func(*testing.T, *httptest.Server) Generator
+	}{
+		{
+			name: "Anthropic", history: "messages",
+			results: `[{"role":"user","content":[
+				{"type":"tool_result","tool_use_id":"z-ROUND","is_error":false,"content":[{"type":"text","text":"z first"},{"type":"text","text":"z last"}]},
+				{"type":"tool_result","tool_use_id":"a-ROUND","is_error":false,"content":[{"type":"text","text":"a first"},{"type":"text","text":"a last"}]},
+				{"type":"tool_result","tool_use_id":"m-ROUND","is_error":false,"content":[{"type":"text","text":"m first"},{"type":"text","text":"m last"}]}
+			]}]`,
+			new: func(t *testing.T, s *httptest.Server) Generator {
+				client := anthropic.NewClient(anthropicoption.WithoutEnvironmentDefaults(), anthropicoption.WithAPIKey("test-key"), anthropicoption.WithBaseURL(s.URL), anthropicoption.WithHTTPClient(s.Client()), anthropicoption.WithMaxRetries(0))
+				return NewAnthropicGenerator(&client.Messages)
+			},
+		},
+		{
+			name: "OpenAI", history: "messages",
+			results: `[
+				{"role":"tool","tool_call_id":"z-ROUND","content":"z firstz last"},
+				{"role":"tool","tool_call_id":"a-ROUND","content":"a firsta last"},
+				{"role":"tool","tool_call_id":"m-ROUND","content":"m firstm last"}
+			]`,
+			new: func(t *testing.T, s *httptest.Server) Generator {
+				generator, err := NewOpenAiGenerator(s.Client(), s.URL, "test-key")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return generator
+			},
+		},
+		{
+			name: "Responses", history: "input",
+			results: `[
+				{"type":"function_call_output","call_id":"z-ROUND","output":"z firstz last"},
+				{"type":"function_call_output","call_id":"a-ROUND","output":"a firsta last"},
+				{"type":"function_call_output","call_id":"m-ROUND","output":"m firstm last"}
+			]`,
+			new: func(t *testing.T, s *httptest.Server) Generator {
+				client := openai.NewClient(openaioption.WithAPIKey("test-key"), openaioption.WithBaseURL(s.URL), openaioption.WithHTTPClient(s.Client()), openaioption.WithMaxRetries(0))
+				return NewResponsesGenerator(&client.Responses)
+			},
+		},
+		{
+			name: "Gemini", history: "contents",
+			results: `[{"role":"user","parts":[
+				{"functionResponse":{"name":"lookup_z","response":{"output":"z first"}}},
+				{"functionResponse":{"name":"lookup_z","response":{"output":"z last"}}},
+				{"functionResponse":{"name":"lookup_a","response":{"output":"a first"}}},
+				{"functionResponse":{"name":"lookup_a","response":{"output":"a last"}}},
+				{"functionResponse":{"name":"lookup_m","response":{"output":"m first"}}},
+				{"functionResponse":{"name":"lookup_m","response":{"output":"m last"}}}
+			]}]`,
+			new: func(t *testing.T, s *httptest.Server) Generator {
+				client, err := genai.NewClient(t.Context(), &genai.ClientConfig{APIKey: "test-key", Backend: genai.BackendGeminiAPI, HTTPClient: s.Client(), HTTPOptions: genai.HTTPOptions{BaseURL: s.URL}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return NewGeminiGenerator(client)
+			},
+		},
+	}
+	for _, provider := range providers {
+		t.Run(provider.name, func(t *testing.T) {
+			shapes := []string{"SeparateMessages"}
+			if provider.name == "Anthropic" {
+				shapes = append(shapes, "InterleavedBlocks")
+			}
+			for _, shape := range shapes {
+				t.Run(shape, func(t *testing.T) {
+					for _, operation := range []string{"Generate", "Stream"} {
+						t.Run(operation, func(t *testing.T) {
+							captured := make(chan []json.RawMessage, 1)
+							server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+								var body map[string]json.RawMessage
+								if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+									t.Error(err)
+								}
+								var history []json.RawMessage
+								if err := json.Unmarshal(body[provider.history], &history); err != nil {
+									t.Error(err)
+								}
+								captured <- history
+								// Reject locally after capturing actual SDK/adapter serialization.
+								// This exercises both HTTP paths without live provider calls.
+								w.Header().Set("Content-Type", "application/json")
+								w.WriteHeader(http.StatusBadRequest)
+								fmt.Fprint(w, `{"error":{"message":"test rejection","type":"invalid_request_error","code":400,"status":"INVALID_ARGUMENT"}}`)
+							}))
+							defer server.Close()
+							generator := provider.new(t, server)
+							request := GenerationRequest{
+								Model:  "test-model",
+								Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("Look up three values.")}}},
+							}
+							var prefix []json.RawMessage
+							for round := range 3 {
+								var calls []Block
+								var results Dialog
+								// Result order intentionally differs from tool-call and lexical order.
+								for _, id := range []string{"a", "m", "z"} {
+									call, err := ToolCallBlock(fmt.Sprintf("%s-%d", id, round), "lookup_"+id, map[string]any{})
+									if err != nil {
+										t.Fatal(err)
+									}
+									calls = append(calls, call)
+								}
+								for _, id := range []string{"z", "a", "m"} {
+									results = append(results, ToolResultMessage(fmt.Sprintf("%s-%d", id, round), TextBlock(id+" first"), TextBlock(id+" last")))
+								}
+								if shape == "InterleavedBlocks" {
+									results = Dialog{{Role: ToolResult, Blocks: []Block{
+										results[0].Blocks[0], results[1].Blocks[0], results[0].Blocks[1],
+										results[2].Blocks[0], results[1].Blocks[1], results[2].Blocks[1],
+									}}}
+								}
+								request.Dialog = append(request.Dialog, Message{Role: Assistant, Blocks: calls})
+								request.Dialog = append(request.Dialog, results...)
+								before, err := json.Marshal(request)
+								if err != nil {
+									t.Fatal(err)
+								}
+								var wantResults []any
+								if err := json.Unmarshal([]byte(strings.ReplaceAll(provider.results, "ROUND", fmt.Sprint(round))), &wantResults); err != nil {
+									t.Fatal(err)
+								}
+								var baseline []json.RawMessage
+								// Revisit fresh Go maps often enough to expose randomized iteration.
+								for attempt := range 32 {
+									var err error
+									if operation == "Generate" {
+										_, err = generator.Generate(t.Context(), request)
+									} else {
+										for chunk := range generator.(StreamingGenerator).Stream(t.Context(), request) {
+											if chunk.Err != nil {
+												err = chunk.Err
+											}
+										}
+									}
+									var apiErr *ApiErr
+									if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+										t.Fatalf("round %d attempt %d: expected local server rejection, got %v", round, attempt, err)
+									}
+									var history []json.RawMessage
+									select {
+									case history = <-captured:
+									default:
+										t.Fatal("request never reached the server")
+									}
+									if len(history) < len(wantResults) || len(history) < len(prefix) {
+										t.Fatalf("history too short: %s", history)
+									}
+									for i, want := range wantResults {
+										var got any
+										if err := json.Unmarshal(history[len(history)-len(wantResults)+i], &got); err != nil {
+											t.Fatal(err)
+										}
+										if !reflect.DeepEqual(got, want) {
+											t.Fatalf("round %d attempt %d: tool results = %v, want %v", round, attempt, got, want)
+										}
+									}
+									if len(prefix) > 0 && !reflect.DeepEqual(history[:len(prefix)], prefix) {
+										t.Fatalf("round %d attempt %d: appended history changed serialized prefix", round, attempt)
+									}
+									if attempt == 0 {
+										baseline = history
+									} else if !reflect.DeepEqual(history, baseline) {
+										t.Fatalf("round %d attempt %d: identical request changed serialized history", round, attempt)
+									}
+								}
+								after, err := json.Marshal(request)
+								if err != nil || !reflect.DeepEqual(before, after) {
+									t.Fatal("generator mutated the borrowed request")
+								}
+								prefix = baseline
+								request.Dialog = append(request.Dialog,
+									Message{Role: Assistant, Blocks: []Block{TextBlock("Done.")}},
+									Message{Role: User, Blocks: []Block{TextBlock("Look up three more values.")}},
+								)
 							}
 						})
 					}

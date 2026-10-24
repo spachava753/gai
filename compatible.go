@@ -35,7 +35,9 @@ func compatiblePostJSON(ctx context.Context, client *http.Client, endpoint, apiK
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	setRequestHeaders(req, headers)
+	if err := setRequestHeaders(req, headers); err != nil {
+		return err
+	}
 	response, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("%s: request: %w", provider, err)

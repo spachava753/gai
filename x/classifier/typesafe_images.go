@@ -29,6 +29,8 @@ func typeSafeImages(body *wire.ClassificationRequest, media []gai.Block) error {
 		}
 		id := block.ID
 		if id == "" {
+			// TODO: Generate deterministic, collision-safe asset IDs so unchanged
+			// image requests remain byte-stable for prompt caching.
 			for {
 				id = "gai-image-" + rand.Text()
 				if _, duplicate := assets[id]; !duplicate && !bytes.Contains(original, []byte(id)) {

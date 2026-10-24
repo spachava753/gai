@@ -205,8 +205,9 @@ func WithThinkingBudget(value int) GenerationOption {
 type GenerationRequest struct {
 	// Headers supplies per-request HTTP headers for generation, streaming, and
 	// remote token counting. Values replace matching ordinary provider/client
-	// headers; multiple values are preserved. SDK-managed authentication
-	// may take precedence (Gemini's X-Goog-Api-Key). Callers
+	// headers; multiple values are preserved. Header names must be unique
+	// ignoring case; duplicates return [InvalidParameterErr] before sending.
+	// SDK-managed authentication may take precedence (Gemini's X-Goog-Api-Key). Callers
 	// must not mutate this map or its slices during an invocation. Headers are
 	// not sent in the JSON body and do not change shared client configuration.
 	// Use ordinary HTTP headers, not transport fields such as Host or Content-Length.

@@ -846,7 +846,11 @@ func (r *ResponsesGenerator) Generate(ctx context.Context, request GenerationReq
 		return Response{}, err
 	}
 
-	res, err := r.client.New(ctx, params, openAIRequestHeaders(request.Headers)...)
+	headerOptions, err := openAIRequestHeaders(request.Headers)
+	if err != nil {
+		return Response{}, err
+	}
+	res, err := r.client.New(ctx, params, headerOptions...)
 	if err != nil {
 		if mapped := mapOpenAISDKError(ProviderResponses, err); mapped != nil {
 			return Response{}, mapped
@@ -935,8 +939,14 @@ func (r *ResponsesGenerator) Stream(ctx context.Context, request GenerationReque
 			return yield(StreamChunk{Block: SeparatorBlock()})
 		}
 
+		headerOptions, err := openAIRequestHeaders(request.Headers)
+		if err != nil {
+			yield(StreamChunk{Err: err})
+			return
+		}
+
 		// Start the stream
-		stream := r.client.NewStreaming(ctx, params, openAIRequestHeaders(request.Headers)...)
+		stream := r.client.NewStreaming(ctx, params, headerOptions...)
 		defer stream.Close()
 
 		for stream.Next() {

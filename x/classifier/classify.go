@@ -68,8 +68,9 @@ func (f Func) Classify(ctx context.Context, request Request) (Response, error) {
 type Request struct {
 	// Headers contains HTTP headers to set for this call. Each entry replaces
 	// the client's default values for that header, including Authorization.
-	// A nil or empty value slice removes the header. The client is not modified.
-	// Headers may contain credentials; avoid logging them.
+	// A nil or empty value slice removes the header. Names must be unique
+	// ignoring case; duplicates return [gai.InvalidParameterErr] before sending.
+	// The client is not modified. Headers may contain credentials; avoid logging them.
 	Headers http.Header `json:"headers,omitempty"`
 
 	// Model is the name of the model to use. It must not be empty.
