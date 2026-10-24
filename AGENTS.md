@@ -1,194 +1,31 @@
-# GAI (Go AI generation utilities)
+# GAI
 
-GAI is a Go library for interacting with LLM providers, including OpenAI, Anthropic, Google Gemini, Cerebras, OpenRouter, ZAI, DeepSeek, and Moonshot, with consistent APIs, composable generators, streaming support, metrics, and robust testing. The core library is in the repository root as a standard Go module.
+Keep this file limited to non-obvious workflows and repository constraints. Read the code and package documentation for architecture and API details.
 
-@README.md provides a general overview and quick start. See @ROADMAP.md for planned work.
+## Checks
 
-## Project structure and organization
+- Run `go test ./...` and `go vet ./...` for Go changes.
+- Run the pinned linter with:
+  ```sh
+  go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(openai|cloudflare|perplexity|typesafe)$' ./...
+  ```
+- After cloning, enable the tracked hooks with `git config --local core.hooksPath .githooks`.
 
-- Root Go module (go.mod) with all library code colocated for ease of import
-  - Provider clients: `openai.go`, `anthropic.go`, `gemini.go`, `cerebras.go`, `openrouter.go`, `responses.go`, `zai.go`, `deepseek.go`, `moonshot.go`
-  - Cerebras, OpenRouter, Z.AI, DeepSeek, and Moonshot delegate to private `*OpenAiGenerator` fields; each provider owns its request translation, defaults, and Generate/Stream delegation in its own file. Keep provider-specific logic out of `compatible.go`, which contains only shared error relabeling and JSON HTTP mechanics. Do not embed `GeneratorWrapper` or expose OpenAI's local counter. Z.AI and Moonshot use native HTTP token counters; Moonshot rejects tools in Count because tool accounting is undocumented. DeepSeek has no Count method. Provider wrappers use shared OpenAI wire/usage metadata keys and preserve explicit request options without model-name heuristics. OpenRouter/Z.AI/DeepSeek default to `max_tokens`; Moonshot and Cerebras use `max_completion_tokens`. Cerebras and OpenRouter retain helpers for native prediction, response format, service tier, and routing controls. Logit bias, logprobs/top-logprobs, parallel tool calls, and seed use common helpers without provider aliases; explicit OpenAI extra-body fields take precedence. Min-p/top-a/repetition penalty have OpenRouter-native helpers. Output modalities/audio configuration have OpenAI-native helpers and keys; Gemini has WithGeminiOutputModalities and preserves returned inline image/audio payloads, MIME types, and thought signatures, including assistant replay. StreamingAdapter preserves nontext content/thinking blocks independently, never concatenating base64 payloads. Gemini maps seed/logprob options, presence/frequency penalties, and numeric thinking budgets; Responses maps logprob/parallel-tool options; Anthropic maps top-k and parallel-tool control through disable_parallel_tool_use. Forwarded OpenAI fields do not prove provider support: README distinguishes documented, fixed/ignored, and undocumented controls. Preserve explicit options without inventing capability filters or model heuristics. Do not turn prediction or response formats into common options. Native values and model capabilities are server-validated. Cerebras and OpenRouter use shared OpenAI metadata rather than their former response/usage constants. OpenRouter reasoning replay uses complete message-level `reasoning_details` under `OpenAIExtraFieldWireFields`, not former per-block reasoning constants; readable thinking blocks carry `OpenAIExtraFieldReasoningSource`. OpenRouter uses shared identity/cache fields, translates effort and numeric budgets to mutually exclusive native reasoning fields, and classifies native error types in its wrapper. Z.AI omits stream usage requests by default. Native option helpers are in provider files and `openai_options.go`.
-  - `GenerationRequest.SafetyIdentifier` maps to documented provider end-user identity fields; `PromptCacheKey` maps only to OpenAI Chat Completions/Responses, Moonshot, Cerebras, and OpenRouter cache grouping. Cerebras and OpenRouter use the shared request fields for `user` and `prompt_cache_key`, not native option helpers. OpenRouter's explicit session ID takes routing precedence over the cache key. Unsupported providers ignore these fields. Never derive one from the other or map them to Gemini safety settings or cachedContent. `WithReasoningEffort(string)` is distinct from `WithThinkingBudget(int)`; Anthropic/Gemini/OpenRouter support a positive numeric budget and reject combining the two. Gemini checks int32 representability; zero/automatic native sentinels are not shared-budget values.
-  - Generated OpenAPI clients: `internal/openai/` provides shared Chat Completions and native OpenAI Decisions operations. `internal/typesafe/`, `internal/perplexity/`, and `internal/cloudflare/` provide the classifier endpoints for Jev, Perplexity Decisions, and hosted Clef. All use the pinned oapi-codegen tool, package-relative `go:generate` commands, and checked-in `client.gen.go` files. Run `go generate ./internal/...`. Each package tests offline regeneration, lossless JSON round trips, and raw HTTP contracts. The unused OpenRouter, Cerebras, DeepSeek, and Z.AI generated clients remain removed.
-  - OpenAI wire schema: `internal/openai/api.yaml`, `config.yaml`, and `oapi-overlay.yaml` preserve opaque JSON and nullable values. Chat Completions keeps its existing float64 mapping. Classifier wire numbers use `internal/wirejson.Number`, a strict `json.Number`-backed type that rejects quoted numbers and null numeric entries without converting through float64. Public classifier numbers remain `json.Number`. Classifier request unions and arbitrary input use json.RawMessage to preserve nested numbers and nulls. Use generated raw-response methods, not buffered response helpers, where adapters need strict decoding, bounded reads, full error bodies, or streaming. Classifier adapters check JSON framing and duplicate keys, then decode generated response, answer, usage, and envelope models. Generated metadata projections preserve usage and invocation metadata when answers are invalid; do not reintroduce handwritten wire-response structs or map-based answer decoders. Streaming framing and per-invocation assembly remain in `openai_stream.go`; clients add no POST retries.
-  - SDK request contracts: `testdata/openai_sdk/matrix.json` declares named scenarios and SDK options once; cases select a scenario. The corpus has 67 cases / 157 exchanges across OpenAI, GLM-5.3-Flash, Kimi K3, and DeepSeek V4.1 Flash (`deepseek-flash`). It includes multi-turn tools, user images, native Kimi/Z.AI tool-result images, rich arguments, tool-choice controls, recovery, structured output, and OpenAI inline PDFs. All recorded request comparisons pass. The runner uses the OpenAI Python SDK for every provider, and GAI always sends image data URLs. Do not add production options just to reproduce SDK-specific serialization quirks. `captures/` holds only raw request/response body pairs. `TestOpenAISDKRequestBodies` in external-package `openai_sdk_test.go` exercises both the shared OpenAI generator and provider wrappers, translates SDK settings into public GAI options and checks JSON-equivalent HTTP bodies with isolated provider/mode/step cases and GAI-derived history, plus successful completion, usable tool calls, scenario arguments/JSON answers, and reasoning-off behavior. K3/GLM always-thinking profiles exclude reasoning-off cases; K3 named-tool forcing is excluded. The latest approved batch used 102 calls without retries and adopted 41 conversations / 97 exchanges. Three cases remain pending: GLM string-versus-null tool arguments (2) and K3 non-streaming forbidden-tools returning an empty final answer (1). PDF scenarios are intentionally OpenAI-only. Z.AI PDF cases were removed from pending/staged recording matrices; do not reintroduce upload, OCR, or preprocessing workarounds into this corpus without a new request. Historical PDF experiment artifacts are reference material, not pending cases. Follow-up PDF experiments found a processing-state dependency: fresh inline PDFs failed, then identical bytes succeeded after upload with `purpose: "user_data"`; `file_id` also worked. The original invoice and BinaryPC paper now have successful SDK-only probes, not corpus fixtures. `purpose: "agent"` file IDs failed in chat; GLM-OCR is a working separate extraction route. Do not claim PDF support is absent or require rewriting: the exact backend cause is unconfirmed. See `.plan/glm-pdf-investigation.md` and the corpus README. All 10 returned experimental upload IDs were deleted. All fourteen previously failing DeepSeek cases now pass. See the corpus README and `.plan/pending-sdk-matrix.json`; never normalize away failures or relabel old captures as newer-model evidence. Older Kimi/GLM profiles are retired from the active corpus, with the previous corpus backed up in `.plan/pre-latest-sdk-corpus`. The 652-byte `invoice.pdf` is synthetic; extraction/upload workflows are not native PDF coverage. `conversation.py` runs one SDK conversation through mitmproxy; `capture.py` saves body pairs. See its README for explicitly approved corpus-building commands. No separate Python verification framework or resume machinery. Never refresh captures automatically during tests.
-  - OpenCode has no dedicated adapter/client. Use the model's protocol generator and configure its base URL and credentials. `GenerationRequest.Headers` carries per-invocation HTTP header overrides, including `X-Opencode-Session`, for generation, streaming, and remote counting. Never mutate shared clients to apply request headers. Protocol adapters retain their own error labels and metadata keys.
-  - Inline `System` messages in `GenerationRequest.Dialog` retain their position on Chat Completions adapters, Responses, and Anthropic; they are never lifted into `Instructions` or rewritten as user turns. Anthropic supports text-only inline system messages on supporting models, without an automatically added beta header; the server validates model support and placement. Native Gemini rejects inline system messages. The agent loop accepts them in requests and BeforeGeneration replacements but still rejects interruptions of unresolved historical tool-call batches. BeforeGeneration is the only request-change hook; its validated dialog becomes the active conversation before generation and is returned even if generation fails. Other base fields come from fixed configuration and run options each round; applications own external persistence. Content-less native tool declarations are not exposed by this feature.
-  - Anthropic redacted thinking is represented as a text `Thinking` block with empty content and the opaque string under `AnthropicExtraFieldRedactedThinkingData` in `Block.ExtraFields`, not a separate block type. Both Generate and Stream preserve it for assistant replay. Redacted streaming blocks arrive complete in content_block_start; content_block_stop separators keep adjacent redactions and signature-only thinking separate in StreamingAdapter. Never expose the opaque data as readable thinking or discard blocks because their text is empty.
-  - Generation pipeline and composition: `generate.go`, `retry_generator.go`, `fallback_generator.go`, `preprocessing_generator.go`
-  - Streaming primitives: `streaming.go`
-  - Shared domain types and helpers: `message.go`, `tool.go`, `errors.go`, `metrics.go`, `callback.go`
-  - Examples and usage via `*_example_test.go` files
-- Experimental classifier package: `x/classifier/` contains the stateless `Classifier` interface, JSON-compatible input and instructions, typed predicate/choice/score/box/extraction/estimate/forecast questions and answers, exact `json.Number` preservation, and implementation-specific confidence. It reuses root GAI blocks, errors, and usage metadata without implementing `Generator`. `x/classifier/design.md` documents the experimental contract; its API may change. Refusals use `Answer.Refused`; score probabilities are an ordered `[]json.Number` matching the question's levels. Request validation stays internal, and there is no unused request-options map. Do not semantically validate API responses: preserve provider values without range, sum, argmax, weighted-mean, box-geometry, date, span, integer, or horizon checks. Keep only JSON decoding and mapping needed for public types; ResponseError reports those failures, not disagreement with provider values. Built-in TypeSafe/Jev, OpenAI Decisions, hosted Cloudflare Clef/Clef-Omni, and Perplexity Decisions adapters use generated internal clients, separate OpenAI, System One, and Clairic answer codecs, explicit credentials, borrowed HTTP clients, per-call headers, and no automatic POST retries. `x/classifier/http.go` contains constructor validation, request editors, and raw-response handling only; it must not construct or execute HTTP requests. Cloudflare requires an account ID and a three-component Workers AI model route in Request.Model. Its generated schema separates model namespace, author, and name into path parameters: the service rejects encoded route slashes. Regression tests must check EscapedPath, not only URL.Path. TypeSafe supports optional instructions and experimental PNG/JPEG assets and Box questions; Input.Media block IDs are explicit references in data/instructions/criteria, while unnamed images get generated references before Data. Image requests add TypeSafe-Danger-Zone-Images: true before per-call header overrides. Clairic uses the existing Cloudflare client and generated fields request/answer models, selected by question variants, never model-name heuristics; do not mix Clairic and Clef question types. Classify(context.Context, Request) is the only public classification method for every provider; do not introduce provider-specific ClassifyWithOptions methods or options types. Clairic reference-date, quantile, and state-text request controls retain server defaults. Clairic scalar/list value unions decode with UseNumber; null means undetermined, not refusal. Forecast steps and uncertainty metadata must be preserved. New image/box/Clairic features are offline-tested only. Endpoint adapters own capabilities and limits; System One string choices must never silently coerce booleans. Native fractional values use the strict `wirejson.Number` type or opaque `json.RawMessage`, existing usage token keys remain int-valued, and opaque metadata uses the documented classifier ExtraField keys. Offline provider tests are representative HTTP contracts, not live captures. `TestLiveClassifier` in `x/classifier/providers_test.go` is gated by `requireLiveAPIKey` and covers native OpenAI, OpenRouter System One (NewTypeSafe with base https://openrouter.ai/api/v1), OpenRouter Decisions (NewPerplexity with base https://openrouter.ai/api/alpha), and native Cloudflare Clef. It makes 16 calls: text and structured JSON through five profiles, PNG images through three representative routes, and rejected authentication once per service. OpenAI boolean choices are batched into the mixed requests; Flash/Omni are not repeated model variants in the routine suite. Live classifier tests check API contracts, not model accuracy: never assert expected labels, colors, decision thresholds, or predetermined scores. Accept any declared choice, contract-valid probability/score, or well-formed refusal. Weighted scores may be checked against their returned distributions. It uses synthetic text/JSON/images, sequential one-minute calls, no retries or redirects, and safe error diagnostics. Required environment variables are OPENAI_API_KEY, OPENROUTER_API_KEY, or CLOUDFLARE_API_TOKEN plus CLOUDFLARE_ACCOUNT_ID. Missing keys skip; enabled API/contract failures fail. The tests never retrieve vault credentials themselves. OpenRouter adapters retain protocol provider identifiers and native routing/cost metadata. Direct TypeSafe/Perplexity endpoints and audio/video/refusals remain live-unverified. See the classifier design for commands and scope. Keep provider wire formats and capability checks out of the shared types; preserve complete distributions and never invent missing probabilities or usage.
-- Public agent packages: `agent/` contains the reusable agent loop and `agent/agenttest/` contains deterministic test fixtures; `agent/design.md` documents behavior and rationale
-- Tests: colocated `*_test.go` for each area, plus provider-specific tests
-- Samples: `sample.jpg`, `sample.pdf`, `sample.wav` for multimodal tests/examples
-- Tracked hooks: `.githooks/pre-commit` runs LAAS against hand-written packages and excludes generated client packages
-- Public documentation: `doc.go` contains the package API map, `README.md` contains the repository guide, and `*_example_test.go` contains compiled examples
-- `design.md` records the generator interfaces, shared types, state ownership, and rationale implemented by the current release
-- `agent/design.md` records the implemented agent-loop API, run flow, state responsibilities, and rationale
+## Generated provider clients
 
-Conventions
-- Single module, no internal/ submodules yet
-- Provider-neutral generation APIs live at the repository root in package `gai`; agent APIs live in `agent/`
-- Experimental/stability-in-flux code goes under `x/`
+- Do not edit `internal/**/client.gen.go` directly. Change the schema or generator configuration, then run `go generate ./internal/...`.
+- Use the generated clients or existing provider SDKs for provider HTTP operations. Do not add handwritten HTTP clients; existing legacy calls are not a pattern to copy.
+- Keep generated clients under `internal/`. Public APIs should accept standard HTTP clients, base URLs, and explicit credentials rather than generated types or environment lookup.
 
-## Build, test, and development commands
+## Tests and live APIs
 
-Requirements: Go 1.26.6+.
+- Never run live provider tests unless the user explicitly requests them, even if credentials and `LIVE_TESTS=1` are already set.
+- Gate every live test with `requireLiveAPIKey`. Live tests require both `LIVE_TESTS=1` and the relevant provider credentials; they must not retrieve credentials themselves.
+- The SDK request corpus under `testdata/openai_sdk/` is replayed offline. Tests must never refresh captures. Read `testdata/openai_sdk/README.md` before recording or replacing captures, and obtain explicit approval before provider calls.
+- LAAS enforces test structure: keep each scenario's setup, execution, and assertions in its inline `t.Run` callback. Shared fixtures and focused assertion helpers are fine, but do not move whole scenarios into helper functions.
 
-Common commands
-- Install deps: `go mod download`
-- Lint: `go tool laas -exclude-packages='^github\.com/spachava753/gai/internal/(openai|cloudflare|perplexity|typesafe)$' ./...`
-- Lint with golangci-lint if installed: `golangci-lint run` (optional)
-- Run tests (all, live API tests skipped): `go test ./...`
-- Run live API tests only when explicitly requested by the user: `LIVE_TESTS=1 go test ./...` (also requires the relevant provider API keys)
-- Run tests with race: `go test -race ./...`
-- Run a single test file: `go test -run TestName ./...`
-- Examples as docs: `go test ./...` executes `*_example_test.go`
-- Inspect rendered package documentation: `go doc -all .`
+## Workflow
 
-Dev tips
-- Use `RG_COLOR=never` if your environment requires plain output
-- Prefer ripgrep (rg) to locate call sites quickly, e.g. `rg 'Generate\('`
-
-## Code style and conventions
-
-Go style
-- Follow standard Go formatting: `gofmt`/`go fmt` and `go vet` clean
-- Keep package surface minimal and clear; prefer small, composable types
-- Error handling: return `error` values, wrap with `%w` using `fmt.Errorf`
-- Context-first: public methods that block should accept `context.Context`
-- Naming: exported identifiers use full words; keep acronyms consistent (ID, URL, API)
-- Avoid panics in library code; prefer errors
-- Keep provider-specific types in their files to prevent cross-coupling
-- Use table-driven tests for variations
-
-Documentation
-- Keep `doc.go` concise and focused on provider-neutral concepts, with Go documentation links such as `[GenerationRequest]`
-- Maintain @README.md as the repository guide; it is independent from `doc.go`
-- Put provider-specific behavior on the corresponding provider type, constructor, option, metadata key, or method
-- Public comments should explain intent, contracts, value types, storage locations, errors, and related symbols instead of restating declarations. Follow standard-library documentation style: start with a direct description, keep simple symbols brief, and use separate paragraphs or examples for constraints and less obvious behavior. In classifier docs, call the content being evaluated "input", not "shared evidence".
-- Use reciprocal links between option helpers and keys, and between metadata keys and their containing fields
-- Example-driven documentation via `*_example_test.go`; examples must compile under `go test ./...`
-
-Imports
-- Standard -> third-party -> local groupings
-- Avoid unnecessary type aliases; prefer direct types
-
-## Architecture and design patterns
-
-Key concepts
-- Generator abstraction: pluggable components that transform inputs to model calls and outputs
-- Composition patterns: retry, fallback, and preprocessing generators compose functionality without duplication
-- Provider adapters: thin wrappers that expose a unified interface over provider SDKs, generated clients, and HTTP APIs
-- Streaming: unified stream interface emitting chunks, with helpers for incremental assembly
-- Tools: typed function/tool-call support with validation and safe dispatch
-- Agent loop: package `agent` provides a reusable Agent with fixed borrowed configuration, a complete dialog per run, typed generation/tool hooks with nil-preserves-value replacements, a synchronous GenerationChunk notification hook for provisional streaming output, hook-controlled stopping, validated BeforeGeneration request-dialog replacement, phased RunError failures with partial results, and consumer-owned persistence/reconciliation
-- Metrics and callbacks: hooks for observability, tracing, and policy checks
-
-Design principles
-- Interface-first, implementation-behind adapters
-- Small, testable units with clear contracts
-- Provider-agnostic core, provider-specific edges
-- Never write provider HTTP clients by hand. Use the generated OpenAPI clients under `internal/` (or the provider SDKs already used by this library). Add operations to the appropriate schema or add a generated package for a new protocol. Request construction, endpoint paths, parameter escaping, and HTTP execution belong to generated code, not handwritten `http.NewRequest` / `client.Do` wrappers. Existing legacy calls are not a pattern to copy. Adapters translate domain values, supply request editors, and convert generated response models after checking raw response limits and JSON validity. Do not hand-edit generated files.
-- Keep generated clients under `internal/`; public constructors accept standard HTTP clients, base URLs, and credentials rather than generated types
-- Require callers to pass credentials explicitly; provider constructors do not read environment variables or other global configuration
-- Opt into features (metrics, callbacks) without forcing dependencies
-
-Provider-specific metadata placement
-- Prefer `ExtraFields` for provider-specific data that is not universal across generators.
-- Store provider metadata at the narrowest scope that matches the provider API contract:
-  - Use `Message.ExtraFields` for message-level metadata.
-  - Use `Block.ExtraFields` for block-level metadata.
-
-## Testing guidelines
-
-- Use `go test ./...` locally and in CI
-- Structure tests as table-driven where relevant
-- Keep each scenario's setup, execution, and assertions in its inline `t.Run` callback. Do not hide entire test bodies in lowercase `test...` functions or single-use runners behind thin callbacks to bypass LAAS teststructure. Shared fixtures and focused assertion helpers are fine; whole-scenario forwarding is not.
-- Prefer live tests, that is, actually making network calls with SDKs and our packages, mocks cannot provide the same testing gaurantees
-- Gate every test that makes a live API call with `requireLiveAPIKey`; live tests run only when `LIVE_TESTS` and the relevant provider API key are both set
-- Never run live tests unless the user explicitly asks for them, even when `LIVE_TESTS` and provider credentials are already set in the environment
-- Example tests (`*_example_test.go`) should compile and run as documentation
-- For streaming, assert on ordered chunk assembly and termination conditions
-- Include negative tests: timeouts, API errors, invalid tool payloads
-- Use sample media files for multimodal inputs to avoid external fetches
-- Use `agent/agenttest` scripted generators for deterministic Agent tests
-
-Naming and location
-- Unit tests live alongside implementation: `file_test.go`
-- Minimize test file count: add tests to an existing relevant `*_test.go` file; create another test file only when no suitable file exists or technical separation requires it
-- Example files: `*_example_test.go` demonstrate canonical usage
-
-## Security considerations
-
-Secrets
-- Never commit API keys. Applications may load provider credentials from environment variables, then must pass them explicitly to constructors:
-  - OpenAI: `OPENAI_API_KEY`
-  - Anthropic: `ANTHROPIC_API_KEY`
-  - Google: `GOOGLE_API_KEY` or ADC where applicable
-  - Cerebras: `CEREBRAS_API_KEY`
-  - OpenRouter: `OPENROUTER_API_KEY`
-  - ZAI: `Z_API_KEY`
-  - Moonshot: `MOONSHOT_API_KEY`
-  - DeepSeek: `DEEPSEEK_API_KEY`
-- Provide `.env` locally but do not commit secrets; prefer `.env.example` when introduced
-
-Data handling
-- Avoid logging sensitive prompts or completions by default
-- Redact potentially sensitive tool inputs in logs/metrics callbacks
-- Validate tool-call payloads before execution
-- Enforce timeouts and context cancellation for remote calls
-- Follow provider usage policies and rate limits; implement exponential backoff in retry generators
-
-Dependencies
-- Keep dependencies minimal; regularly `go get -u` and review changelogs
-
-## Testing frameworks and execution
-
-- Standard library `testing` is used; no external test framework required
-- Use `-run`, `-bench`, `-count=1` flags to target tests and disable caching when needed
-- For race detection and leak checks: `go test -race ./...`
-
-## Configuration
-
-Environment variables
-- Applications and live tests may load provider keys as listed above, but constructors require those keys as explicit arguments
-- `LIVE_TESTS=1` explicitly enables network-backed tests; the relevant provider API key must also be set
-- Tuning flags when present should be wired through options structs; document defaults on the public option symbol and in README when they affect common usage
-
-Configuration management
-- Prefer functional options to long parameter lists for public constructors
-- Validate config at construction time; return descriptive errors
-
-When adding new configuration
-1) Add fields to the appropriate options or config struct
-2) Validate in constructor
-3) Document the public symbols and add an example test; update @README.md when the configuration belongs in the repository guide
-
-## Git and contribution workflow
-
-- Activate the tracked pre-commit hook after cloning: `git config --local core.hooksPath .githooks`
-- This is a greenfield project. Work directly on `main` and push commits to `main` by default; feature branches and pull requests are not required unless explicitly requested.
-- Keep commits small, focused, and with descriptive messages
-- This module is pre-`v1.0.0`; breaking API changes are acceptable when they improve the package, though they should still be intentional and documented in code/tests/docs as appropriate
-- Ensure `go fmt`, `go vet`, and `go test ./...` pass before pushing
-- Avoid force pushes on `main`; use `--force-with-lease` only on feature branches
-
-## Development environment
-
-- Go 1.26.6+
-- LAAS is pinned as a Go tool and runs through the tracked pre-commit hook
-- Optional tools: `golangci-lint`, `rg` (ripgrep)
-
-## Parsing notes for agentic tools
-
-- Section headers are stable and use H2 for primary topics
-- File references use @-mentions (e.g., @README.md, @ROADMAP.md)
-- Commands appear in inline code blocks with backticks
-
-## Documentation for Go Symbols
-
-When gathering context about symbols like types, global variables, constants, functions and methods, prefer to use `go doc` command. You may use `go doc -all github.com/example/pkg` to get a full overview of a package, but use sparingly, as it may overwhelm the context window. Alternatively, you may use `go doc github.com/example/pkg.Type` to get documentation about a specific symbol. Try to avoid usage of `rg` cli to search over source code of dependencies, as it can easily overwhelm your context window.
+- Work directly on `main`; feature branches and pull requests are optional.
+- The module is pre-`v1.0.0`, so intentional breaking API changes are acceptable.
+- Do not force-push `main`.
