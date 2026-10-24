@@ -19,6 +19,65 @@ import (
 )
 
 func TestEventAPIAdapterScenarios(t *testing.T) {
+	t.Run("ReasoningOptions", func(t *testing.T) {
+		for _, tt := range []struct {
+			name    string
+			options GenerationOptions
+			effort  string
+			summary string
+		}{
+			{name: "provider defaults"},
+			{name: "auto summary", options: NewGenerationOptions(WithResponsesThoughtSummaryDetail("auto")), summary: "auto"},
+			{name: "concise summary", options: NewGenerationOptions(WithResponsesThoughtSummaryDetail("concise")), summary: "concise"},
+			{name: "detailed summary", options: NewGenerationOptions(WithResponsesThoughtSummaryDetail("detailed")), summary: "detailed"},
+			{name: "empty effort", options: NewGenerationOptions(WithReasoningEffort(""), WithResponsesThoughtSummaryDetail("detailed")), summary: "detailed"},
+			{name: "effort only", options: NewGenerationOptions(WithReasoningEffort("low")), effort: "low"},
+			{name: "effort and summary", options: NewGenerationOptions(WithReasoningEffort("high"), WithResponsesThoughtSummaryDetail("detailed")), effort: "high", summary: "detailed"},
+			{name: "none effort and summary", options: NewGenerationOptions(WithReasoningEffort("none"), WithResponsesThoughtSummaryDetail("auto")), effort: "none", summary: "auto"},
+			{name: "provider-defined effort", options: NewGenerationOptions(WithReasoningEffort("custom"), WithResponsesThoughtSummaryDetail("concise")), effort: "custom", summary: "concise"},
+		} {
+			for _, stream := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/stream=%t", tt.name, stream), func(t *testing.T) {
+					request := GenerationRequest{Model: "model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: tt.options}
+					var params responses.ResponseNewParams
+					if stream {
+						service := &responsesStreamService{}
+						for chunk := range NewResponsesGenerator(service).Stream(t.Context(), request) {
+							if chunk.Err != nil {
+								t.Fatal(chunk.Err)
+							}
+						}
+						params = service.lastBody
+					} else {
+						service := &mockResponsesService{response: &responses.Response{}}
+						if _, err := NewResponsesGenerator(service).Generate(t.Context(), request); err != nil {
+							t.Fatal(err)
+						}
+						params = service.lastBody
+					}
+					data, err := json.Marshal(params)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var body struct {
+						Reasoning map[string]string `json:"reasoning"`
+					}
+					if err := json.Unmarshal(data, &body); err != nil {
+						t.Fatal(err)
+					}
+					if value, present := body.Reasoning["effort"]; value != tt.effort || present != (tt.effort != "") {
+						t.Fatalf("effort = %q (present=%t), want %q: %s", value, present, tt.effort, data)
+					}
+					if value, present := body.Reasoning["summary"]; value != tt.summary || present != (tt.summary != "") {
+						t.Fatalf("summary = %q (present=%t), want %q: %s", value, present, tt.summary, data)
+					}
+					if tt.effort == "" && tt.summary == "" && body.Reasoning != nil {
+						t.Fatalf("unexpected reasoning config: %s", data)
+					}
+				})
+			}
+		}
+	})
 	t.Run("CommonLogprobOptions", func(t *testing.T) {
 		generator := &ResponsesGenerator{}
 		for _, enabled := range []bool{false, true} {
@@ -2025,6 +2084,7 @@ func (m *mockResponsesService) NewStreaming(ctx context.Context, body responses.
 }
 
 type responsesStreamService struct {
+	lastBody       responses.ResponseNewParams
 	events         []ssestream.Event
 	eventsByStream [][]ssestream.Event
 	streamCalls    int
@@ -2035,6 +2095,7 @@ func (s *responsesStreamService) New(ctx context.Context, body responses.Respons
 }
 
 func (s *responsesStreamService) NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) *ssestream.Stream[responses.ResponseStreamEventUnion] {
+	s.lastBody = body
 	s.streamCalls++
 	events := s.events
 	if len(s.eventsByStream) >= s.streamCalls {

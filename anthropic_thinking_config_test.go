@@ -9,6 +9,39 @@ import (
 )
 
 func TestAnthropicRequestControls(t *testing.T) {
+	t.Run("AdaptiveThinkingWithoutEffort", func(t *testing.T) {
+		for _, stream := range []bool{false, true} {
+			service := &mockAnthropicSvc{response: &a.Message{StopReason: a.StopReasonEndTurn}}
+			generator := NewAnthropicGenerator(service)
+			request := GenerationRequest{
+				Model: "model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
+				Options: NewGenerationOptions(WithReasoningEffort("adaptive")),
+			}
+			if stream {
+				for chunk := range generator.Stream(t.Context(), request) {
+					if chunk.Err != nil {
+						t.Fatal(chunk.Err)
+					}
+				}
+			} else if _, err := generator.Generate(t.Context(), request); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(service.lastParams)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var body struct {
+				Thinking     map[string]any `json:"thinking"`
+				OutputConfig map[string]any `json:"output_config"`
+			}
+			if err := json.Unmarshal(data, &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Thinking["type"] != "adaptive" || body.OutputConfig["effort"] != nil {
+				t.Fatalf("adaptive thinking requires no explicit effort: %s", data)
+			}
+		}
+	})
 	t.Run("parallel tool calls", func(t *testing.T) {
 		for _, allow := range []bool{false, true} {
 			for _, choice := range []a.ToolChoiceUnionParam{

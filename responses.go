@@ -123,8 +123,9 @@ const ResponsesThoughtSummaryDetailParam = "responses_thought_summary_detail"
 // "scale", "priority", "fast", and "ultrafast".
 const ResponsesServiceTierParam = "responses_service_tier"
 
-// WithResponsesThoughtSummaryDetail returns a [GenerationOption] that stores
-// value under [ResponsesThoughtSummaryDetailParam].
+// WithResponsesThoughtSummaryDetail requests a reasoning summary using
+// [ResponsesThoughtSummaryDetailParam]. It is sent independently of
+// [WithReasoningEffort]; omitting effort preserves the provider's default.
 func WithResponsesThoughtSummaryDetail(value string) GenerationOption {
 	return func(options GenerationOptions) {
 		options[ResponsesThoughtSummaryDetailParam] = value
@@ -712,10 +713,10 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 		}
 	}
 	if options.ReasoningEffort != "" {
-		params.Reasoning = responses.ReasoningParam{Effort: responses.ReasoningEffort(options.ReasoningEffort)}
-		if options.ThoughtSummary != nil {
-			params.Reasoning.Summary = *options.ThoughtSummary
-		}
+		params.Reasoning.Effort = responses.ReasoningEffort(options.ReasoningEffort)
+	}
+	if options.ThoughtSummary != nil {
+		params.Reasoning.Summary = *options.ThoughtSummary
 	}
 
 	return params, nil

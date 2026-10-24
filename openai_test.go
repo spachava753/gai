@@ -44,6 +44,31 @@ Assistant: Nvidia
 `
 
 func TestChatCompletionRequestControls(t *testing.T) {
+	t.Run("ReasoningSummaryWithoutEffort", func(t *testing.T) {
+		request := GenerationRequest{
+			Model: "model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
+			Options: NewGenerationOptions(WithOpenAIExtraBody(map[string]json.RawMessage{
+				"reasoning": json.RawMessage(`{"summary":"detailed"}`),
+			})),
+		}
+		for _, stream := range []bool{false, true} {
+			params, _, err := openAIRequest(request, stream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var body map[string]json.RawMessage
+			if err := json.Unmarshal(data, &body); err != nil {
+				t.Fatal(err)
+			}
+			if string(body["reasoning"]) != `{"summary":"detailed"}` || body["reasoning_effort"] != nil {
+				t.Fatalf("summary requires no explicit effort: %s", data)
+			}
+		}
+	})
 	t.Run("NativeAudioOptions", func(t *testing.T) {
 		modalities := []Modality{Text, Audio}
 		options := NewGenerationOptions(WithOpenAIOutputModalities(modalities...), WithOpenAIAudioConfig(OpenAIAudioConfig{VoiceName: "alloy", Format: "wav"}))
