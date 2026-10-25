@@ -236,7 +236,7 @@ func TestChatCompletionRequestControls(t *testing.T) {
 		}
 	})
 	for _, stream := range []bool{false, true} {
-		request := GenerationRequest{Model: "model", SafetyIdentifier: "opaque-user", PromptCacheKey: "prefix", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(WithThinkingBudget(2048), WithOpenAIPromptCacheRetention("24h"), WithOpenAIPromptCacheOptions(json.RawMessage(`{"mode":"implicit","ttl":"30m"}`)), WithOpenAIResponseFormat(json.RawMessage(`{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object"}}}`)))}
+		request := GenerationRequest{Model: "model", SafetyIdentifier: "opaque-user", PromptCacheKey: "prefix", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(WithThinkingBudget(2048), WithPromptCacheTTL(24*time.Hour), WithOpenAIResponseFormat(json.RawMessage(`{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object"}}}`)))}
 		params, _, err := openAIRequest(request, stream)
 		if err != nil {
 			t.Fatal(err)
@@ -249,7 +249,7 @@ func TestChatCompletionRequestControls(t *testing.T) {
 		if err := json.Unmarshal(data, &body); err != nil {
 			t.Fatal(err)
 		}
-		if body["safety_identifier"] != "opaque-user" || body["prompt_cache_key"] != "prefix" || body["prompt_cache_retention"] != "24h" || body["prompt_cache_options"].(map[string]any)["ttl"] != "30m" || body["response_format"].(map[string]any)["type"] != "json_schema" {
+		if body["safety_identifier"] != "opaque-user" || body["prompt_cache_key"] != "prefix" || body["prompt_cache_retention"] != "24h" || body["response_format"].(map[string]any)["type"] != "json_schema" {
 			t.Fatalf("body: %s", data)
 		}
 		if body["reasoning_effort"] != nil || body["thinking_budget"] != nil {

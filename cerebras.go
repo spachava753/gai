@@ -133,6 +133,7 @@ var _ StreamingGenerator = (*CerebrasGenerator)(nil)
 // prepareRequest translates native options without changing caller-owned maps.
 func (g *CerebrasGenerator) prepareRequest(request GenerationRequest) (GenerationRequest, error) {
 	options := maps.Clone(request.Options)
+	delete(options, GenerationOptionPromptCacheTTL) // This provider has no common TTL mapping.
 	if options == nil {
 		options = GenerationOptions{}
 	}

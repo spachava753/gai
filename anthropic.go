@@ -94,7 +94,14 @@ func mapAnthropicError(err error) *ApiErr {
 // Use [NewAnthropicServiceWrapper] to add request modifiers such as
 // [EnableSystemCaching] and [EnableMultiTurnCaching]. SafetyIdentifier maps to
 // metadata.user_id (an opaque UUID/hash, at most 512 characters, used for abuse
-// detection). PromptCacheKey is ignored; it does not become cache_control.
+// detection). A nonempty PromptCacheKey enables automatic prompt caching through
+// top-level cache_control. [WithPromptCacheTTL] selects a lifetime validated by
+// Anthropic and requires a nonempty key. Omitting it uses the default TTL.
+// The key is not sent and does not partition the cache; changing it does not
+// prevent reuse.
+//
+// TODO: Support explicit content-level cache breakpoints through the unified
+// request types.
 //
 // [mid-conversation system message documentation]: https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations
 type AnthropicGenerator struct {
@@ -238,6 +245,25 @@ func applyAnthropicParallelToolCalls(choice *a.ToolChoiceUnionParam, allow *bool
 		}
 		choice.OfAuto.DisableParallelToolUse = disable
 	}
+}
+
+func anthropicPromptCacheControl(request GenerationRequest) (a.CacheControlEphemeralParam, error) {
+	ttl, err := promptCacheTTL(request.Options)
+	if err != nil {
+		return a.CacheControlEphemeralParam{}, err
+	}
+	if request.PromptCacheKey == "" {
+		if ttl != "" {
+			return a.CacheControlEphemeralParam{}, &InvalidParameterErr{
+				Parameter: GenerationOptionPromptCacheTTL,
+				Reason:    "requires a nonempty PromptCacheKey for Anthropic",
+			}
+		}
+		return a.CacheControlEphemeralParam{}, nil
+	}
+	control := a.NewCacheControlEphemeralParam()
+	control.TTL = a.CacheControlEphemeralTTL(ttl)
+	return control, nil
 }
 
 func applyAnthropicThinkingConfig(params *a.MessageNewParams, budget string) error {
@@ -562,6 +588,10 @@ func (g *AnthropicGenerator) Generate(ctx context.Context, request GenerationReq
 	if request.SafetyIdentifier != "" {
 		params.Metadata = a.MetadataParam{UserID: a.String(request.SafetyIdentifier)}
 	}
+	params.CacheControl, err = anthropicPromptCacheControl(request)
+	if err != nil {
+		return Response{}, err
+	}
 
 	if len(instructions) > 0 {
 		params.System = make([]a.TextBlockParam, 0, len(instructions))
@@ -793,6 +823,11 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 		}
 		if request.SafetyIdentifier != "" {
 			params.Metadata = a.MetadataParam{UserID: a.String(request.SafetyIdentifier)}
+		}
+		params.CacheControl, err = anthropicPromptCacheControl(request)
+		if err != nil {
+			yield(StreamChunk{Err: err})
+			return
 		}
 
 		if len(instructions) > 0 {

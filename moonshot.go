@@ -18,6 +18,8 @@ const MoonshotDefaultBaseURL = "https://api.moonshot.ai/v1"
 // OpenAIExtraField and OpenAIResponseExtraField constants. Output limits use
 // max_completion_tokens; streamed usage is requested by default. SafetyIdentifier
 // and PromptCacheKey map directly to their snake_case wire fields.
+// [WithPromptCacheTTL] selects an implicit cache lifetime without requiring a
+// key; accepted lifetimes and model support are validated by the server.
 //
 // Thinking and sampling defaults are left to the server. K2.6 supports
 // [WithMoonshotThinking] and [WithMoonshotKeepThinking]; K2.7-code always thinks
@@ -100,6 +102,8 @@ func (g *MoonshotGenerator) Count(ctx context.Context, request GenerationRequest
 	if len(request.Tools) > 0 {
 		return 0, &InvalidParameterErr{Parameter: "tools", Reason: "Moonshot's token-count endpoint does not document tool counting"}
 	}
+	request.Options = maps.Clone(request.Options)
+	delete(request.Options, GenerationOptionPromptCacheTTL)
 	params, _, err := openAIRequest(request, false)
 	if err != nil {
 		return 0, err
@@ -150,6 +154,14 @@ func (g *MoonshotGenerator) prepareRequest(request GenerationRequest) (Generatio
 		return request, err
 	}
 	fields := map[string]json.RawMessage{}
+	ttl, err := promptCacheTTL(options)
+	if err != nil {
+		return request, err
+	}
+	delete(options, GenerationOptionPromptCacheTTL)
+	if ttl != "" {
+		fields["prompt_cache_options"], _ = json.Marshal(map[string]string{"mode": "implicit", "ttl": ttl})
+	}
 	thinking := map[string]any{}
 	if enabled, present, err := generationOption[bool](options, MoonshotGenerationOptionThinkingEnabled); err != nil {
 		return request, err

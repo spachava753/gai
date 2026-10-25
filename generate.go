@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const (
@@ -62,6 +63,9 @@ const (
 	// GenerationOptionThinkingBudget is the positive int thinking-token budget
 	// set by [WithThinkingBudget], supported by Anthropic, Gemini, and OpenRouter.
 	GenerationOptionThinkingBudget = "thinking_budget"
+	// GenerationOptionPromptCacheTTL is the time.Duration cache-lifetime control
+	// set by [WithPromptCacheTTL]. See the helper for provider support.
+	GenerationOptionPromptCacheTTL = "prompt_cache_ttl"
 )
 
 // GenerationOptions stores common and provider-specific request controls.
@@ -199,6 +203,23 @@ func WithThinkingBudget(value int) GenerationOption {
 	return func(options GenerationOptions) { options[GenerationOptionThinkingBudget] = value }
 }
 
+// WithPromptCacheTTL requests a provider-native cache lifetime under
+// [GenerationOptionPromptCacheTTL]. Positive durations are forwarded without
+// rounding; the API validates supported lifetimes and model capabilities.
+// Anthropic uses cache_control.ttl; Moonshot uses prompt_cache_options.ttl in
+// implicit mode. OpenAI Chat Completions, Responses, and OpenRouter use
+// prompt_cache_options.ttl, except 24 hours maps to prompt_cache_retention.
+// These are provider lifetime policies, not guarantees of cache hits or deletion.
+//
+// Anthropic requires a nonempty [GenerationRequest.PromptCacheKey] when TTL is
+// supplied. OpenAI, Responses, OpenRouter, and Moonshot do not require a key.
+// Omission preserves provider defaults; zero, negative, and wrong-type values
+// return [InvalidParameterErr]. Other adapters ignore it.
+// Native OpenAI extra-body cache policy fields take precedence.
+func WithPromptCacheTTL(ttl time.Duration) GenerationOption {
+	return func(options GenerationOptions) { options[GenerationOptionPromptCacheTTL] = ttl }
+}
+
 // GenerationRequest contains every semantic input to one [Generator.Generate]
 // invocation. It is safe to reuse a generator concurrently with different
 // requests when the underlying provider client is concurrency-safe.
@@ -219,10 +240,13 @@ type GenerationRequest struct {
 	// Z.AI and DeepSeek send user_id; Cerebras and OpenRouter send user. DeepSeek also uses it for
 	// cache and scheduling isolation. Unsupported providers, including native Gemini, ignore it.
 	SafetyIdentifier string `json:"safety_identifier,omitempty" yaml:"safety_identifier,omitempty"`
-	// PromptCacheKey groups requests for cache routing on OpenAI, Moonshot, Cerebras,
-	// and OpenRouter. On OpenRouter, an explicit session ID takes routing precedence.
-	// It does not enable caching, specify retention, or identify a stored cache
-	// resource. Other providers ignore it. It is never derived from SafetyIdentifier.
+	// PromptCacheKey groups requests for cache reuse and accounting on OpenAI
+	// Chat Completions/Responses, Moonshot, Cerebras, and OpenRouter. On OpenRouter,
+	// an explicit session ID takes routing precedence. On Anthropic, a nonempty
+	// value enables automatic prompt caching, using [WithPromptCacheTTL] or the
+	// provider's default lifetime. The value is not sent and does not partition
+	// the cache. Other providers ignore it. It does not specify retention or identify
+	// a stored cache resource, and is never derived from SafetyIdentifier.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty" yaml:"prompt_cache_key,omitempty"`
 	// Instructions contains optional initial [System]-role instructions outside
 	// [Dialog]. Adapters accept only [Text] [Content] blocks here. The zero Message

@@ -3,12 +3,67 @@ package gai
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	a "github.com/anthropics/anthropic-sdk-go"
 )
 
 func TestAnthropicRequestControls(t *testing.T) {
+	for _, mode := range []struct {
+		name   string
+		stream bool
+	}{{"AutomaticPromptCaching/Generate", false}, {"AutomaticPromptCaching/Stream", true}} {
+		t.Run(mode.name, func(t *testing.T) {
+			service := &mockAnthropicSvc{response: &a.Message{StopReason: a.StopReasonEndTurn}}
+			generator := NewAnthropicGenerator(service)
+			request := GenerationRequest{
+				Model: "model", Instructions: SystemMessage(TextBlock("stable instructions")),
+				Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
+			}
+			var enabledBody string
+			for _, key := range []string{"cache-prefix-a", "cache-prefix-b", ""} {
+				request.PromptCacheKey = key
+				if mode.stream {
+					for chunk := range generator.Stream(t.Context(), request) {
+						if chunk.Err != nil {
+							t.Fatal(chunk.Err)
+						}
+					}
+				} else if _, err := generator.Generate(t.Context(), request); err != nil {
+					t.Fatal(err)
+				}
+				data, err := json.Marshal(service.lastParams)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var body map[string]json.RawMessage
+				if err := json.Unmarshal(data, &body); err != nil {
+					t.Fatal(err)
+				}
+				if body["prompt_cache_key"] != nil || strings.Contains(string(data), "cache-prefix-") {
+					t.Fatalf("forwarded cache key to Anthropic: %s", data)
+				}
+				if key == "" {
+					if strings.Contains(string(data), `"cache_control"`) {
+						t.Fatalf("cache control leaked into request without a key: %s", data)
+					}
+					continue
+				}
+				var control map[string]string
+				if err := json.Unmarshal(body["cache_control"], &control); err != nil {
+					t.Fatalf("missing automatic cache control: %s: %v", data, err)
+				}
+				if control["type"] != "ephemeral" || len(control) != 1 || strings.Count(string(data), `"cache_control"`) != 1 {
+					t.Fatalf("expected only top-level cache control with provider-default TTL: %s", data)
+				}
+				if enabledBody != "" && string(data) != enabledBody {
+					t.Fatalf("Anthropic cache policy depends on the key's value: %s", data)
+				}
+				enabledBody = string(data)
+			}
+		})
+	}
 	t.Run("AdaptiveThinkingWithoutEffort", func(t *testing.T) {
 		for _, stream := range []bool{false, true} {
 			service := &mockAnthropicSvc{response: &a.Message{StopReason: a.StopReasonEndTurn}}
@@ -117,7 +172,7 @@ func TestAnthropicRequestControls(t *testing.T) {
 			if budget {
 				option = WithThinkingBudget(2048)
 			}
-			request := GenerationRequest{Model: "model", SafetyIdentifier: "opaque-user", PromptCacheKey: "ignored", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(option, WithTopK(0))}
+			request := GenerationRequest{Model: "model", SafetyIdentifier: "opaque-user", PromptCacheKey: "cache-prefix", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}}, Options: NewGenerationOptions(option, WithTopK(0))}
 			if stream {
 				for chunk := range generator.Stream(t.Context(), request) {
 					if chunk.Err != nil {

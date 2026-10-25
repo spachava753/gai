@@ -194,12 +194,16 @@ type ResponsesService interface {
 //
 // Responses consumes [WithTemperature], [WithTopP],
 // [WithMaxGenerationTokens], [WithToolChoice],
-// [WithParallelToolCalls], [WithLogprobs], [WithTopLogprobs], and
-// [WithReasoningEffort], plus [WithResponsesThoughtSummaryDetail],
-// [WithResponsesServiceTier]. Read token probabilities from output-text blocks
+// [WithParallelToolCalls], [WithLogprobs], [WithTopLogprobs],
+// [WithReasoningEffort], and [WithPromptCacheTTL], plus
+// [WithResponsesThoughtSummaryDetail] and [WithResponsesServiceTier].
+// Read token probabilities from output-text blocks
 // under [ResponsesExtraFieldLogprobs]. WithTopLogprobs sets the alternative-token
 // count; WithLogprobs(true) enables reporting. SafetyIdentifier and PromptCacheKey
 // are passed directly from [GenerationRequest].
+//
+// TODO: Support explicit content-level cache breakpoints on compatible models
+// through the unified request types.
 type ResponsesGenerator struct {
 	client ResponsesService
 }
@@ -695,6 +699,15 @@ func (r *ResponsesGenerator) buildParams(inputItems []responses.ResponseInputIte
 	}
 	if request.PromptCacheKey != "" {
 		params.PromptCacheKey = openai.Opt(request.PromptCacheKey)
+	}
+	ttl, err := promptCacheTTL(request.Options)
+	if err != nil {
+		return responses.ResponseNewParams{}, err
+	}
+	if ttl == "24h" {
+		params.PromptCacheRetention = responses.ResponseNewParamsPromptCacheRetention24h
+	} else if ttl != "" {
+		params.PromptCacheOptions.Ttl = ttl
 	}
 	if request.SafetyIdentifier != "" {
 		params.SafetyIdentifier = openai.Opt(request.SafetyIdentifier)

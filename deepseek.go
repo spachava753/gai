@@ -101,6 +101,7 @@ func WithDeepSeekThinking(value bool) GenerationOption {
 // Explicit extra-body fields take precedence over translated options.
 func (g *DeepSeekGenerator) prepareRequest(request GenerationRequest) (GenerationRequest, error) {
 	options := maps.Clone(request.Options)
+	delete(options, GenerationOptionPromptCacheTTL) // This provider has no common TTL mapping.
 	if options == nil {
 		options = GenerationOptions{}
 	}

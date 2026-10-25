@@ -17,6 +17,12 @@ Keep this file limited to non-obvious workflows and repository constraints. Read
 - Use the generated clients or existing provider SDKs for provider HTTP operations. Do not add handwritten HTTP clients; existing legacy calls are not a pattern to copy.
 - Keep generated clients under `internal/`. Public APIs should accept standard HTTP clients, base URLs, and explicit credentials rather than generated types or environment lookup.
 
+## Request validation
+
+- Let provider APIs validate provider-specific ranges, enums, cache lifetimes, and model capabilities. Do not duplicate those checks with local allowlists or model-name inference.
+- Keep local validation to the library's own contracts and safe, lossless serialization, such as option types and incompatible option combinations.
+- Shared OpenAI-compatible serializers serve multiple providers and custom endpoints. Do not impose OpenAI's current accepted values or capabilities on all of them.
+
 ## Tests and live APIs
 
 - Never run live provider tests unless the user explicitly requests them, even if credentials and `LIVE_TESTS=1` are already set.

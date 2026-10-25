@@ -172,7 +172,8 @@ const OpenRouterDefaultBaseURL = "https://openrouter.ai/api/v1"
 // combining the two is an error. [GenerationRequest.SafetyIdentifier] sets user
 // for end-user abuse isolation. [GenerationRequest.PromptCacheKey] sets
 // prompt_cache_key for cache routing; an explicit session ID takes routing
-// precedence. Neither field is derived from the other.
+// precedence. Neither field is derived from the other. [WithPromptCacheTTL]
+// uses the shared OpenAI wire mapping; OpenRouter validates supported lifetimes.
 type OpenRouterGenerator struct{ client *OpenAiGenerator }
 
 // NewOpenRouterGenerator uses http.DefaultClient for a nil client and

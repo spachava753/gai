@@ -100,6 +100,8 @@ var _ StreamingGenerator = (*ZaiGenerator)(nil)
 // It uses the same content conversion as generation, honors cancellation, and
 // rejects missing, negative, fractional, or overflowing total_tokens values.
 func (g *ZaiGenerator) Count(ctx context.Context, request GenerationRequest) (uint, error) {
+	request.Options = maps.Clone(request.Options)
+	delete(request.Options, GenerationOptionPromptCacheTTL)
 	params, _, err := openAIRequest(request, false)
 	if err != nil {
 		return 0, err
@@ -161,6 +163,7 @@ func WithZaiToolStream(value bool) GenerationOption {
 // Explicit extra-body fields take precedence over translated options.
 func (g *ZaiGenerator) prepareRequest(request GenerationRequest) (GenerationRequest, error) {
 	options := maps.Clone(request.Options)
+	delete(options, GenerationOptionPromptCacheTTL) // This provider has no common TTL mapping.
 	if options == nil {
 		options = GenerationOptions{}
 	}

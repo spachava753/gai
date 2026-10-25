@@ -60,7 +60,7 @@ The fields have the following meanings:
 | --- | --- |
 | `Headers` | Per-invocation HTTP header overrides, not provider JSON fields. |
 | `SafetyIdentifier` | Provider end-user identity where supported. |
-| `PromptCacheKey` | Cache routing hint where supported. |
+| `PromptCacheKey` | Cache reuse/grouping hint; enables automatic caching on Anthropic. |
 | `Model` | Provider model name for this call. |
 | `Instructions` | Optional system message. |
 | `Dialog` | Complete conversation presented to the model. |
@@ -88,7 +88,8 @@ Request headers can contain secrets. Serializing or logging a `GenerationRequest
 `SafetyIdentifier` and `PromptCacheKey` have different meanings. Neither is derived from the other or inserted into prompt content.
 
 - `SafetyIdentifier` maps to `safety_identifier` for OpenAI Chat Completions/Responses and Moonshot, `metadata.user_id` for Anthropic, `user_id` for Z.AI/DeepSeek, and `user` for Cerebras/OpenRouter. DeepSeek also uses its identity field for cache and scheduling isolation.
-- `PromptCacheKey` maps to `prompt_cache_key` for OpenAI Chat Completions/Responses, Moonshot, Cerebras, and OpenRouter. An explicit OpenRouter session ID takes routing precedence. It does not enable caching, select a retention policy, or identify a stored cache resource.
+- `PromptCacheKey` maps to `prompt_cache_key` for OpenAI Chat Completions/Responses, Moonshot, Cerebras, and OpenRouter. An explicit OpenRouter session ID takes routing precedence. Depending on the provider and model, the key affects cache routing, grouping, or accounting. It does not identify a stored cache resource or select a retention policy.
+- On Anthropic, a nonempty `PromptCacheKey` enables automatic prompt caching with top-level `cache_control: {"type":"ephemeral"}`. `WithPromptCacheTTL` selects the lifetime; omitting it preserves the provider default. Supplying a TTL without a key returns `InvalidParameterErr` before HTTP. The key's value is not sent to Anthropic. Different nonempty values produce the same cache policy; changing the key does not partition or invalidate Anthropic's cache. With neither key nor TTL, cache policy is unchanged, so existing service-wrapper modifiers still work.
 - Unsupported adapters ignore these fields. In particular, Gemini does not translate either into safety settings or `cachedContent`.
 
 ## Interfaces
@@ -275,6 +276,7 @@ The common keys use these value types:
 | `logit_bias` | `map[string]float64` |
 | `tool_choice`, `reasoning_effort` | `string` |
 | `thinking_budget` | `int` |
+| `prompt_cache_ttl` | `time.Duration` |
 | `stop_sequences` | `[]string` |
 
 `WithReasoningEffort(string)` is separate from `WithThinkingBudget(int)`. The former carries an effort label; the latter carries a positive numeric thinking-token budget. Anthropic, Gemini, and OpenRouter support the budget and reject combining the two. Gemini checks int32 representability; its zero/automatic budget sentinels are not shared-option values.
@@ -282,6 +284,22 @@ The common keys use these value types:
 Shared Chat Completions wrappers preserve explicit options rather than inferring capabilities from model names. They validate Go value types and serialization; the server validates native values, ranges, and supported combinations. Other protocol adapters still perform their own local validation. Parallel tool calling, seeds, log probabilities, and logit bias use common option keys instead of duplicated provider helpers. Gemini maps seed, logprob controls, presence/frequency penalties, and numeric thinking budgets; Responses maps logprob controls and parallel tool calls; Anthropic maps top-k and parallel tool calls by negating its disable flag. Min-p, top-a, and repetition penalty use OpenRouter-native helpers. Output modalities and audio configuration use OpenAI-native helpers and keys; Gemini has its own output-modality helper, with returned inline image/audio bytes represented as base64 blocks carrying their MIME types and thought signatures. Streaming collection retains separate media payloads rather than concatenating their base64 strings. Anthropic and Responses do not parse output-modality options. Service tiers, routing, prediction, and response formats remain provider-specific. Forwarding a shared field through an OpenAI-compatible wrapper does not imply endpoint support; README distinguishes documented controls, fixed/ignored settings, and undocumented forwarded fields. `WithTopLogprobs` selects a count rather than implicitly enabling `WithLogprobs`. Explicit false and zero values are retained; unsupported controls are ignored by adapters that do not implement them.
 
 `GenerationOptions` is a map rather than a struct because the supported parameters are the union of several provider APIs and that union changes often. Typed helpers keep common settings discoverable, while direct entries allow a provider option to be added without changing the shared request type.
+
+### Prompt cache lifetime
+
+`WithPromptCacheTTL(time.Duration)` is the common cache-lifetime option. Omission preserves provider defaults. Explicit zero, negative, and wrong-type values return `InvalidParameterErr` before generation HTTP calls. Positive durations are formatted without rounding and forwarded; accepted lifetimes and model capabilities are validated by the API, not adapter allowlists. Provider rejections remain `ApiErr` values.
+
+| Adapter | Native mapping |
+| --- | --- |
+| Anthropic | Top-level `cache_control.ttl`; requires a nonempty `PromptCacheKey`. |
+| OpenAI Chat Completions, Responses, OpenRouter | `prompt_cache_options.ttl`, except `24*time.Hour` maps to `prompt_cache_retention: "24h"`; a key is optional. |
+| Moonshot | `prompt_cache_options: {"mode":"implicit","ttl":"…"}`; a key is optional. |
+
+`OpenAiGenerator` also supports custom OpenAI-compatible endpoints. It must not impose OpenAI's current accepted durations on other servers. Adapters select the native field from the requested duration rather than guessing the model generation from its name. Lifetime is a provider policy, not a guarantee of cache availability or deletion: OpenAI's legacy `24h` retention is an upper bound, while newer TTL policies describe minimum lifetimes.
+
+OpenAI Chat Completions native extra-body cache policy fields override the common TTL as a whole, avoiding simultaneous legacy and modern controls. Moonshot's explicit native cache options also take precedence. The old `WithOpenAIPromptCacheRetention` helper is replaced by `WithPromptCacheTTL`; use `WithOpenAIExtraBody` for the non-duration `"in_memory"` policy. `WithOpenAIPromptCacheOptions` remains an escape hatch for native cache policy objects.
+
+Gemini, Cerebras, Z.AI, and DeepSeek ignore the common TTL because no mapping is implemented. Those OpenAI-compatible wrappers strip it from their copied options rather than accidentally forwarding OpenAI-specific cache policy. OpenRouter preserves it for the shared OpenAI serializer. Token-counting calls do not apply cache lifetime settings.
 
 ## Responses
 
@@ -472,5 +490,7 @@ Here, "stateless generator" has a narrow meaning. A generator has no hidden mode
 ## TODOs
 
 This section collects unresolved design work. These items do not describe the current API.
+
+- **Explicit cache breakpoints (deferred).** Expose content-level cache boundaries through the unified request types for Anthropic and compatible OpenAI Chat Completions/Responses models. Until then, Anthropic's service wrapper remains available for explicit native markers.
 
 - **Provider-native tools.** Define how requests enable provider-native tools such as hosted web search, computer use, text editing, and apply-patch. The design must cover execution ownership, normalized call and result blocks, and replay-safe provider metadata.

@@ -49,17 +49,11 @@ func WithOpenAIResponseFormat(format json.RawMessage) GenerationOption {
 	return openAIFieldOption("response_format", format)
 }
 
-// WithOpenAIPromptCacheRetention sets OpenAI's prompt_cache_retention policy
-// (for example "in_memory" or "24h"). It is independent of PromptCacheKey;
-// support and permitted values depend on the model.
-func WithOpenAIPromptCacheRetention(retention string) GenerationOption {
-	value, _ := json.Marshal(retention)
-	return openAIFieldOption("prompt_cache_retention", value)
-}
-
 // WithOpenAIPromptCacheOptions sends OpenAI's native prompt_cache_options object.
 // This is a cache policy, not a cache grouping key. The provider validates
 // supported mode/ttl combinations and model support; no defaults are inferred.
+// Prefer [WithPromptCacheTTL] for lifetime alone. This native object overrides
+// the common lifetime option in Chat Completions.
 func WithOpenAIPromptCacheOptions(options json.RawMessage) GenerationOption {
 	return openAIFieldOption("prompt_cache_options", options)
 }

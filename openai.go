@@ -193,11 +193,15 @@ func WithOpenAIStreamUsage(enabled bool) GenerationOption {
 // to control whether streaming requests ask for usage. The full usage object is
 // available under [OpenAIResponseExtraFieldUsage]. [WithMaxGenerationTokens]
 // sends max_completion_tokens by default; [WithOpenAITokenLimitField] can select
-// max_tokens instead.
+// max_tokens instead. [WithPromptCacheTTL] selects a native cache lifetime;
+// explicit extra-body cache policy fields take precedence.
 //
 // Stream does not reconnect or retry. It continues reading after [DONE] until
 // the server closes the stream, so it can retain trailing metadata. Supply a
 // context deadline to bound the wait.
+//
+// TODO: Support explicit content-level cache breakpoints on compatible models
+// through the unified request types.
 type OpenAiGenerator struct{ client *wire.Client }
 
 // NewOpenAiGenerator constructs a stateless Chat Completions adapter. A nil
@@ -619,6 +623,21 @@ func openAIRequest(request GenerationRequest, stream bool) (wire.ChatCompletionR
 		return params, nil, err
 	}
 	params.AdditionalProperties = make(map[string]json.RawMessage, len(fields))
+	ttl, err := promptCacheTTL(request.Options)
+	if err != nil {
+		return params, nil, err
+	}
+	if _, retentionOverride := fields["prompt_cache_retention"]; !retentionOverride {
+		if _, optionsOverride := fields["prompt_cache_options"]; !optionsOverride {
+			switch ttl {
+			case "":
+			case "24h":
+				params.AdditionalProperties["prompt_cache_retention"] = json.RawMessage(`"24h"`)
+			default:
+				params.AdditionalProperties["prompt_cache_options"], _ = json.Marshal(map[string]string{"ttl": ttl})
+			}
+		}
+	}
 	if options.LogitBias != nil {
 		value, err := json.Marshal(*options.LogitBias)
 		if err != nil {
