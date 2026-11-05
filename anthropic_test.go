@@ -958,6 +958,86 @@ Only output the price, like
 		if len(blocks) > 0 {
 		}
 	})
+	t.Run("AnthropicStreamUsage", func(t *testing.T) {
+		for _, test := range []struct {
+			name  string
+			start string
+			delta string
+			want  Metadata
+		}{
+			{
+				name:  "delta reports only output",
+				start: `{"input_tokens":500000,"cache_read_input_tokens":400000,"cache_creation_input_tokens":100000,"output_tokens":1}`,
+				delta: `{"output_tokens":100000}`,
+				want: Metadata{
+					UsageMetricInputTokens:      1000000,
+					UsageMetricGenerationTokens: 100000,
+					UsageMetricCacheReadTokens:  400000,
+					UsageMetricCacheWriteTokens: 100000,
+				},
+			},
+			{
+				name:  "delta repeats the full usage",
+				start: `{"input_tokens":4,"cache_read_input_tokens":18622,"cache_creation_input_tokens":0,"output_tokens":4}`,
+				delta: `{"input_tokens":4,"cache_read_input_tokens":18622,"cache_creation_input_tokens":0,"output_tokens":9}`,
+				want: Metadata{
+					UsageMetricInputTokens:      18626,
+					UsageMetricGenerationTokens: 9,
+					UsageMetricCacheReadTokens:  18622,
+				},
+			},
+			{
+				name:  "delta updates a start count",
+				start: `{"input_tokens":10,"output_tokens":0}`,
+				delta: `{"input_tokens":12,"cache_read_input_tokens":3,"output_tokens":5}`,
+				want: Metadata{
+					UsageMetricInputTokens:      15,
+					UsageMetricGenerationTokens: 5,
+					UsageMetricCacheReadTokens:  3,
+				},
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				service := &mockAnthropicSvc{streamEvents: []ssestream.Event{
+					{
+						Type: "message_start",
+						Data: []byte(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"usage":` + test.start + `}}`),
+					},
+					{
+						Type: "message_delta",
+						Data: []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":` + test.delta + `}`),
+					},
+					{
+						Type: "message_stop",
+						Data: []byte(`{"type":"message_stop"}`),
+					},
+				}}
+				generator := NewAnthropicGenerator(service)
+				var got Metadata
+				for chunk := range generator.Stream(context.Background(), GenerationRequest{
+					Model:  "claude",
+					Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
+				}) {
+					if chunk.Err != nil {
+						t.Fatal(chunk.Err)
+					}
+					if chunk.Block.BlockType == MetadataBlockType {
+						if err := json.Unmarshal([]byte(chunk.Block.Content.String()), &got); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if len(got) != len(test.want) {
+					t.Fatalf("metadata: got %v, want %v", got, test.want)
+				}
+				for key, value := range test.want {
+					if number, ok := got[key].(float64); !ok || int(number) != value {
+						t.Fatalf("%s: got %v, want %v", key, got[key], value)
+					}
+				}
+			})
+		}
+	})
 	t.Run("AnthropicStreamReturnsContentPolicyErrorForRefusal", func(t *testing.T) {
 		service := &mockAnthropicSvc{streamEvents: []ssestream.Event{{
 			Type: "message_delta",

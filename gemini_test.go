@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -49,6 +50,55 @@ func TestGoogleAdapterScenarios(t *testing.T) {
 				}
 				if err == nil || !strings.Contains(err.Error(), "unsupported message role: system") {
 					t.Fatalf("expected unsupported inline system message, got %v", err)
+				}
+			})
+		}
+	})
+	t.Run("UsageIncludesThinkingTokens", func(t *testing.T) {
+		const usage = `"usageMetadata":{"promptTokenCount":1000000,"candidatesTokenCount":100000,"thoughtsTokenCount":900000,"cachedContentTokenCount":400000,"totalTokenCount":2000000}`
+		const final = `{"candidates":[{"content":{"role":"model","parts":[{"text":"done"}]},"finishReason":"STOP"}],` + usage + `}`
+		for _, operation := range []string{"Generate", "Stream"} {
+			t.Run(operation, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if operation == "Generate" {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = io.WriteString(w, final)
+						return
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					// An earlier report must not add to the final one.
+					_, _ = io.WriteString(w, `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}],"usageMetadata":{"promptTokenCount":1000000,"candidatesTokenCount":50000,"thoughtsTokenCount":900000,"cachedContentTokenCount":400000,"totalTokenCount":1950000}}`+"\n\n")
+					_, _ = io.WriteString(w, "data: "+final+"\n\n")
+				}))
+				defer server.Close()
+				client, err := genai.NewClient(t.Context(), &genai.ClientConfig{APIKey: "test", Backend: genai.BackendGeminiAPI, HTTPClient: server.Client(), HTTPOptions: genai.HTTPOptions{BaseURL: server.URL}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				generator := NewGeminiGenerator(client)
+				request := GenerationRequest{Model: "model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hi")}}}}
+				var got Metadata
+				if operation == "Generate" {
+					response, err := generator.Generate(t.Context(), request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					got = response.UsageMetadata
+				} else {
+					response, err := (&StreamingAdapter{S: generator}).Generate(t.Context(), request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					got = response.UsageMetadata
+				}
+				for key, value := range map[string]int{
+					UsageMetricInputTokens:      1000000,
+					UsageMetricGenerationTokens: 1000000,
+					UsageMetricCacheReadTokens:  400000,
+				} {
+					if actual, ok := GetMetric[int](got, key); !ok || actual != value {
+						t.Fatalf("%s: got %v, want %d", key, got[key], value)
+					}
 				}
 			})
 		}

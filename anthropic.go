@@ -907,16 +907,24 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 		stream := g.client.NewStreaming(ctx, params, headerOptions...)
 		defer stream.Close()
 
-		// Track cumulative usage throughout the stream
-		var finalUsage *a.MessageDeltaUsage
+		// Usage starts on message_start. message_delta repeats or updates it, and
+		// some Anthropic-compatible endpoints report only output there.
+		var usage a.Usage
+		usageReported := false
 
 		for stream.Next() {
 			chunk := stream.Current()
 
 			switch event := chunk.AsAny().(type) {
+			case a.MessageStartEvent:
+				usage = event.Message.Usage
+				usageReported = true
+				continue
+
 			case a.MessageDeltaEvent:
 				// Capture usage and terminal status from the final message delta.
-				finalUsage = &event.Usage
+				mergeAnthropicStreamUsage(&usage, event.Usage)
+				usageReported = true
 				if err := anthropicStopError(event.Delta.StopReason, event.Delta.StopDetails); err != nil {
 					yield(StreamChunk{Err: err})
 					return
@@ -1038,24 +1046,24 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 		}
 
 		// Emit metadata block as final block if we have usage data
-		if finalUsage != nil {
+		if usageReported {
 			metadata := make(Metadata)
 
 			// Calculate total input tokens
-			inputTokens := finalUsage.InputTokens +
-				finalUsage.CacheReadInputTokens +
-				finalUsage.CacheCreationInputTokens
+			inputTokens := usage.InputTokens +
+				usage.CacheReadInputTokens +
+				usage.CacheCreationInputTokens
 			if inputTokens > 0 {
 				metadata[UsageMetricInputTokens] = int(inputTokens)
 			}
-			if finalUsage.OutputTokens > 0 {
-				metadata[UsageMetricGenerationTokens] = int(finalUsage.OutputTokens)
+			if usage.OutputTokens > 0 {
+				metadata[UsageMetricGenerationTokens] = int(usage.OutputTokens)
 			}
-			if finalUsage.CacheReadInputTokens > 0 {
-				metadata[UsageMetricCacheReadTokens] = int(finalUsage.CacheReadInputTokens)
+			if usage.CacheReadInputTokens > 0 {
+				metadata[UsageMetricCacheReadTokens] = int(usage.CacheReadInputTokens)
 			}
-			if finalUsage.CacheCreationInputTokens > 0 {
-				metadata[UsageMetricCacheWriteTokens] = int(finalUsage.CacheCreationInputTokens)
+			if usage.CacheCreationInputTokens > 0 {
+				metadata[UsageMetricCacheWriteTokens] = int(usage.CacheCreationInputTokens)
 			}
 
 			if len(metadata) > 0 {
@@ -1066,6 +1074,23 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 		}
 	}
 
+}
+
+// mergeAnthropicStreamUsage applies the counts a message_delta reports. A zero
+// count means the event left that category out, so the earlier value stands.
+func mergeAnthropicStreamUsage(usage *a.Usage, delta a.MessageDeltaUsage) {
+	if delta.InputTokens > 0 {
+		usage.InputTokens = delta.InputTokens
+	}
+	if delta.OutputTokens > 0 {
+		usage.OutputTokens = delta.OutputTokens
+	}
+	if delta.CacheReadInputTokens > 0 {
+		usage.CacheReadInputTokens = delta.CacheReadInputTokens
+	}
+	if delta.CacheCreationInputTokens > 0 {
+		usage.CacheCreationInputTokens = delta.CacheCreationInputTokens
+	}
 }
 
 // AnthropicSvc defines the interface for interacting with the Anthropic API.

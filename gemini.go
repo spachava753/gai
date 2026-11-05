@@ -792,14 +792,14 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				return
 			}
 
-			// Update cumulative usage if available
+			// Later usage reports replace earlier ones.
 			if resp.UsageMetadata != nil {
 				if resp.UsageMetadata.PromptTokenCount > 0 {
 					totalInputTokens = resp.UsageMetadata.PromptTokenCount
 				}
-				// CandidatesTokenCount is the output tokens in each response
-				if resp.UsageMetadata.CandidatesTokenCount > 0 {
-					totalOutputTokens += resp.UsageMetadata.CandidatesTokenCount
+				// Output includes thinking tokens, matching Generate.
+				if resp.UsageMetadata.TotalTokenCount > 0 {
+					totalOutputTokens = resp.UsageMetadata.TotalTokenCount - totalInputTokens
 				}
 				// CachedContentTokenCount represents tokens read from cached content
 				if resp.UsageMetadata.CachedContentTokenCount > 0 {
