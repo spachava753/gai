@@ -103,6 +103,57 @@ func TestGoogleAdapterScenarios(t *testing.T) {
 			})
 		}
 	})
+	t.Run("StreamReportsUsageBeforeErrors", func(t *testing.T) {
+		const usage = `"usageMetadata":{"promptTokenCount":1000000,"candidatesTokenCount":100000,"thoughtsTokenCount":900000,"totalTokenCount":2000000}`
+		for _, test := range []struct {
+			name string
+			body string
+		}{
+			{
+				name: "max tokens with usage on the terminal response",
+				body: `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"cut"}]},"finishReason":"MAX_TOKENS"}],` + usage + "}\n\n",
+			},
+			{
+				name: "malformed chunk after usage",
+				body: `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}],` + usage + "}\n\ndata: {not json\n\n",
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, test.body)
+				}))
+				defer server.Close()
+				client, err := genai.NewClient(t.Context(), &genai.ClientConfig{APIKey: "test", Backend: genai.BackendGeminiAPI, HTTPClient: server.Client(), HTTPOptions: genai.HTTPOptions{BaseURL: server.URL}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				generator := NewGeminiGenerator(client)
+				var got map[string]float64
+				var gotErr error
+				for chunk := range generator.Stream(t.Context(), GenerationRequest{Model: "model", Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hi")}}}}) {
+					if chunk.Err != nil {
+						gotErr = chunk.Err
+						continue
+					}
+					if gotErr != nil {
+						t.Fatalf("chunk after error: %#v", chunk)
+					}
+					if chunk.Block.BlockType == MetadataBlockType {
+						if err := json.Unmarshal([]byte(chunk.Block.Content.String()), &got); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if gotErr == nil {
+					t.Fatal("stream did not report its error")
+				}
+				if got[UsageMetricInputTokens] != 1000000 || got[UsageMetricGenerationTokens] != 1000000 {
+					t.Fatalf("metadata: %v", got)
+				}
+			})
+		}
+	})
 	t.Run("NativeOutputAndThinking", func(t *testing.T) {
 		for _, stream := range []bool{false, true} {
 			calls := 0

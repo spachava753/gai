@@ -774,11 +774,38 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 
 		// Track cumulative usage
 		var totalInputTokens, totalOutputTokens, totalCacheReadTokens int32
+		// emitUsage reports whether the consumer still wants chunks. A failed stream
+		// was still billed, so known usage goes out before its error.
+		emitUsage := func() bool {
+			if totalInputTokens == 0 && totalOutputTokens == 0 && totalCacheReadTokens == 0 {
+				return true
+			}
+			metadata := make(Metadata)
+
+			if totalInputTokens > 0 {
+				metadata[UsageMetricInputTokens] = int(totalInputTokens)
+			}
+			if totalOutputTokens > 0 {
+				metadata[UsageMetricGenerationTokens] = int(totalOutputTokens)
+			}
+			// CachedContentTokenCount represents tokens read from cached content
+			if totalCacheReadTokens > 0 {
+				metadata[UsageMetricCacheReadTokens] = int(totalCacheReadTokens)
+			}
+
+			return yield(StreamChunk{
+				Block:           MetadataBlock(metadata),
+				CandidatesIndex: 0,
+			})
+		}
 
 		genContentConfig.HTTPOptions = &genai.HTTPOptions{Headers: request.Headers.Clone()}
 		var logprobReports []*genai.LogprobsResult
 		for resp, err := range g.client.Models.GenerateContentStream(ctx, request.Model, allContents, genContentConfig) {
 			if err != nil {
+				if !emitUsage() {
+					return
+				}
 				if mapped := mapGeminiError(err); mapped != nil {
 					yield(StreamChunk{Err: mapped})
 				} else {
@@ -787,13 +814,9 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				return
 			}
 
-			if err := geminiResponseError(resp); err != nil {
-				yield(StreamChunk{Err: err})
-				return
-			}
-
-			// Later usage reports replace earlier ones.
-			if resp.UsageMetadata != nil {
+			// Later usage reports replace earlier ones. A response that ends in an
+			// error can still carry the final counts.
+			if resp != nil && resp.UsageMetadata != nil {
 				if resp.UsageMetadata.PromptTokenCount > 0 {
 					totalInputTokens = resp.UsageMetadata.PromptTokenCount
 				}
@@ -805,6 +828,13 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				if resp.UsageMetadata.CachedContentTokenCount > 0 {
 					totalCacheReadTokens = resp.UsageMetadata.CachedContentTokenCount
 				}
+			}
+
+			if err := geminiResponseError(resp); err != nil {
+				if emitUsage() {
+					yield(StreamChunk{Err: err})
+				}
+				return
 			}
 
 			if len(resp.Candidates) > 0 && resp.Candidates[0] != nil && resp.Candidates[0].LogprobsResult != nil {
@@ -827,7 +857,9 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 				if part.Text != "" || part.InlineData != nil || (part.ThoughtSignature != nil && part.FunctionCall == nil) {
 					block, err := geminiContentBlock(part)
 					if err != nil {
-						yield(StreamChunk{Err: err})
+						if emitUsage() {
+							yield(StreamChunk{Err: err})
+						}
 						return
 					}
 					// Each inline blob is a complete base64 payload, not a text delta.
@@ -900,25 +932,7 @@ func (g *GeminiGenerator) Stream(ctx context.Context, request GenerationRequest)
 		}
 
 		// Emit metadata block as final block
-		if totalInputTokens > 0 || totalOutputTokens > 0 || totalCacheReadTokens > 0 {
-			metadata := make(Metadata)
-
-			if totalInputTokens > 0 {
-				metadata[UsageMetricInputTokens] = int(totalInputTokens)
-			}
-			if totalOutputTokens > 0 {
-				metadata[UsageMetricGenerationTokens] = int(totalOutputTokens)
-			}
-			// CachedContentTokenCount represents tokens read from cached content
-			if totalCacheReadTokens > 0 {
-				metadata[UsageMetricCacheReadTokens] = int(totalCacheReadTokens)
-			}
-
-			yield(StreamChunk{
-				Block:           MetadataBlock(metadata),
-				CandidatesIndex: 0,
-			})
-		}
+		emitUsage()
 	}
 }
 

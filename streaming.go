@@ -19,7 +19,7 @@ import (
 //   - For "thinking" blocks: partial reasoning fragments
 //   - For "tool_call" blocks: either a header (with ID and tool name) or parameter fragments
 //   - For Separator blocks: a zero-content boundary marker between logical streamed blocks
-//   - For MetadataBlockType blocks: usage metrics (always the last non-boundary chunk)
+//   - For MetadataBlockType blocks: usage metrics (the last non-boundary block)
 //
 // MessageExtraFields carries message-level metadata discovered during streaming.
 // ResponseExtraFields carries invocation-level provider metadata. The StreamingAdapter
@@ -55,7 +55,8 @@ type StreamChunk struct {
 //
 // When a provider supplies usage metrics, a successful stream emits them as its
 // final block. That StreamChunk has BlockType MetadataBlockType and contains token
-// usage information in the Metadata map.
+// usage information in the Metadata map. Anthropic and Gemini streams that fail
+// also emit the usage known so far, immediately before the error chunk.
 //
 // When using StreamingAdapter.Generate(), the metadata block is automatically extracted and
 // populated into Response.UsageMetadata, providing the same experience as non-streaming

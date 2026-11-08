@@ -1038,6 +1038,72 @@ Only output the price, like
 			})
 		}
 	})
+	t.Run("AnthropicStreamReportsUsageBeforeErrors", func(t *testing.T) {
+		start := ssestream.Event{
+			Type: "message_start",
+			Data: []byte(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"usage":{"input_tokens":500000,"cache_read_input_tokens":400000,"cache_creation_input_tokens":100000,"output_tokens":1}}}`),
+		}
+		for _, test := range []struct {
+			terminal   ssestream.Event
+			name       string
+			wantOutput float64
+		}{
+			{
+				name: "max tokens",
+				terminal: ssestream.Event{
+					Type: "message_delta",
+					Data: []byte(`{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":100000}}`),
+				},
+				wantOutput: 100000,
+			},
+			{
+				name: "refusal",
+				terminal: ssestream.Event{
+					Type: "message_delta",
+					Data: []byte(`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null},"usage":{"output_tokens":7}}`),
+				},
+				wantOutput: 7,
+			},
+			{
+				name: "stream error",
+				terminal: ssestream.Event{
+					Type: "error",
+					Data: []byte(`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`),
+				},
+				wantOutput: 1,
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				service := &mockAnthropicSvc{streamEvents: []ssestream.Event{start, test.terminal}}
+				generator := NewAnthropicGenerator(service)
+				var got map[string]float64
+				var gotErr error
+				for chunk := range generator.Stream(context.Background(), GenerationRequest{
+					Model:  "claude",
+					Dialog: Dialog{{Role: User, Blocks: []Block{TextBlock("hello")}}},
+				}) {
+					if chunk.Err != nil {
+						gotErr = chunk.Err
+						continue
+					}
+					if gotErr != nil {
+						t.Fatalf("chunk after error: %#v", chunk)
+					}
+					if chunk.Block.BlockType == MetadataBlockType {
+						if err := json.Unmarshal([]byte(chunk.Block.Content.String()), &got); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if gotErr == nil {
+					t.Fatal("stream did not report its error")
+				}
+				if got[UsageMetricInputTokens] != 1000000 || got[UsageMetricCacheReadTokens] != 400000 || got[UsageMetricCacheWriteTokens] != 100000 || got[UsageMetricGenerationTokens] != test.wantOutput {
+					t.Fatalf("metadata: %v", got)
+				}
+			})
+		}
+	})
 	t.Run("AnthropicStreamReturnsContentPolicyErrorForRefusal", func(t *testing.T) {
 		service := &mockAnthropicSvc{streamEvents: []ssestream.Event{{
 			Type: "message_delta",

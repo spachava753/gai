@@ -911,6 +911,37 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 		// some Anthropic-compatible endpoints report only output there.
 		var usage a.Usage
 		usageReported := false
+		// emitUsage reports whether the consumer still wants chunks. A failed stream
+		// was still billed, so known usage goes out before its error.
+		emitUsage := func() bool {
+			if !usageReported {
+				return true
+			}
+			metadata := make(Metadata)
+
+			// Calculate total input tokens
+			inputTokens := usage.InputTokens +
+				usage.CacheReadInputTokens +
+				usage.CacheCreationInputTokens
+			if inputTokens > 0 {
+				metadata[UsageMetricInputTokens] = int(inputTokens)
+			}
+			if usage.OutputTokens > 0 {
+				metadata[UsageMetricGenerationTokens] = int(usage.OutputTokens)
+			}
+			if usage.CacheReadInputTokens > 0 {
+				metadata[UsageMetricCacheReadTokens] = int(usage.CacheReadInputTokens)
+			}
+			if usage.CacheCreationInputTokens > 0 {
+				metadata[UsageMetricCacheWriteTokens] = int(usage.CacheCreationInputTokens)
+			}
+			if len(metadata) == 0 {
+				return true
+			}
+			return yield(StreamChunk{
+				Block: MetadataBlock(metadata),
+			})
+		}
 
 		for stream.Next() {
 			chunk := stream.Current()
@@ -926,7 +957,9 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 				mergeAnthropicStreamUsage(&usage, event.Usage)
 				usageReported = true
 				if err := anthropicStopError(event.Delta.StopReason, event.Delta.StopDetails); err != nil {
-					yield(StreamChunk{Err: err})
+					if emitUsage() {
+						yield(StreamChunk{Err: err})
+					}
 					return
 				}
 				continue
@@ -1037,6 +1070,9 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 
 		// Check for stream errors
 		if stream.Err() != nil {
+			if !emitUsage() {
+				return
+			}
 			if mapped := mapAnthropicError(stream.Err()); mapped != nil {
 				yield(StreamChunk{Err: mapped})
 			} else {
@@ -1046,32 +1082,7 @@ func (g *AnthropicGenerator) Stream(ctx context.Context, request GenerationReque
 		}
 
 		// Emit metadata block as final block if we have usage data
-		if usageReported {
-			metadata := make(Metadata)
-
-			// Calculate total input tokens
-			inputTokens := usage.InputTokens +
-				usage.CacheReadInputTokens +
-				usage.CacheCreationInputTokens
-			if inputTokens > 0 {
-				metadata[UsageMetricInputTokens] = int(inputTokens)
-			}
-			if usage.OutputTokens > 0 {
-				metadata[UsageMetricGenerationTokens] = int(usage.OutputTokens)
-			}
-			if usage.CacheReadInputTokens > 0 {
-				metadata[UsageMetricCacheReadTokens] = int(usage.CacheReadInputTokens)
-			}
-			if usage.CacheCreationInputTokens > 0 {
-				metadata[UsageMetricCacheWriteTokens] = int(usage.CacheCreationInputTokens)
-			}
-
-			if len(metadata) > 0 {
-				yield(StreamChunk{
-					Block: MetadataBlock(metadata),
-				})
-			}
-		}
+		emitUsage()
 	}
 
 }

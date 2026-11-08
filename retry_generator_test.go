@@ -781,6 +781,85 @@ func TestRetryPolicyScenarios(t *testing.T) {
 			t.Fatalf("expected Stream to be called once, got %d", m.streamCallCount)
 		}
 	})
+	t.Run("RetryGenerator/Stream/ReportsOnlyLastAttemptUsage", func(t *testing.T) {
+		retryAfter := time.Duration(0)
+		retriableErr := &gai.ApiErr{
+			Provider:           gai.ProviderOpenAI,
+			Kind:               gai.APIErrorKindRateLimit,
+			StatusCode:         http.StatusTooManyRequests,
+			Message:            "too many requests",
+			RetryAfterDuration: &retryAfter,
+		}
+		m := &mockGenerator{}
+		m.StreamFunc = func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
+			return func(yield func(gai.StreamChunk) bool) {
+				if m.streamCallCount == 1 {
+					if yield(gai.StreamChunk{Block: gai.MetadataBlock(gai.Metadata{gai.UsageMetricInputTokens: 100, gai.UsageMetricCacheReadTokens: 90})}) {
+						yield(gai.StreamChunk{Err: retriableErr})
+					}
+					return
+				}
+				if yield(gai.StreamChunk{Block: gai.TextBlock("done")}) {
+					yield(gai.StreamChunk{Block: gai.MetadataBlock(gai.Metadata{gai.UsageMetricInputTokens: 10, gai.UsageMetricGenerationTokens: 1})})
+				}
+			}
+		}
+
+		config := constantRetryConfig(time.Minute)
+		config.MaxAttempts = 2
+		adapter := gai.StreamingAdapter{S: gai.NewRetryGenerator(m, config)}
+		response, err := adapter.Generate(context.Background(), gai.GenerationRequest{})
+		if err != nil {
+			t.Fatalf("Generate() error = %v", err)
+		}
+		if m.streamCallCount != 2 {
+			t.Fatalf("expected Stream to be called twice, got %d", m.streamCallCount)
+		}
+		if len(response.UsageMetadata) != 2 || response.UsageMetadata[gai.UsageMetricInputTokens] != 10 || response.UsageMetadata[gai.UsageMetricGenerationTokens] != 1 {
+			t.Fatalf("mixed usage: %v", response.UsageMetadata)
+		}
+	})
+	t.Run("RetryGenerator/Stream/ReportsUsageBeforeFinalError", func(t *testing.T) {
+		permanentErr := errors.New("permanent failure")
+		m := &mockGenerator{}
+		m.StreamFunc = func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
+			return func(yield func(gai.StreamChunk) bool) {
+				if yield(gai.StreamChunk{Block: gai.MetadataBlock(gai.Metadata{gai.UsageMetricInputTokens: 100})}) {
+					yield(gai.StreamChunk{Err: permanentErr})
+				}
+			}
+		}
+
+		chunks, err := collectStream(gai.NewRetryGenerator(m, gai.RetryConfig{}).Stream(context.Background(), gai.GenerationRequest{}))
+		if !errors.Is(err, permanentErr) {
+			t.Fatalf("Stream() error = %v, want %v", err, permanentErr)
+		}
+		if len(chunks) != 1 || chunks[0].Block.BlockType != gai.MetadataBlockType {
+			t.Fatalf("unexpected streamed chunks: %+v", chunks)
+		}
+		if m.streamCallCount != 1 {
+			t.Fatalf("expected Stream to be called once, got %d", m.streamCallCount)
+		}
+	})
+	t.Run("RetryGenerator/Stream/StoppedConsumerGetsNoUsage", func(t *testing.T) {
+		m := &mockGenerator{}
+		m.StreamFunc = func(ctx context.Context, request gai.GenerationRequest) iter.Seq[gai.StreamChunk] {
+			return func(yield func(gai.StreamChunk) bool) {
+				if yield(gai.StreamChunk{Block: gai.MetadataBlock(gai.Metadata{gai.UsageMetricInputTokens: 100})}) {
+					yield(gai.StreamChunk{Block: gai.TextBlock("output")})
+				}
+			}
+		}
+
+		seen := 0
+		for range gai.NewRetryGenerator(m, gai.RetryConfig{}).Stream(context.Background(), gai.GenerationRequest{}) {
+			seen++
+			break
+		}
+		if seen != 1 {
+			t.Fatalf("chunks after stop: %d", seen)
+		}
+	})
 	t.Run("RetryGenerator/Stream/RetryAndSucceedBeforeFirstChunk", func(t *testing.T) {
 		retryAfter := time.Duration(0)
 		retriableErr := &gai.ApiErr{

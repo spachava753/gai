@@ -64,9 +64,12 @@ func exponentialBackoff(randomInt64N func(int64) int64) func(uint) (time.Duratio
 // values for which [ApiErr.Retryable] reports true. Overall context cancellation
 // stops the loop.
 //
-// Once a [StreamChunk] has been emitted, subsequent stream failures are returned
-// without retrying because replay would duplicate observed output. Stopping
-// iteration early is treated as successful consumer cancellation.
+// Once a [StreamChunk] other than usage metadata has been emitted, subsequent
+// stream failures are returned without retrying because replay would duplicate
+// observed output. Usage metadata is held until an attempt finishes: a stream
+// reports only its last attempt's usage, immediately before any final error, and
+// usage from an attempt that was retried is not reported. Stopping iteration
+// early is treated as successful consumer cancellation.
 //
 // RetryGenerator does not disable retries in provider SDKs. Disable SDK retries
 // separately when nested retry loops are undesirable.
@@ -212,10 +215,11 @@ func (rg *RetryGenerator) Generate(ctx context.Context, request GenerationReques
 }
 
 // Stream calls the underlying StreamingGenerator's Stream method, retrying only
-// failures that occur before the first chunk is emitted. Once output has been
-// observed by the caller, the stream becomes non-retriable to avoid duplicating
-// partial content on a subsequent attempt. If yield returns false, Stream stops
-// immediately and reports success rather than converting the early stop into an error.
+// failures that occur before the first output chunk is emitted. Usage metadata
+// is not output. Once output has been observed by the caller, the stream becomes
+// non-retriable to avoid duplicating partial content on a subsequent attempt. If
+// yield returns false, Stream stops immediately and reports success rather than
+// converting the early stop into an error.
 func (rg *RetryGenerator) Stream(ctx context.Context, request GenerationRequest) iter.Seq[StreamChunk] {
 	return func(yield func(StreamChunk) bool) {
 		sg, ok := rg.Inner.(StreamingGenerator)
@@ -228,7 +232,11 @@ func (rg *RetryGenerator) Stream(ctx context.Context, request GenerationRequest)
 			return
 		}
 
+		// Usage waits for the attempt's outcome so one result never mixes attempts.
+		var usage []StreamChunk
+		stopped := false
 		operation := func() (struct{}, error) {
+			usage = nil
 			emittedAny := false
 			for chunk := range sg.Stream(ctx, request) {
 				if chunk.Err != nil {
@@ -238,8 +246,13 @@ func (rg *RetryGenerator) Stream(ctx context.Context, request GenerationRequest)
 					return struct{}{}, chunk.Err
 				}
 
+				if chunk.Block.BlockType == MetadataBlockType {
+					usage = append(usage, chunk)
+					continue
+				}
 				emittedAny = true
 				if !yield(chunk) {
+					stopped = true
 					return struct{}{}, nil
 				}
 			}
@@ -248,6 +261,14 @@ func (rg *RetryGenerator) Stream(ctx context.Context, request GenerationRequest)
 		}
 
 		_, err := retry(ctx, operation, rg.config)
+		if stopped {
+			return
+		}
+		for _, chunk := range usage {
+			if !yield(chunk) {
+				return
+			}
+		}
 		if err != nil {
 			yield(StreamChunk{Err: err})
 		}
